@@ -63,7 +63,6 @@ enum ViewMode {
 }
 
 struct AppState {
-    view_mode: ViewMode,
     command_input: String,
     panels_visible: bool,
     terminal_output: Vec<String>, // Screen buffer for terminal output
@@ -86,6 +85,7 @@ struct FileInfo {
 
 #[derive(Debug)]
 struct Panel {
+    view_mode: ViewMode,
     current_dir: String,
     files: Vec<FileInfo>,
     selected_index: usize,
@@ -96,6 +96,7 @@ struct Panel {
 impl Panel {
     fn new(dir: String) -> io::Result<Self> {
         let mut panel = Self {
+            view_mode: ViewMode::DoubleColumn, // Start with double column
             current_dir: dir.clone(),
             files: Vec::new(),
             selected_index: 0,
@@ -306,7 +307,6 @@ impl AppState {
         let current_dir_str = current_dir.to_string_lossy().to_string();
         
         let state = Self {
-            view_mode: ViewMode::DoubleColumn, // Start with double column
             command_input: String::new(),
             panels_visible: true,
             terminal_output: Vec::new(),
@@ -341,10 +341,22 @@ impl AppState {
     }
 
     fn toggle_view_mode(&mut self) {
-        self.view_mode = match self.view_mode {
-            ViewMode::SingleColumn => ViewMode::DoubleColumn,
-            ViewMode::DoubleColumn => ViewMode::SingleColumn,
-        };
+        // Toggle view mode only for active panel
+        match self.active_panel {
+            0 => {
+                self.left_panel.view_mode = match self.left_panel.view_mode {
+                    ViewMode::SingleColumn => ViewMode::DoubleColumn,
+                    ViewMode::DoubleColumn => ViewMode::SingleColumn,
+                };
+            }
+            1 => {
+                self.right_panel.view_mode = match self.right_panel.view_mode {
+                    ViewMode::SingleColumn => ViewMode::DoubleColumn,
+                    ViewMode::DoubleColumn => ViewMode::SingleColumn,
+                };
+            }
+            _ => {}
+        }
     }
 
     fn toggle_panels(&mut self) {
@@ -564,9 +576,6 @@ fn draw_command_line(f: &mut Frame, app: &mut AppState, area: Rect) {
 }
 
 fn draw_single_panel(f: &mut Frame, app: &mut AppState, area: Rect, title: &str) {
-    // Get view mode before borrowing
-    let view_mode = app.view_mode;
-    
     // Get panel for this specific title
     let (panel, is_active_panel) = if title.contains("Left") {
         (&mut app.left_panel, app.active_panel == 0)
@@ -577,7 +586,8 @@ fn draw_single_panel(f: &mut Frame, app: &mut AppState, area: Rect, title: &str)
         (app.get_active_panel(), true)
     };
     
-    match view_mode {
+    // Use panel's own view mode
+    match panel.view_mode {
         ViewMode::SingleColumn => {
             draw_single_column_view(f, panel, area, title, is_active_panel);
         }
