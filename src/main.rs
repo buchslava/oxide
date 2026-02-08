@@ -1,310 +1,598 @@
-use std::fs;
-use std::io;
-use std::path::Path;
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame, Terminal,
-};
+use std::io::{self, Write};
+use std::sync::mpsc;
+use ratatui::{backend::CrosstermBackend, Terminal};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
+    event::EnableMouseCapture,
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::time::Duration;
 
-struct AppState {
-    current_dir: String,
-    files: Vec<FileInfo>,
-    selected_index: usize,
-    scroll_offset: usize,
-    navigation_history: Vec<(String, usize)>, // (directory_path, selected_index)
+mod app_state;
+mod util;
+mod copy_ops;
+mod editor;
+mod events;
+mod file_ops;
+mod mkdir_dialog;
+mod panel;
+mod rename_attr;
+mod settings_dialog;
+mod size_info_dialog;
+mod styles;
+mod subshell;
+mod ui;
+mod viewer;
+
+use app_state::{AppState, CopyInProgress, CopyProgress, Focus, Operation, RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress};
+use editor::{apply_confirm_choice, close, open_editor, save};
+use events::{EventHandler, AppAction, CopyErrorChoice, DeleteConfirmChoice};
+use viewer::{close_viewer, open_viewer};
+use file_ops::FileOperations;
+use panel::PanelOperations;
+use ui::Renderer;
+
+fn reset_terminal_character_set_and_modes<W: Write>(out: &mut W) -> io::Result<()> {
+    // Defensive terminal reset after shell relay/commands:
+    // - ESC ( B / ESC ) B: ASCII G0/G1 (undo DEC special graphics)
+    // - SGR reset + ensure wrap is enabled
+    out.write_all(b"\x1b(B\x1b)B\x1b[0m\x1b[?7h")?;
+    out.flush()?;
+    Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct FileInfo {
-    name: String,
-    is_dir: bool,
-    size: u64,
+/// Restore source panel selection after copy/move/delete and refresh both panels.
+fn restore_source_panel_and_refresh(
+    app: &mut AppState,
+    source_dir: &str,
+    restore_after: Option<&str>,
+    restore_before: Option<&str>,
+) {
+    let panel_height = util::compute_panel_height();
+    let is_left_source = app.left_panel().get_current_dir() == source_dir;
+    if is_left_source {
+        let _ = app.left_panel_mut().refresh_files_restore_selection(
+            restore_after,
+            restore_before,
+            Some(panel_height),
+        );
+        let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height));
+    } else {
+        let _ = app.right_panel_mut().refresh_files_restore_selection(
+            restore_after,
+            restore_before,
+            Some(panel_height),
+        );
+        let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height));
+    }
 }
 
-impl AppState {
-    fn new() -> io::Result<Self> {
-        let current_dir = std::env::current_dir()?;
-        let mut state = Self {
-            current_dir: current_dir.to_string_lossy().to_string(),
-            files: Vec::new(),
-            selected_index: 0,
-            scroll_offset: 0,
-            navigation_history: Vec::new(),
-        };
-        state.refresh_files()?;
-        Ok(state)
+/// Start a copy/move operation and clear overwrite/error dialogs.
+fn start_copy_operation(app: &mut AppState, operation: Operation, params: app_state::CopyParams) {
+    app.copy_in_progress = Some(CopyInProgress {
+        operation,
+        params,
+        current_index: 0,
+        overwrite_all: false,
+        skip_all: false,
+        ignore_all_errors: false,
+    });
+    app.copy_overwrite_dialog = None;
+    app.copy_error_dialog = None;
+}
+
+fn get_or_create_subshell<'a>(
+    subshell: &'a mut Option<subshell::Subshell>,
+    cwd: &str,
+) -> io::Result<&'a subshell::Subshell> {
+    if subshell.is_none() {
+        *subshell = Some(subshell::Subshell::spawn(cwd)?);
     }
+    Ok(subshell.as_ref().unwrap())
+}
 
-    fn refresh_files(&mut self) -> io::Result<()> {
-        let mut files = Vec::new();
-        
-        // Add parent directory entry if not at root
-        if Path::new(&self.current_dir).parent().is_some() {
-            files.push(FileInfo {
-                name: "..".to_string(),
-                is_dir: true,
-                size: 0,
-            });
-        }
-
-        let entries = fs::read_dir(&self.current_dir)?;
-        let mut entries_vec: Vec<_> = entries.collect::<Result<Vec<_>, _>>()?;
-        
-        // Sort entries: directories first, then files, both alphabetically
-        entries_vec.sort_by(|a, b| {
-            let a_is_dir = a.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-            let b_is_dir = b.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-            
-            match (a_is_dir, b_is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.file_name().cmp(&b.file_name()),
-            }
-        });
-
-        for entry in entries_vec {
-            let metadata = entry.metadata()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            
-            files.push(FileInfo {
-                name,
-                is_dir: metadata.is_dir(),
-                size: metadata.len(),
-            });
-        }
-
-        self.files = files;
-        
-        // Adjust selected index if needed
-        if self.selected_index >= self.files.len() {
-            self.selected_index = self.files.len().saturating_sub(1);
-        }
-        
-        Ok(())
+/// Advance the in-progress copy/move by one item. If target exists and no overwrite_all/skip_all, shows overwrite dialog.
+fn run_copy_step(app: &mut AppState) {
+    let Some(ref mut c) = app.copy_in_progress else { return };
+    let total = c.params.items.len();
+    if c.current_index >= total {
+        let source_dir = c.params.source_dir.clone();
+        let restore_after = c.params.restore_selection_after.clone();
+        let restore_before = c.params.restore_selection_before.clone();
+        app.copy_in_progress = None;
+        app.copy_progress = None;
+        app.delete_pending_rx = None;
+        app.source_panel_restore = Some((source_dir, restore_after, restore_before));
+        return;
     }
-
-    fn move_up(&mut self) {
-        if self.selected_index > 0 {
-            self.selected_index -= 1;
-            self.update_scroll_offset();
-        }
-    }
-
-    fn move_down(&mut self) {
-        if self.selected_index < self.files.len().saturating_sub(1) {
-            self.selected_index += 1;
-            self.update_scroll_offset();
-        }
-    }
-
-    fn update_scroll_offset(&mut self) {
-        // This will be updated when we know the panel height
-    }
-
-    fn enter_directory(&mut self) -> io::Result<()> {
-        if let Some(file) = self.files.get(self.selected_index) {
-            if file.is_dir {
-                if file.name == ".." {
-                    // Going up to parent directory
-                    if let Some(parent) = Path::new(&self.current_dir).parent() {
-                        // Push current state to history before going up
-                        self.navigation_history.push((self.current_dir.clone(), self.selected_index));
-                        
-                        let parent_path = parent.to_string_lossy().to_string();
-                        self.current_dir = parent_path;
-                        self.scroll_offset = 0;
-                        self.refresh_files()?;
-                        
-                        // Try to find the directory we came from in the parent
-                        if let Some((prev_dir, _)) = self.navigation_history.pop() {
-                            // Extract just the directory name from the full path
-                            if let Some(prev_name) = Path::new(&prev_dir).file_name() {
-                                let prev_name_str = prev_name.to_string_lossy().to_string();
-                                for (i, file) in self.files.iter().enumerate() {
-                                    if file.is_dir && file.name != ".." {
-                                        let file_name_clean = file.name.trim_end_matches('/');
-                                        if file_name_clean == prev_name_str {
-                                            self.selected_index = i;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+    let (name, is_dir) = &c.params.items[c.current_index];
+    let current_path = FileOperations::join_path(&c.params.source_dir, name)
+        .to_string_lossy()
+        .to_string();
+    app.copy_progress = Some(CopyProgress {
+        operation: c.operation,
+        current_path: current_path.clone(),
+        current: c.current_index + 1,
+        total,
+    });
+    // Delete: no target or overwrite; just remove from source_dir. Run directory delete in background so UI stays responsive.
+    if c.operation == Operation::Delete {
+        // Poll pending directory delete from previous step
+        if let Some(rx) = app.delete_pending_rx.take() {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    c.current_index += 1;
+                    return;
+                }
+                Ok(Err(e)) => {
+                    if c.ignore_all_errors {
+                        c.current_index += 1;
+                    } else {
+                        app.copy_error_dialog = Some(app_state::CopyErrorState {
+                            operation: c.operation,
+                            message: format!("{}: {}", current_path, e),
+                        });
+                        app.copy_error_focus = 0;
                     }
-                } else {
-                    // Entering a subdirectory - push current state to history
-                    self.navigation_history.push((self.current_dir.clone(), self.selected_index));
-                    
-                    let new_path = Path::new(&self.current_dir).join(&file.name.trim_end_matches('/'));
-                    self.current_dir = new_path.to_string_lossy().to_string();
-                    self.selected_index = 0;
-                    self.scroll_offset = 0;
-                    self.refresh_files()?;
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    app.delete_pending_rx = Some(rx);
+                    return; // still deleting, keep UI responsive
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // thread panicked or dropped; treat as error
+                    if !c.ignore_all_errors {
+                        app.copy_error_dialog = Some(app_state::CopyErrorState {
+                            operation: c.operation,
+                            message: format!("{}: delete failed", current_path),
+                        });
+                        app.copy_error_focus = 0;
+                    } else {
+                        c.current_index += 1;
+                    }
+                    return;
                 }
             }
         }
-        Ok(())
-    }
-}
-
-fn draw_ui(f: &mut Frame, app: &mut AppState) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(f.area());
-
-    draw_file_panel(f, app, chunks[0], "Left Panel");
-    
-    // Right panel (empty for now)
-    let right_panel = Block::default()
-        .borders(Borders::ALL)
-        .title("Right Panel");
-    f.render_widget(right_panel, chunks[1]);
-}
-
-fn draw_file_panel(f: &mut Frame, app: &mut AppState, area: Rect, title: &str) {
-    let panel_height = area.height.saturating_sub(2) as usize; // Subtract border space
-    
-    // Update scroll offset based on panel height
-    if app.selected_index >= app.scroll_offset + panel_height {
-        app.scroll_offset = app.selected_index - panel_height + 1;
-    } else if app.selected_index < app.scroll_offset {
-        app.scroll_offset = app.selected_index;
-    }
-
-    let visible_files: Vec<ListItem> = app.files
-        .iter()
-        .skip(app.scroll_offset)
-        .take(panel_height)
-        .enumerate()
-        .map(|(i, file)| {
-            let actual_index = i + app.scroll_offset;
-            let is_selected = actual_index == app.selected_index;
-            
-            let (name, style) = if file.is_dir {
-                (format!("{}/", file.name), Style::default().fg(Color::Blue))
+        if *is_dir {
+            let source_dir = c.params.source_dir.clone();
+            let name = name.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(copy_ops::delete_item(&source_dir, &name, true));
+            });
+            app.delete_pending_rx = Some(rx);
+            return;
+        }
+        if let Err(e) = copy_ops::delete_item(&c.params.source_dir, name, *is_dir) {
+            if c.ignore_all_errors {
+                c.current_index += 1;
             } else {
-                (file.name.clone(), Style::default().fg(Color::White))
-            };
-
-            let line = if is_selected {
-                Line::from(vec![
-                    Span::styled(">", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(" "),
-                    Span::styled(name, style.add_modifier(Modifier::REVERSED)),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::raw(" "),
-                    Span::raw(" "),
-                    Span::styled(name, style),
-                ])
-            };
-
-            ListItem::new(line)
-        })
-        .collect();
-
-    let list = List::new(visible_files)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .highlight_style(Style::default());
-
-    f.render_widget(list, area);
-
-    // Draw current path at the bottom
-    let path_text = Paragraph::new(app.current_dir.clone())
-        .style(Style::default().fg(Color::Cyan))
-        .block(Block::default().borders(Borders::BOTTOM));
-    let path_area = Rect {
-        x: area.x,
-        y: area.bottom() - 1,
-        width: area.width,
-        height: 1,
+                app.copy_error_dialog = Some(app_state::CopyErrorState {
+                    operation: c.operation,
+                    message: format!("{}: {}", current_path, e),
+                });
+                app.copy_error_focus = 0;
+            }
+            return;
+        }
+        c.current_index += 1;
+        return;
+    }
+    let target_path = FileOperations::join_path(&c.params.target_dir, name);
+    if target_path.exists() && !c.overwrite_all && !c.skip_all {
+        app.copy_overwrite_dialog = Some(name.clone());
+        app.copy_overwrite_focus = 0;
+        return;
+    }
+    let do_op = |op: Operation| {
+        if op == Operation::Move {
+            copy_ops::move_item(&c.params.source_dir, &c.params.target_dir, name, *is_dir)
+        } else {
+            copy_ops::copy_item(&c.params.source_dir, &c.params.target_dir, name, *is_dir)
+        }
     };
-    f.render_widget(path_text, path_area);
+    if target_path.exists() && c.skip_all {
+        c.current_index += 1;
+        return;
+    }
+    if target_path.exists() && c.overwrite_all {
+        if let Err(e) = do_op(c.operation) {
+            if c.ignore_all_errors {
+                c.current_index += 1;
+            } else {
+                app.copy_error_dialog = Some(app_state::CopyErrorState {
+                    operation: c.operation,
+                    message: format!("{} -> {}: {}", c.params.source_dir, name, e),
+                });
+                app.copy_error_focus = 0;
+            }
+            return;
+        }
+        c.current_index += 1;
+        return;
+    }
+    if !target_path.exists() {
+        if let Err(e) = do_op(c.operation) {
+            if c.ignore_all_errors {
+                c.current_index += 1;
+            } else {
+                app.copy_error_dialog = Some(app_state::CopyErrorState {
+                    operation: c.operation,
+                    message: format!("{} -> {}: {}", c.params.source_dir, name, e),
+                });
+                app.copy_error_focus = 0;
+            }
+            return;
+        }
+        c.current_index += 1;
+    }
 }
 
 fn main() -> Result<(), io::Error> {
-    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app state
     let mut app = AppState::new()?;
+    let mut subshell: Option<subshell::Subshell> = None;
 
-    // Main loop
+    // Process any events from EnterAlternateScreen (never discard keys).
+    if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+        disable_raw_mode()?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+        terminal.show_cursor()?;
+        return Ok(());
+    }
+    // Show first frame; brief delay then process queue so first keypress is handled, not discarded.
+    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+        disable_raw_mode()?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+        terminal.show_cursor()?;
+        return Ok(());
+    }
+
+    // Preload subshell so first Ctrl+O has no spawn delay (MC inits subshell at startup).
+    let _ = get_or_create_subshell(&mut subshell, app.get_current_dir());
+
     loop {
-        // Draw UI
-        terminal.draw(|f| draw_ui(f, &mut app))?;
+        terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
 
-        // Handle events
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-                    KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                    KeyCode::Enter | KeyCode::Char('l') => {
-                        app.enter_directory()?;
-                    }
-                    KeyCode::Char('h') => {
-                        // Go to parent directory using navigation history
-                        if let Some(parent) = Path::new(&app.current_dir).parent() {
-                            // Push current state to history
-                            app.navigation_history.push((app.current_dir.clone(), app.selected_index));
-                            
-                            let parent_path = parent.to_string_lossy().to_string();
-                            app.current_dir = parent_path;
-                            app.scroll_offset = 0;
-                            app.refresh_files()?;
-                            
-                            // Try to find the directory we came from
-                            if let Some((prev_dir, _)) = app.navigation_history.pop() {
-                                if let Some(prev_name) = Path::new(&prev_dir).file_name() {
-                                    let prev_name_str = prev_name.to_string_lossy().to_string();
-                                    for (i, file) in app.files.iter().enumerate() {
-                                        if file.is_dir && file.name != ".." {
-                                            let file_name_clean = file.name.trim_end_matches('/');
-                                            if file_name_clean == prev_name_str {
-                                                app.selected_index = i;
-                                                break;
-                                            }
+        let show_cursor = app.editor_screen.is_some()
+            || app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0)
+            || matches!(
+                app.rename_attr_dialog.as_ref(),
+                Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
+            )
+            || (app.focus == Focus::CommandLine && !app.command_line.is_empty());
+        if show_cursor {
+            let _ = terminal.show_cursor();
+        } else {
+            let _ = crossterm::execute!(terminal.backend_mut(), crossterm::cursor::Hide);
+        }
+
+        if app.copy_in_progress.is_some()
+            && app.copy_overwrite_dialog.is_none()
+            && app.copy_error_dialog.is_none()
+        {
+            run_copy_step(&mut app);
+            if app.copy_overwrite_dialog.is_some()
+                || app.copy_error_dialog.is_some()
+                || app.copy_in_progress.is_none()
+            {
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            }
+        }
+
+        // Poll size info calculation progress (background thread).
+        if let Some(rx) = app.size_info_pending_rx.take() {
+            match rx.try_recv() {
+                Ok(SizeInfoProgress::Progress {
+                    current,
+                    total,
+                    total_bytes,
+                    file_count,
+                    dir_count,
+                    current_name,
+                }) => {
+                    app.size_info_dialog = Some(SizeInfoDialogState::Calculating {
+                        current,
+                        total,
+                        total_bytes,
+                        file_count,
+                        dir_count,
+                        current_name,
+                    });
+                    app.size_info_pending_rx = Some(rx);
+                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                }
+                Ok(SizeInfoProgress::Done {
+                    total_bytes,
+                    file_count,
+                    dir_count,
+                }) => {
+                    app.size_info_dialog = Some(SizeInfoDialogState::Done {
+                        total_bytes,
+                        file_count,
+                        dir_count,
+                    });
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    app.size_info_pending_rx = Some(rx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.size_info_dialog = None;
+                }
+            }
+        }
+
+        // After copy/move/delete completes: restore source panel selection (file after, else file before) and scroll.
+        if let Some((source_dir, restore_after, restore_before)) = app.source_panel_restore.take() {
+            restore_source_panel_and_refresh(
+                &mut app,
+                &source_dir,
+                restore_after.as_deref(),
+                restore_before.as_deref(),
+            );
+            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+        }
+
+        match EventHandler::handle_events(&mut app)? {
+            AppAction::Quit => break,
+            AppAction::CopyOverwriteChoice(n) => {
+                if n == 5 {
+                    app.copy_in_progress = None;
+                    app.copy_progress = None;
+                    app.delete_pending_rx = None;
+                    let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, None);
+                    let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, None);
+                } else if let Some(ref mut c) = app.copy_in_progress {
+                    let idx = c.current_index;
+                    if idx < c.params.items.len() {
+                        let (name, is_dir) = &c.params.items[idx];
+                        let mut advance = false;
+                        let do_op = || {
+                            if c.operation == Operation::Move {
+                                copy_ops::move_item(
+                                    &c.params.source_dir,
+                                    &c.params.target_dir,
+                                    name,
+                                    *is_dir,
+                                )
+                            } else {
+                                copy_ops::copy_item(
+                                    &c.params.source_dir,
+                                    &c.params.target_dir,
+                                    name,
+                                    *is_dir,
+                                )
+                            }
+                        };
+                        match n {
+                            1 => match do_op() {
+                                Ok(()) => advance = true,
+                                Err(e) => {
+                                    if c.ignore_all_errors {
+                                        advance = true;
+                                    } else {
+                                        app.copy_error_dialog = Some(app_state::CopyErrorState {
+                                            operation: c.operation,
+                                            message: format!("{} -> {}: {}", c.params.source_dir, name, e),
+                                        });
+                                        app.copy_error_focus = 0;
+                                    }
+                                }
+                            },
+                            2 => {
+                                c.overwrite_all = true;
+                                match do_op() {
+                                    Ok(()) => advance = true,
+                                    Err(e) => {
+                                        if c.ignore_all_errors {
+                                            advance = true;
+                                        } else {
+                                            app.copy_error_dialog = Some(app_state::CopyErrorState {
+                                                operation: c.operation,
+                                                message: format!("{} -> {}: {}", c.params.source_dir, name, e),
+                                            });
+                                            app.copy_error_focus = 0;
                                         }
                                     }
                                 }
                             }
+                            3 => advance = true,
+                            4 => {
+                                c.skip_all = true;
+                                advance = true;
+                            }
+                            _ => {}
+                        }
+                        if advance {
+                            c.current_index += 1;
                         }
                     }
-                    KeyCode::Char('r') => {
-                        // Refresh current directory
-                        app.refresh_files()?;
+                }
+                app.copy_overwrite_dialog = None;
+                if let Some(ref c) = app.copy_in_progress {
+                    if c.current_index >= c.params.items.len() {
+                        let source_dir = c.params.source_dir.clone();
+                        let restore_after = c.params.restore_selection_after.clone();
+                        let restore_before = c.params.restore_selection_before.clone();
+                        app.copy_in_progress = None;
+                        app.copy_progress = None;
+                        app.delete_pending_rx = None;
+                        restore_source_panel_and_refresh(
+                            &mut app,
+                            &source_dir,
+                            restore_after.as_deref(),
+                            restore_before.as_deref(),
+                        );
                     }
-                    KeyCode::Char('q') => break,
-                    _ => {}
                 }
             }
+            AppAction::CopyErrorChoice(choice) => {
+                app.copy_error_dialog = None;
+                match choice {
+                    CopyErrorChoice::Ignore => {
+                        if let Some(ref mut c) = app.copy_in_progress {
+                            c.current_index += 1;
+                        }
+                    }
+                    CopyErrorChoice::IgnoreAll => {
+                        if let Some(ref mut c) = app.copy_in_progress {
+                            c.ignore_all_errors = true;
+                            c.current_index += 1;
+                        }
+                    }
+                    CopyErrorChoice::Cancel => {
+                        app.copy_in_progress = None;
+                        app.copy_progress = None;
+                        app.delete_pending_rx = None;
+                        let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, None);
+                        let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, None);
+                    }
+                }
+            }
+            AppAction::CopyCancel => {
+                app.copy_in_progress = None;
+                app.copy_progress = None;
+                app.copy_overwrite_dialog = None;
+                app.copy_error_dialog = None;
+                app.delete_pending_rx = None;
+                let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, None);
+                let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, None);
+            }
+            AppAction::DeleteConfirmChoice(choice) => {
+                let pending = app.operation_confirm_pending.take();
+                if let (DeleteConfirmChoice::Yes, Some((op, params))) = (choice, pending) {
+                    let skip_same_dir = matches!(op, Operation::Copy | Operation::Move)
+                        && params.source_dir == params.target_dir;
+                    if !skip_same_dir {
+                        start_copy_operation(&mut app, op, params);
+                    }
+                }
+            }
+            AppAction::OpenViewer => {
+                open_viewer(&mut app);
+            }
+            AppAction::ViewerClose => close_viewer(&mut app),
+            AppAction::OpenEditor => {
+                open_editor(&mut app);
+            }
+            AppAction::EditorSave => save(&mut app),
+            AppAction::EditorClose => close(&mut app),
+            AppAction::EditorConfirmChoice(choice) => apply_confirm_choice(&mut app, choice),
+            AppAction::OpenMkdirDialog => mkdir_dialog::open(&mut app),
+            AppAction::MkdirConfirm => {
+                if let Some(name) = mkdir_dialog::confirm(&mut app) {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        mkdir_dialog::create_and_refresh(&mut app, name);
+                    }
+                }
+            }
+            AppAction::MkdirCancel => mkdir_dialog::cancel(&mut app),
+            AppAction::OpenRenameAttrDialog => rename_attr::open(&mut app),
+            AppAction::OpenSizeInfoDialog => size_info_dialog::open(&mut app),
+            AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
+            AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
+            AppAction::SettingsClose => settings_dialog::close(&mut app),
+            AppAction::RenameAttrConfirm => {
+                if rename_attr::apply(&mut app) {
+                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                }
+            }
+            AppAction::RenameAttrCancel => rename_attr::cancel(&mut app),
+            AppAction::Suspend => {
+                // --- Ctrl+O: hand terminal to subshell. Use single-writer flow (REFERENCE.md "Solution: Second Ctrl+O uglification"): do NOT use backend for leave alternate; write everything to stdout.
+                terminal.flush()?;
+                let _ = terminal.backend_mut().flush();
+                let _ = std::io::stdout().flush();
+                let prepared = subshell::Subshell::prepare_for_relay();
+                {
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
+                    let _ = stdout.flush();
+                }
+                if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
+                    let cwd = app.get_current_dir().to_string();
+                    let _ = sub.run_cd_then_relay(&cwd, Some(prepared));
+                } else {
+                    eprintln!("Subshell error");
+                }
+                let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
+                // 3) Return: enter alternate first (Ratatui), then drain input (MC tty_flush_input), then clear + redraw.
+                execute!(
+                    terminal.backend_mut(),
+                    EnterAlternateScreen,
+                    crossterm::cursor::Hide,
+                    crossterm::event::EnableMouseCapture
+                )?;
+                if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                    break;
+                }
+                app.focus_panel();
+                terminal.clear()?;
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                // Do NOT terminal.flush() after draw(): draw() already flushes; extra flush can paint black.
+                if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                    break;
+                }
+            }
+            AppAction::Copy(params) => start_copy_operation(&mut app, Operation::Copy, params),
+            AppAction::Move(params) => start_copy_operation(&mut app, Operation::Move, params),
+            AppAction::RunCommand(cmd) => {
+                // Run command in the subshell (MC-style): output and prompt stay visible; Ctrl+O returns to panels. Same single-writer flow as Suspend.
+                let left_selected = app.left_panel_mut().get_selected_file().map(|f| f.name.to_string());
+                let right_selected = app.right_panel_mut().get_selected_file().map(|f| f.name.to_string());
+                let cwd = app.get_current_dir().to_string();
+                terminal.flush()?;
+                let _ = terminal.backend_mut().flush();
+                let _ = std::io::stdout().flush();
+                let prepared = subshell::Subshell::prepare_for_relay();
+                {
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
+                    let _ = stdout.flush();
+                }
+                if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
+                    let _ = sub.run_command_then_relay(&cwd, &cmd, Some(prepared));
+                } else {
+                    eprintln!("Subshell error");
+                }
+                let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
+                // 3) Return: enter alternate, drain, focus panel, clear + draw (panels visible again).
+                execute!(
+                    terminal.backend_mut(),
+                    EnterAlternateScreen,
+                    crossterm::cursor::Hide,
+                    crossterm::event::EnableMouseCapture
+                )?;
+                if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                    break;
+                }
+                app.focus_panel();
+                terminal.clear()?;
+                let _ = app.left_panel_mut().refresh_files_restore_selection(left_selected.as_deref(), None, None);
+                let _ = app.right_panel_mut().refresh_files_restore_selection(right_selected.as_deref(), None, None);
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                    break;
+                }
+            }
+            AppAction::Continue => {}
         }
     }
 
-    // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        crossterm::event::DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 

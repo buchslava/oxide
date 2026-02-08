@@ -1,1 +1,5 @@
 /target
+
+# Optional: Midnight Commander source for reference (clone into project root)
+/mc
+/reference

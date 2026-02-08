@@ -1,0 +1,90 @@
+//! Copy, move, and delete files/directories. Used by F5 Copy, F6 Move, F8 Delete (MC-style).
+
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use crate::file_ops::FileOperations;
+
+/// EXDEV: cross-device link not permitted (rename across filesystems).
+#[cfg(unix)]
+const EXDEV: i32 = 18;
+#[cfg(not(unix))]
+const EXDEV: i32 = -1;
+
+/// Copy a single file from src to dst. Overwrites if dst exists.
+pub fn copy_file<P: AsRef<Path>>(src: P, dst: P) -> io::Result<u64> {
+    fs::copy(src.as_ref(), dst.as_ref())
+}
+
+/// Copy a directory recursively from src to dst. Creates dst if needed.
+pub fn copy_dir_recursive<P: AsRef<Path>>(src: P, dst: P) -> io::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let name = entry.file_name();
+        let src_path = src.join(&name);
+        let dst_path = dst.join(&name);
+        if ty.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy one item (file or directory) from source_dir/name to target_dir/name.
+/// is_dir: true = copy recursively as directory.
+pub fn copy_item<P: AsRef<Path>>(
+    source_dir: P,
+    target_dir: P,
+    name: &str,
+    is_dir: bool,
+) -> io::Result<()> {
+    let src = FileOperations::join_path(source_dir, name);
+    let dst = FileOperations::join_path(target_dir, name);
+    if is_dir {
+        copy_dir_recursive(&src, &dst)
+    } else {
+        copy_file(&src, &dst).map(|_| ())
+    }
+}
+
+/// Move one item (file or directory) from source_dir/name to target_dir/name.
+/// Uses rename when possible; on EXDEV (cross-filesystem) copies then removes source.
+pub fn move_item<P: AsRef<Path>>(
+    source_dir: P,
+    target_dir: P,
+    name: &str,
+    is_dir: bool,
+) -> io::Result<()> {
+    let src = FileOperations::join_path(&source_dir, name);
+    let dst = FileOperations::join_path(&target_dir, name);
+    match fs::rename(&src, &dst) {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(EXDEV) => {
+            copy_item(&source_dir, &target_dir, name, is_dir)?;
+            if is_dir {
+                fs::remove_dir_all(&src)
+            } else {
+                fs::remove_file(&src)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Delete one item (file or directory) at source_dir/name.
+/// is_dir: true = remove directory and contents recursively.
+pub fn delete_item<P: AsRef<Path>>(source_dir: P, name: &str, is_dir: bool) -> io::Result<()> {
+    let path = FileOperations::join_path(source_dir, name);
+    if is_dir {
+        fs::remove_dir_all(&path)
+    } else {
+        fs::remove_file(&path)
+    }
+}
