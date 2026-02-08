@@ -1,0 +1,298 @@
+use std::io;
+use std::path::{Path, PathBuf};
+use crate::file_ops::{FileOperations, FileInfo};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ViewMode {
+    SingleColumn,
+    DoubleColumn,
+}
+
+pub trait PanelOperations {
+    fn move_up(&mut self);
+    fn move_down(&mut self);
+    fn page_up(&mut self);
+    fn page_down(&mut self);
+    fn smart_move_left(&mut self, panel_height: usize);
+    fn smart_move_right(&mut self, panel_height: usize);
+    fn enter_directory(&mut self) -> io::Result<()>;
+    fn refresh_files(&mut self) -> io::Result<()>;
+    fn update_scroll_offset(&mut self);
+    fn update_scroll_offset_double_column(&mut self, panel_height: usize);
+    fn get_current_dir(&self) -> &str;
+    fn get_selected_file(&self) -> Option<&FileInfo>;
+    fn get_selected_index(&self) -> usize;
+    fn get_scroll_offset(&self) -> usize;
+    fn get_files(&self) -> &[FileInfo];
+    fn get_view_mode(&self) -> ViewMode;
+    fn set_view_mode(&mut self, mode: ViewMode);
+    fn set_current_dir(&mut self, dir: String);
+    fn get_debug_info(&self) -> String;
+}
+
+#[derive(Debug)]
+pub struct Panel {
+    pub view_mode: ViewMode,
+    current_dir: String,
+    files: Vec<FileInfo>,
+    selected_index: usize,
+    scroll_offset: usize,
+    navigation_history: Vec<(String, usize)>,
+}
+
+impl Panel {
+    pub fn new(dir: String) -> io::Result<Self> {
+        let mut panel = Self {
+            view_mode: ViewMode::DoubleColumn,
+            current_dir: dir,
+            files: Vec::new(),
+            selected_index: 0,
+            scroll_offset: 0,
+            navigation_history: Vec::new(),
+        };
+        panel.refresh_files()?;
+        Ok(panel)
+    }
+
+    fn navigate_to_directory(&mut self, new_path: PathBuf) -> io::Result<()> {
+        self.navigation_history.push((self.current_dir.clone(), self.selected_index));
+        self.current_dir = new_path.to_string_lossy().to_string();
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+        self.refresh_files()
+    }
+
+    fn navigate_to_parent(&mut self) -> io::Result<()> {
+        if let Some(parent) = Path::new(&self.current_dir).parent() {
+            self.navigation_history.push((self.current_dir.clone(), self.selected_index));
+            let parent_path = parent.to_string_lossy().to_string();
+            self.current_dir = parent_path;
+            self.scroll_offset = 0;
+            self.refresh_files()?;
+
+            // Try to find the directory we came from in the parent
+            if let Some((prev_dir, _)) = self.navigation_history.pop() {
+                if let Some(prev_name) = Path::new(&prev_dir).file_name() {
+                    let prev_name_str = prev_name.to_string_lossy();
+                    for (i, file) in self.files.iter().enumerate() {
+                        if file.is_dir && file.name != ".." {
+                            let file_name_clean = file.name.trim_end_matches('/');
+                            if file_name_clean == prev_name_str {
+                                self.selected_index = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PanelOperations for Panel {
+    fn move_up(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+            self.update_scroll_offset();
+        }
+    }
+
+    fn move_down(&mut self) {
+        if !self.files.is_empty() && self.selected_index < self.files.len() - 1 {
+            self.selected_index += 1;
+            
+            // Update scroll offset based on view mode
+            if self.view_mode == ViewMode::DoubleColumn {
+                let panel_height = 20;
+                self.update_scroll_offset_double_column(panel_height);
+            } else {
+                self.update_scroll_offset();
+            }
+        }
+    }
+
+    fn page_up(&mut self) {
+        let panel_height = 20;
+        if self.selected_index < panel_height {
+            self.selected_index = 0;
+        } else {
+            self.selected_index -= panel_height;
+        }
+        self.update_scroll_offset();
+    }
+
+    fn page_down(&mut self) {
+        let panel_height = 20;
+        if self.files.is_empty() {
+            return;
+        }
+
+        // Don't move beyond the last file
+        if self.selected_index >= self.files.len() - 1 {
+            return;
+        }
+
+        if self.selected_index + panel_height >= self.files.len() {
+            self.selected_index = self.files.len() - 1;
+        } else {
+            self.selected_index += panel_height;
+        }
+        self.update_scroll_offset();
+    }
+
+    fn smart_move_left(&mut self, panel_height: usize) {
+        if self.selected_index >= self.files.len() {
+            return;
+        }
+
+        let current_line = self.selected_index % panel_height;
+        let current_column = self.selected_index / panel_height;
+        
+        if self.files.len() <= panel_height {
+            self.selected_index = 0;
+            self.update_scroll_offset();
+            return;
+        }
+        
+        if current_column == 1 {
+            // Move to left column, same line
+            let target_index = current_line;
+            if target_index < self.files.len() {
+                self.selected_index = target_index;
+            }
+        } else {
+            // Move to previous page
+            self.page_up();
+        }
+        self.update_scroll_offset_double_column(panel_height);
+    }
+
+    fn smart_move_right(&mut self, panel_height: usize) {
+        if self.selected_index >= self.files.len() - 1 {
+            return;
+        }
+
+        let current_line = self.selected_index % panel_height;
+        let current_column = self.selected_index / panel_height;
+        
+        if self.files.len() <= panel_height {
+            self.selected_index = self.files.len().saturating_sub(1);
+            return;
+        }
+        
+        if current_column == 0 {
+            // Move to right column, same line
+            let target_index = panel_height + current_line;
+            if target_index < self.files.len() {
+                self.selected_index = target_index;
+            }
+        } else {
+            // We're in second column
+            // Move to next page (right arrow in Midnight Commander)
+            self.page_down();
+        }
+        self.update_scroll_offset_double_column(panel_height);
+    }
+
+    fn enter_directory(&mut self) -> io::Result<()> {
+        if let Some(file) = self.get_selected_file() {
+            if file.is_dir {
+                if file.is_parent_dir() {
+                    self.navigate_to_parent()?;
+                } else {
+                    let new_path = FileOperations::join_path(&self.current_dir, &file.name);
+                    self.navigate_to_directory(new_path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh_files(&mut self) -> io::Result<()> {
+        self.files = FileOperations::read_directory(&self.current_dir)?;
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+        Ok(())
+    }
+
+    fn update_scroll_offset(&mut self) {
+        let panel_height = 20;
+        if self.selected_index >= self.scroll_offset + panel_height {
+            self.scroll_offset = self.selected_index - panel_height + 1;
+        } else if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        }
+    }
+
+    fn update_scroll_offset_double_column(&mut self, panel_height: usize) {
+        let files_per_page = panel_height * 2;
+        let total_files = self.files.len();
+        
+        // Simple rule: only scroll when selection is outside visible range
+        if self.selected_index < self.scroll_offset {
+            // Selection is above visible area
+            self.scroll_offset = self.selected_index;
+        } else if self.selected_index >= self.scroll_offset + files_per_page {
+            // Selection is below visible area
+            self.scroll_offset = (self.selected_index / files_per_page) * files_per_page;
+        }
+        // If selection is visible - DON'T SCROLL AT ALL
+        
+        // CRITICAL: Ensure no gaps when we have enough files
+        if total_files >= files_per_page {
+            // We have enough files to fill screen completely
+            // Make sure we're not showing empty space at bottom
+            let max_scroll_offset = (total_files - files_per_page).max(0);
+            if self.scroll_offset > max_scroll_offset {
+                self.scroll_offset = max_scroll_offset;
+            }
+        }
+    }
+
+    fn get_debug_info(&self) -> String {
+        format!("idx:{}|scroll:{}|files:{}|page:{}", 
+            self.get_selected_index(),
+            self.get_scroll_offset(),
+            self.get_files().len(),
+            if self.get_view_mode() == ViewMode::DoubleColumn {
+                let h = 20; // panel height
+                let page = (self.get_selected_index() / (h * 2)) * (h * 2);
+                format!("{}|page{}", page, page)
+            } else {
+                "single".to_string()
+            })
+    }
+
+    fn get_current_dir(&self) -> &str {
+        &self.current_dir
+    }
+
+    fn get_selected_file(&self) -> Option<&FileInfo> {
+        self.files.get(self.selected_index)
+    }
+
+    fn get_selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn get_scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    fn get_files(&self) -> &[FileInfo] {
+        &self.files
+    }
+
+    fn get_view_mode(&self) -> ViewMode {
+        self.view_mode
+    }
+
+    fn set_view_mode(&mut self, mode: ViewMode) {
+        self.view_mode = mode;
+    }
+
+    fn set_current_dir(&mut self, dir: String) {
+        self.current_dir = dir;
+    }
+}
