@@ -4,22 +4,22 @@ use std::path::Path;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
+    style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::time::Duration;
 
-// Single source of truth for colors (SOLID principle)
+// Single source of truth for colors and rendering (SOLID principle)
 mod styles {
     use ratatui::style::{Color, Modifier, Style};
-    use ratatui::text::Span;
+    use ratatui::text::{Line, Span};
+    use crate::FileInfo;
 
     pub fn file_span(name: &str) -> Span {
         Span::styled(name, Style::default().fg(Color::White))
@@ -38,6 +38,23 @@ mod styles {
         let folder_name = format!("{}/", name);
         Span::styled(folder_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::REVERSED))
     }
+
+    // Unified line creation for both single and double column modes
+    pub fn create_file_line(file: &FileInfo, is_selected: bool) -> Line {
+        if is_selected {
+            if file.is_dir {
+                Line::from(vec![selected_folder_span(&file.name)])
+            } else {
+                Line::from(vec![selected_file_span(&file.name)])
+            }
+        } else {
+            if file.is_dir {
+                Line::from(vec![folder_span(&file.name)])
+            } else {
+                Line::from(vec![file_span(&file.name)])
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +69,6 @@ struct AppState {
     selected_index: usize,
     scroll_offset: usize,
     navigation_history: Vec<(String, usize)>, // (directory_path, selected_index)
-    horizontal_scroll: usize, // For horizontal scrolling between columns
     view_mode: ViewMode,
 }
 
@@ -60,7 +76,6 @@ struct AppState {
 struct FileInfo {
     name: String,
     is_dir: bool,
-    size: u64,
 }
 
 impl AppState {
@@ -72,7 +87,6 @@ impl AppState {
             selected_index: 0,
             scroll_offset: 0,
             navigation_history: Vec::new(),
-            horizontal_scroll: 0,
             view_mode: ViewMode::DoubleColumn, // Start with double column
         };
         state.refresh_files()?;
@@ -87,7 +101,6 @@ impl AppState {
             files.push(FileInfo {
                 name: "..".to_string(),
                 is_dir: true,
-                size: 0,
             });
         }
 
@@ -113,7 +126,6 @@ impl AppState {
             files.push(FileInfo {
                 name,
                 is_dir: metadata.is_dir(),
-                size: metadata.len(),
             });
         }
 
@@ -248,7 +260,7 @@ fn draw_file_panel(f: &mut Frame, app: &mut AppState, area: Rect, title: &str) {
 fn draw_single_column_view(f: &mut Frame, app: &mut AppState, area: Rect, _title: &str) {
     let panel_height = area.height.saturating_sub(2) as usize; // Subtract border space
     
-    // Update scroll offset based on panel height (same logic as double column)
+    // Update scroll offset based on panel height
     if app.selected_index >= app.scroll_offset + panel_height {
         app.scroll_offset = app.selected_index - panel_height + 1;
     } else if app.selected_index < app.scroll_offset {
@@ -264,41 +276,13 @@ fn draw_single_column_view(f: &mut Frame, app: &mut AppState, area: Rect, _title
             let actual_index = i + app.scroll_offset;
             let is_selected = actual_index == app.selected_index;
             
-            let line = if is_selected {
-                if file.is_dir {
-                    Line::from(vec![
-                        styles::selected_folder_span(&file.name),
-                    ])
-                } else {
-                    Line::from(vec![
-                        styles::selected_file_span(&file.name),
-                    ])
-                }
-            } else {
-                Line::from(vec![
-                    if file.is_dir { styles::folder_span(&file.name) } else { styles::file_span(&file.name) },
-                ])
-            };
-
-            ListItem::new(line)
+            ListItem::new(styles::create_file_line(file, is_selected))
         })
         .collect();
 
     let list = List::new(visible_files)
         .block(Block::default().borders(Borders::ALL).title(app.current_dir.clone()));
     f.render_widget(list, area);
-
-    // Draw current path at the bottom
-    let path_text = Paragraph::new(app.current_dir.clone())
-        .style(Style::default())
-        .block(Block::default().borders(Borders::BOTTOM));
-    let path_area = Rect {
-        x: area.x,
-        y: area.bottom() - 1,
-        width: area.width,
-        height: 1,
-    };
-    f.render_widget(path_text, path_area);
 }
 
 fn draw_double_column_view(f: &mut Frame, app: &mut AppState, area: Rect, _title: &str) {
@@ -356,20 +340,7 @@ fn draw_double_column_view(f: &mut Frame, app: &mut AppState, area: Rect, _title
         let actual_index = i + app.scroll_offset;
         let is_selected = actual_index == app.selected_index;
         
-        let line = if is_selected {
-            if file.is_dir {
-                styles::selected_folder_span(&file.name)
-            } else {
-                styles::selected_file_span(&file.name)
-            }
-        } else {
-            if file.is_dir {
-                styles::folder_span(&file.name)
-            } else {
-                styles::file_span(&file.name)
-            }
-        };
-
+        let line = styles::create_file_line(file, is_selected);
         let paragraph = Paragraph::new(line);
         let line_area = Rect {
             x: columns[0].x,
@@ -387,20 +358,7 @@ fn draw_double_column_view(f: &mut Frame, app: &mut AppState, area: Rect, _title
         let actual_index = i + left_files.len() + app.scroll_offset;
         let is_selected = actual_index == app.selected_index;
         
-        let line = if is_selected {
-            if file.is_dir {
-                styles::selected_folder_span(&file.name)
-            } else {
-                styles::selected_file_span(&file.name)
-            }
-        } else {
-            if file.is_dir {
-                styles::folder_span(&file.name)
-            } else {
-                styles::file_span(&file.name)
-            }
-        };
-
+        let line = styles::create_file_line(file, is_selected);
         let paragraph = Paragraph::new(line);
         let line_area = Rect {
             x: columns[2].x,
