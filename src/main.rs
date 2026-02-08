@@ -176,14 +176,22 @@ impl Panel {
         let panel_height = 20; // Approximate panel height
         if self.selected_index >= panel_height {
             self.selected_index -= panel_height;
-            self.update_scroll_offset();
+        } else {
+            // If we're already in the first page, go to the very top
+            self.selected_index = 0;
         }
+        self.update_scroll_offset();
     }
 
     fn page_down(&mut self) {
         let panel_height = 20; // Approximate panel height
-        if !self.files.is_empty() && self.selected_index + panel_height < self.files.len() {
-            self.selected_index += panel_height;
+        if !self.files.is_empty() {
+            if self.selected_index + panel_height < self.files.len() {
+                self.selected_index += panel_height;
+            } else {
+                // If we can't go a full page down, go to the last file
+                self.selected_index = self.files.len() - 1;
+            }
             self.update_scroll_offset();
         }
     }
@@ -624,11 +632,23 @@ fn draw_double_column_view(f: &mut Frame, panel: &mut Panel, area: Rect, _title:
     let column_width = panel_width / 2;
     
     // Update scroll offset based on panel height
-    if panel.selected_index >= panel.scroll_offset + files_per_column * 2 {
-        panel.scroll_offset = panel.selected_index - files_per_column * 2 + 1;
+    let files_per_page = files_per_column * 2;
+    
+    if panel.selected_index >= panel.scroll_offset + files_per_page {
+        // We're trying to view files beyond current page, scroll right
+        panel.scroll_offset = panel.selected_index - files_per_page + 1;
     } else if panel.selected_index < panel.scroll_offset {
+        // We're trying to view files before current page, scroll left
         panel.scroll_offset = panel.selected_index;
     }
+    
+    // Ensure we don't scroll past the end
+    let max_scroll_offset = if panel.files.len() > files_per_page {
+        panel.files.len() - files_per_page
+    } else {
+        0
+    };
+    panel.scroll_offset = panel.scroll_offset.min(max_scroll_offset);
 
     // Calculate visible files based on horizontal scroll
     let total_visible_files = files_per_column * 2;
@@ -800,10 +820,6 @@ fn main() -> Result<(), io::Error> {
                                     // Ctrl+R to refresh current directory
                                     let _ = app.get_active_panel().refresh_files();
                                 }
-                                'q' => {
-                                    // Ctrl+Q to quit
-                                    break;
-                                }
                                 _ => {
                                     // All other Ctrl+char combinations go to command line
                                     app.add_command_char(c);
@@ -826,6 +842,10 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Backspace => {
                         app.remove_command_char();
                         app.reset_cursor(); // Reset cursor on input
+                    }
+                    KeyCode::F(10) => {
+                        // F10 to quit
+                        break;
                     }
                     _ => {}
                 }
