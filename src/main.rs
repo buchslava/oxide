@@ -361,10 +361,8 @@ impl AppState {
 
     fn toggle_panels(&mut self) {
         self.panels_visible = !self.panels_visible;
-        // When hiding panels, reset to left panel active
-        if !self.panels_visible {
-            self.active_panel = 0;
-        }
+        // Panel visibility only affects rendering, not active panel state
+        // Each panel maintains its own active state independently
     }
 
     fn add_command_char(&mut self, c: char) {
@@ -385,30 +383,69 @@ impl AppState {
             let command_with_prompt = format!("> {}", self.command_input);
             self.add_output_line(command_with_prompt);
             
-            // Execute command and capture output
-            match std::process::Command::new("sh")
-                .arg("-c")
-                .arg(&self.command_input)
-                .current_dir(self.get_active_panel_dir())
-                .output()
-            {
-                Ok(output) => {
-                    if !output.stdout.is_empty() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        for line in stdout.lines() {
-                            self.add_output_line(line.to_string());
+            // Check if this is a cd command
+            if self.command_input.trim_start().starts_with("cd ") {
+                let cd_target = self.command_input.trim_start()[3..].trim();
+                
+                // Get current directory before borrowing
+                let current_dir = self.get_active_panel_dir().to_string();
+                
+                let new_dir = if cd_target == ".." {
+                    // Go to parent directory
+                    if let Some(parent) = Path::new(&current_dir).parent() {
+                        parent.to_string_lossy().to_string()
+                    } else {
+                        current_dir.clone()
+                    }
+                } else if cd_target.starts_with('/') {
+                    // Absolute path
+                    cd_target.to_string()
+                } else {
+                    // Relative path
+                    let new_path = Path::new(&current_dir).join(cd_target);
+                    new_path.to_string_lossy().to_string()
+                };
+                
+                // Check if the new directory exists
+                if Path::new(&new_dir).exists() && Path::new(&new_dir).is_dir() {
+                    // Update the active panel's directory
+                    let active_panel = self.get_active_panel();
+                    active_panel.current_dir = new_dir.clone();
+                    active_panel.refresh_files()?;
+                    self.add_output_line(format!("Changed to: {}", new_dir));
+                } else {
+                    self.add_output_line(format!("Error: Directory '{}' does not exist", new_dir));
+                }
+            } else {
+                // Execute other commands normally
+                match std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&self.command_input)
+                    .current_dir(self.get_active_panel_dir())
+                    .output()
+                {
+                    Ok(output) => {
+                        if !output.stdout.is_empty() {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            for line in stdout.lines() {
+                                self.add_output_line(line.to_string());
+                            }
+                        }
+                        if !output.stderr.is_empty() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            for line in stderr.lines() {
+                                self.add_output_line(format!("Error: {}", line));
+                            }
                         }
                     }
-                    if !output.stderr.is_empty() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        for line in stderr.lines() {
-                            self.add_output_line(format!("Error: {}", line));
-                        }
+                    Err(e) => {
+                        self.add_output_line(format!("Failed to execute command: {}", e));
                     }
                 }
-                Err(e) => {
-                    self.add_output_line(format!("Failed to execute command: {}", e));
-                }
+                
+                // Refresh both panels after command execution (in case command changed files)
+                let _ = self.left_panel.refresh_files();
+                let _ = self.right_panel.refresh_files();
             }
             
             self.clear_command();
@@ -498,7 +535,22 @@ impl AppState {
 
     // Panel switching methods
     fn switch_panel(&mut self) {
-        self.active_panel = if self.active_panel == 0 { 1 } else { 0 };
+        // Get the directory of the panel we're switching to
+        let new_active_panel = if self.active_panel == 0 { 1 } else { 0 };
+        let target_dir = if new_active_panel == 0 {
+            &self.left_panel.current_dir
+        } else {
+            &self.right_panel.current_dir
+        };
+        
+        // Change the current working directory
+        if let Err(e) = std::env::set_current_dir(target_dir) {
+            // If we can't change directory, still switch panels but show error
+            eprintln!("Failed to change directory: {}", e);
+        }
+        
+        // Switch the active panel
+        self.active_panel = new_active_panel;
     }
 }
 
