@@ -11,7 +11,7 @@ use ratatui::{
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, size},
 };
 use std::time::Duration;
 
@@ -70,6 +70,13 @@ struct AppState {
     scroll_offset: usize,
     navigation_history: Vec<(String, usize)>, // (directory_path, selected_index)
     view_mode: ViewMode,
+    command_input: String,
+    panels_visible: bool,
+    terminal_output: Vec<String>, // Screen buffer for terminal output
+    max_output_lines: usize,      // Maximum lines to keep in buffer
+    terminal_scroll_offset: usize, // Current scroll position for terminal
+    cursor_visible: bool,         // For blinking cursor effect
+    cursor_blink_counter: u8,   // Counter for blink timing
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +95,13 @@ impl AppState {
             scroll_offset: 0,
             navigation_history: Vec::new(),
             view_mode: ViewMode::DoubleColumn, // Start with double column
+            command_input: String::new(),
+            panels_visible: true,
+            terminal_output: Vec::new(),
+            max_output_lines: 1000, // Keep last 1000 lines
+            terminal_scroll_offset: 0,
+            cursor_visible: true,
+            cursor_blink_counter: 0,
         };
         state.refresh_files()?;
         Ok(state)
@@ -184,6 +198,187 @@ impl AppState {
         };
     }
 
+    fn toggle_panels(&mut self) {
+        self.panels_visible = !self.panels_visible;
+    }
+
+    fn add_command_char(&mut self, c: char) {
+        self.command_input.push(c);
+    }
+
+    fn remove_command_char(&mut self) {
+        self.command_input.pop();
+    }
+
+    fn clear_command(&mut self) {
+        self.command_input.clear();
+    }
+
+    fn execute_command(&mut self) -> io::Result<()> {
+        if !self.command_input.is_empty() {
+            // Add command to output buffer
+            let command_with_prompt = format!("> {}", self.command_input);
+            self.add_output_line(command_with_prompt);
+            
+            // Execute command and capture output
+            match std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&self.command_input)
+                .current_dir(&self.current_dir)
+                .output()
+            {
+                Ok(output) => {
+                    if !output.stdout.is_empty() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        for line in stdout.lines() {
+                            self.add_output_line(line.to_string());
+                        }
+                    }
+                    if !output.stderr.is_empty() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        for line in stderr.lines() {
+                            self.add_output_line(format!("Error: {}", line));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.add_output_line(format!("Failed to execute command: {}", e));
+                }
+            }
+            
+            self.clear_command();
+            
+            // Add empty line to terminal output if panels are hidden
+            if !self.panels_visible {
+                self.add_output_line(String::new());
+            }
+            
+            // Refresh file panels after command execution
+            self.refresh_files()?;
+        } else {
+            // Empty command - just add empty line when panels are hidden
+            if !self.panels_visible {
+                self.add_output_line(String::new());
+            }
+        }
+        Ok(())
+    }
+
+    fn add_output_line(&mut self, line: String) {
+        self.terminal_output.push(line);
+        
+        // Keep only the last max_output_lines
+        if self.terminal_output.len() > self.max_output_lines {
+            self.terminal_output.remove(0);
+        }
+        
+        // Auto-scroll to bottom when new output is added
+        self.reset_terminal_scroll();
+    }
+
+    fn clear_output(&mut self) {
+        self.terminal_output.clear();
+    }
+
+    // Terminal scrolling methods
+    fn terminal_scroll_up(&mut self) {
+        if self.terminal_scroll_offset > 0 {
+            self.terminal_scroll_offset -= 1;
+        }
+    }
+
+    fn terminal_scroll_down(&mut self) {
+        let output_lines = self.terminal_output.len();
+        if self.terminal_scroll_offset < output_lines.saturating_sub(1) {
+            self.terminal_scroll_offset += 1;
+        }
+    }
+
+    fn terminal_scroll_page_up(&mut self, page_height: usize) {
+        if self.terminal_scroll_offset >= page_height {
+            self.terminal_scroll_offset -= page_height;
+        } else {
+            self.terminal_scroll_offset = 0;
+        }
+    }
+
+    fn terminal_scroll_page_down(&mut self, page_height: usize) {
+        let output_lines = self.terminal_output.len();
+        let max_scroll = output_lines.saturating_sub(1);
+        if self.terminal_scroll_offset + page_height <= max_scroll {
+            self.terminal_scroll_offset += page_height;
+        } else {
+            self.terminal_scroll_offset = max_scroll;
+        }
+    }
+
+    fn reset_terminal_scroll(&mut self) {
+        // Auto-scroll to bottom when new output is added
+        self.terminal_scroll_offset = self.terminal_output.len().saturating_sub(1);
+    }
+
+    // Cursor management methods
+    fn update_cursor(&mut self) {
+        self.cursor_blink_counter = self.cursor_blink_counter.wrapping_add(1);
+        if self.cursor_blink_counter % 8 == 0 { // Blink every 8 cycles
+            self.cursor_visible = !self.cursor_visible;
+        }
+    }
+
+    fn reset_cursor(&mut self) {
+        self.cursor_visible = true;
+        self.cursor_blink_counter = 0;
+    }
+
+    // Smart column navigation methods
+    fn smart_move_left(&mut self, panel_height: usize) {
+        if self.selected_index >= self.files.len() {
+            return;
+        }
+
+        let current_line = self.selected_index % panel_height;
+        let current_column = self.selected_index / panel_height;
+        
+        // Edge case: if file list is too small
+        if self.files.len() <= panel_height {
+            // All files fit in first column, move to first file
+            self.selected_index = 0;
+        } else if current_column == 1 {
+            // We're in right column, try to move to same line in left column
+            let target_index = current_line;
+            if target_index < self.files.len() {
+                self.selected_index = target_index;
+            }
+        } else {
+            // We're in left column, use current page_up logic
+            self.page_up();
+        }
+    }
+
+    fn smart_move_right(&mut self, panel_height: usize) {
+        if self.selected_index >= self.files.len() {
+            return;
+        }
+
+        let current_line = self.selected_index % panel_height;
+        let current_column = self.selected_index / panel_height;
+        
+        // Edge case: if file list is too small
+        if self.files.len() <= panel_height {
+            // All files fit in first column, move to last file
+            self.selected_index = self.files.len().saturating_sub(1);
+        } else if current_column == 0 {
+            // We're in left column, try to move to same line in right column
+            let target_index = panel_height + current_line;
+            if target_index < self.files.len() {
+                self.selected_index = target_index;
+            }
+        } else {
+            // We're in right column, use current page_down logic
+            self.page_down();
+        }
+    }
+
     fn enter_directory(&mut self) -> io::Result<()> {
         if let Some(file) = self.files.get(self.selected_index) {
             if file.is_dir {
@@ -233,17 +428,66 @@ impl AppState {
 
 fn draw_ui(f: &mut Frame, app: &mut AppState) {
     let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0), // Main content area
+            Constraint::Length(1), // Command line (1 line)
+        ])
         .split(f.area());
 
-    draw_file_panel(f, app, chunks[0], "Left Panel");
+    // Draw main content area
+    if app.panels_visible {
+        // Show file panels
+        draw_file_panel(f, app, chunks[0], "File Manager");
+    } else {
+        // Show terminal output
+        draw_terminal_output(f, app, chunks[0]);
+    }
+
+    // Always draw command line
+    draw_command_line(f, app, chunks[1]);
+}
+
+fn draw_terminal_output(f: &mut Frame, app: &mut AppState, area: Rect) {
+    let output_text = if app.terminal_output.is_empty() {
+        "No command output yet. Type a command and press Enter to see output here."
+            .to_string()
+    } else {
+        app.terminal_output.join("\n")
+    };
+
+    // Calculate how many lines we can show
+    let available_height = area.height as usize;
+    let output_lines: Vec<&str> = output_text.lines().collect();
     
-    // Right panel (empty for now)
-    let right_panel = Block::default()
-        .borders(Borders::ALL)
-        .title("Right Panel");
-    f.render_widget(right_panel, chunks[1]);
+    // Use scroll offset to determine which lines to show
+    let start_line = if output_lines.len() > available_height {
+        if app.terminal_scroll_offset >= available_height {
+            app.terminal_scroll_offset - available_height + 1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    
+    let end_line = (start_line + available_height).min(output_lines.len());
+    let visible_lines = &output_lines[start_line..end_line];
+    let scrollable_text = visible_lines.join("\n");
+
+    let terminal_display = Paragraph::new(scrollable_text)
+        .style(Style::default().fg(Color::Rgb(200, 200, 200))); // Light grey
+    
+    f.render_widget(terminal_display, area);
+}
+
+fn draw_command_line(f: &mut Frame, app: &mut AppState, area: Rect) {
+    let cursor_char = if app.cursor_visible { "█" } else { " " };
+    let command_with_cursor = format!("> {}{}", app.command_input, cursor_char);
+    let command_line = Paragraph::new(command_with_cursor)
+        .style(Style::default().fg(Color::White));
+    
+    f.render_widget(command_line, area);
 }
 
 fn draw_file_panel(f: &mut Frame, app: &mut AppState, area: Rect, title: &str) {
@@ -351,22 +595,24 @@ fn draw_double_column_view(f: &mut Frame, app: &mut AppState, area: Rect, _title
         f.render_widget(paragraph, line_area);
     }
 
-    // Render right column content
-    for (i, file) in right_files.iter().enumerate() {
-        if i >= panel_height { break; }
-        
-        let actual_index = i + left_files.len() + app.scroll_offset;
-        let is_selected = actual_index == app.selected_index;
-        
-        let line = styles::create_file_line(file, is_selected);
-        let paragraph = Paragraph::new(line);
-        let line_area = Rect {
-            x: columns[2].x,
-            y: columns[2].y + i as u16,
-            width: columns[2].width,
-            height: 1,
-        };
-        f.render_widget(paragraph, line_area);
+    // Render right column content only if it has files
+    if !right_files.is_empty() {
+        for (i, file) in right_files.iter().enumerate() {
+            if i >= panel_height { break; }
+            
+            let actual_index = i + left_files.len() + app.scroll_offset;
+            let is_selected = actual_index == app.selected_index;
+            
+            let line = styles::create_file_line(file, is_selected);
+            let paragraph = Paragraph::new(line);
+            let line_area = Rect {
+                x: columns[2].x,
+                y: columns[2].y + i as u16,
+                width: columns[2].width,
+                height: 1,
+            };
+            f.render_widget(paragraph, line_area);
+        }
     }
 
     // Draw vertical line between columns
@@ -397,6 +643,9 @@ fn main() -> Result<(), io::Error> {
 
     // Main loop
     loop {
+        // Update cursor for blinking effect
+        app.update_cursor();
+        
         // Draw UI
         terminal.draw(|f| draw_ui(f, &mut app))?;
 
@@ -404,26 +653,81 @@ fn main() -> Result<(), io::Error> {
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-                    KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                    KeyCode::Left | KeyCode::Char('h') => {
-                        app.page_up();
+                    KeyCode::Up => {
+                        if app.panels_visible {
+                            app.move_up();
+                        } else {
+                            app.terminal_scroll_up();
+                        }
                     }
-                    KeyCode::Right | KeyCode::Char('l') => {
-                        app.page_down();
+                    KeyCode::Down => {
+                        if app.panels_visible {
+                            app.move_down();
+                        } else {
+                            app.terminal_scroll_down();
+                        }
+                    }
+                    KeyCode::Left => {
+                        if app.panels_visible {
+                            let panel_height = size().map(|(_, h)| h as usize).unwrap_or(20) - 3; // Subtract space for borders and command line
+                            app.smart_move_left(panel_height);
+                        } else {
+                            let terminal_height = size().map(|(_, h)| h as usize).unwrap_or(20);
+                            app.terminal_scroll_page_up(terminal_height);
+                        }
+                    }
+                    KeyCode::Right => {
+                        if app.panels_visible {
+                            let panel_height = size().map(|(_, h)| h as usize).unwrap_or(20) - 3; // Subtract space for borders and command line
+                            app.smart_move_right(panel_height);
+                        } else {
+                            let terminal_height = size().map(|(_, h)| h as usize).unwrap_or(20);
+                            app.terminal_scroll_page_down(terminal_height);
+                        }
                     }
                     KeyCode::Enter => {
-                        app.enter_directory()?;
+                        if !app.command_input.is_empty() {
+                            app.execute_command()?;
+                        } else {
+                            app.enter_directory()?;
+                        }
                     }
-                    KeyCode::Char('t') => {
-                        // Toggle view mode between single and double column
-                        app.toggle_view_mode();
+                    KeyCode::Char(c) => {
+                        // Only allow specific Ctrl combinations
+                        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                            match c {
+                                'o' => {
+                                    // Ctrl+O to toggle panels
+                                    app.toggle_panels();
+                                }
+                                't' => {
+                                    // Ctrl+T to toggle view mode
+                                    app.toggle_view_mode();
+                                }
+                                'r' => {
+                                    // Ctrl+R to refresh current directory
+                                    app.refresh_files()?;
+                                }
+                                'q' => {
+                                    // Ctrl+Q to quit
+                                    break;
+                                }
+                                _ => {
+                                    // All other Ctrl+char combinations go to command line
+                                    app.add_command_char(c);
+                                    app.reset_cursor();
+                                }
+                            }
+                        } else {
+                            // Regular character input for command line
+                            app.add_command_char(c);
+                            app.reset_cursor(); // Reset cursor on input
+                        }
                     }
-                    KeyCode::Char('r') => {
-                        // Refresh current directory
-                        app.refresh_files()?;
+                    KeyCode::Backspace => {
+                        app.remove_command_char();
+                        app.reset_cursor(); // Reset cursor on input
                     }
-                    KeyCode::Char('q') => break,
                     _ => {}
                 }
             }
