@@ -193,20 +193,17 @@ fn draw_file_panel(f: &mut Frame, app: &mut AppState, area: Rect, title: &str) {
             let is_selected = actual_index == app.selected_index;
             
             let (name, style) = if file.is_dir {
-                (format!("{}/", file.name), Style::default().fg(Color::Blue))
+                (format!("{}/", file.name), Style::default().fg(Color::Cyan))
             } else {
                 (file.name.clone(), Style::default().fg(Color::White))
             };
 
             let line = if is_selected {
                 Line::from(vec![
-                    Span::styled(">", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(" "),
                     Span::styled(name, style.add_modifier(Modifier::REVERSED)),
                 ])
             } else {
                 Line::from(vec![
-                    Span::raw(" "),
                     Span::raw(" "),
                     Span::styled(name, style),
                 ])
@@ -260,34 +257,34 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Enter | KeyCode::Char('l') => {
                         app.enter_directory()?;
                     }
-                    KeyCode::Char('h') => {
-                        // Go to parent directory using navigation history
-                        if let Some(parent) = Path::new(&app.current_dir).parent() {
-                            // Push current state to history
-                            app.navigation_history.push((app.current_dir.clone(), app.selected_index));
+                    // KeyCode::Char('h') => {
+                    //     // Go to parent directory using navigation history
+                    //     if let Some(parent) = Path::new(&app.current_dir).parent() {
+                    //         // Push current state to history
+                    //         app.navigation_history.push((app.current_dir.clone(), app.selected_index));
                             
-                            let parent_path = parent.to_string_lossy().to_string();
-                            app.current_dir = parent_path;
-                            app.scroll_offset = 0;
-                            app.refresh_files()?;
+                    //         let parent_path = parent.to_string_lossy().to_string();
+                    //         app.current_dir = parent_path;
+                    //         app.scroll_offset = 0;
+                    //         app.refresh_files()?;
                             
-                            // Try to find the directory we came from
-                            if let Some((prev_dir, _)) = app.navigation_history.pop() {
-                                if let Some(prev_name) = Path::new(&prev_dir).file_name() {
-                                    let prev_name_str = prev_name.to_string_lossy().to_string();
-                                    for (i, file) in app.files.iter().enumerate() {
-                                        if file.is_dir && file.name != ".." {
-                                            let file_name_clean = file.name.trim_end_matches('/');
-                                            if file_name_clean == prev_name_str {
-                                                app.selected_index = i;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    //         // Try to find the directory we came from
+                    //         if let Some((prev_dir, _)) = app.navigation_history.pop() {
+                    //             if let Some(prev_name) = Path::new(&prev_dir).file_name() {
+                    //                 let prev_name_str = prev_name.to_string_lossy().to_string();
+                    //                 for (i, file) in app.files.iter().enumerate() {
+                    //                     if file.is_dir && file.name != ".." {
+                    //                         let file_name_clean = file.name.trim_end_matches('/');
+                    //                         if file_name_clean == prev_name_str {
+                    //                             app.selected_index = i;
+                    //                             break;
+                    //                         }
+                    //                     }
+                    //                 }
+                    //             }
+                    //         }
+                    //     }
+                    // }
                     KeyCode::Char('r') => {
                         // Refresh current directory
                         app.refresh_files()?;
