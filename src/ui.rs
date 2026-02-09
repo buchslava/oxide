@@ -12,15 +12,16 @@ pub struct Renderer;
 
 impl Renderer {
     pub fn draw_ui(f: &mut Frame, app: &mut AppState) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),
-                Constraint::Length(1),
-            ])
-            .split(f.area());
-
         if app.panels_visible() {
+            // Panels visible: traditional layout with command line at bottom
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(1),
+                ])
+                .split(f.area());
+
             let panel_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -29,11 +30,11 @@ impl Renderer {
             let active_panel = app.active_panel();
             Self::draw_single_panel(f, app.left_panel_mut(), panel_chunks[0], "Left Panel", active_panel == 0);
             Self::draw_single_panel(f, app.right_panel_mut(), panel_chunks[1], "Right Panel", active_panel == 1);
+            Self::draw_command_line(f, app, chunks[1]);
         } else {
-            Self::draw_terminal_output(f, app, chunks[0]);
+            // Panels hidden: command line is part of terminal area (independent)
+            Self::draw_terminal_with_command_line(f, app, f.area());
         }
-
-        Self::draw_command_line(f, app, chunks[1]);
     }
 
     fn draw_terminal_output(f: &mut Frame, app: &AppState, area: Rect) {
@@ -49,11 +50,17 @@ impl Renderer {
         // Calculate which lines to show, ensuring content appears from bottom
         let lines_to_show = available_height.min(total_lines);
         let start_index = if total_lines > available_height {
-            // Apply scroll offset, but ensure we show the last lines when not scrolling
-            let scroll_offset = app.terminal_scroll_offset();
-            if scroll_offset == 0 {
-                total_lines - available_height // Show last lines by default
+            // Apply scroll offset - different behavior for panels visible vs hidden
+            let scroll_offset = app.get_active_terminal_scroll_offset();
+            if app.panels_visible() {
+                // Panels visible: show last lines by default (existing behavior)
+                if scroll_offset == 0 {
+                    total_lines - available_height
+                } else {
+                    scroll_offset.min(total_lines - available_height)
+                }
             } else {
+                // Panels hidden: show content from top when scrolling
                 scroll_offset.min(total_lines - available_height)
             }
         } else {
@@ -94,8 +101,9 @@ impl Renderer {
         let current_dir = app.get_current_dir();
         let dir_name = current_dir
             .split('/')
+            .filter(|s| !s.is_empty())
             .last()
-            .unwrap_or(current_dir)
+            .unwrap_or("/")
             .to_string();
         
         let command_with_cursor = format!("{}: > {}{}", dir_name, app.command_input(), cursor_char);
@@ -103,6 +111,23 @@ impl Renderer {
             .style(Style::default().fg(Color::White));
         
         f.render_widget(command_line, area);
+    }
+
+    fn draw_terminal_with_command_line(f: &mut Frame, app: &mut AppState, area: Rect) {
+        // Split area: terminal output takes most space, command line at bottom
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),    // Terminal output
+                Constraint::Length(1), // Command line
+            ])
+            .split(area);
+
+        // Draw terminal output
+        Self::draw_terminal_output(f, app, chunks[0]);
+        
+        // Draw command line at bottom
+        Self::draw_command_line(f, app, chunks[1]);
     }
 
     fn draw_single_panel(f: &mut Frame, panel: &mut Panel, area: Rect, _title: &str, is_active_panel: bool) {

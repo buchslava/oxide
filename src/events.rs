@@ -1,6 +1,6 @@
 use std::io;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers, MouseEvent, MouseEventKind},
     terminal::size,
 };
 use crate::app_state::AppState;
@@ -15,35 +15,51 @@ impl EventHandler {
                 match key.code {
                     KeyCode::Up => {
                         if app.panels_visible() {
+                            // Panel navigation only when panels are visible
                             app.active_panel_mut().move_up();
                         } else {
+                            // Command line scrolling only when panels are hidden
                             app.terminal_scroll_up();
                         }
                     }
                     KeyCode::Down => {
                         if app.panels_visible() {
+                            // Panel navigation only when panels are visible
                             app.active_panel_mut().move_down();
                         } else {
+                            // Command line scrolling only when panels are hidden
                             app.terminal_scroll_down();
                         }
                     }
                     KeyCode::Left => {
                         if app.panels_visible() {
+                            // Panel navigation only when panels are visible
                             let panel_height = size().map(|(_, h)| h as usize).unwrap_or(20) - 3;
                             app.active_panel_mut().smart_move_left(panel_height);
                         } else {
-                            let terminal_height = size().map(|(_, h)| h as usize).unwrap_or(20);
-                            app.terminal_scroll_page_up(terminal_height);
+                            // Command line scrolling only when panels are hidden
+                            app.terminal_scroll_up();
                         }
                     }
                     KeyCode::Right => {
                         if app.panels_visible() {
+                            // Panel navigation only when panels are visible
                             let panel_height = size().map(|(_, h)| h as usize).unwrap_or(20) - 3;
                             app.active_panel_mut().smart_move_right(panel_height);
                         } else {
-                            let terminal_height = size().map(|(_, h)| h as usize).unwrap_or(20);
-                            app.terminal_scroll_page_down(terminal_height);
+                            // Command line scrolling only when panels are hidden
+                            app.terminal_scroll_down();
                         }
+                    }
+                    KeyCode::PageUp => {
+                        // Command line scrolling - independent of panel visibility
+                        let terminal_height = size().map(|(_, h)| h as usize).unwrap_or(20);
+                        app.terminal_scroll_page_up(terminal_height);
+                    }
+                    KeyCode::PageDown => {
+                        // Command line scrolling - independent of panel visibility
+                        let terminal_height = size().map(|(_, h)| h as usize).unwrap_or(20);
+                        app.terminal_scroll_page_down(terminal_height);
                     }
                     KeyCode::Enter => {
                         if app.panels_visible() {
@@ -100,6 +116,8 @@ impl EventHandler {
                     }
                     _ => {}
                 }
+            } else if let Event::Mouse(mouse_event) = event::read()? {
+                Self::handle_mouse_event(app, mouse_event)?;
             }
         }
         Ok(false) // Continue running
@@ -119,6 +137,23 @@ impl EventHandler {
             _ => {
                 app.add_command_char(c);
                 app.reset_cursor();
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_mouse_event(app: &mut AppState, mouse_event: MouseEvent) -> io::Result<()> {
+        match mouse_event.kind {
+            crossterm::event::MouseEventKind::ScrollUp => {
+                // Mouse wheel up - scroll content up (inverse scrolling)
+                app.terminal_scroll_up();
+            }
+            crossterm::event::MouseEventKind::ScrollDown => {
+                // Mouse wheel down - scroll content down (inverse scrolling)
+                app.terminal_scroll_down();
+            }
+            _ => {
+                // Handle other mouse events if needed
             }
         }
         Ok(())

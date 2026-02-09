@@ -9,6 +9,7 @@ pub struct AppState {
     terminal_output: Vec<String>,
     max_output_lines: usize,
     terminal_scroll_offset: usize,
+    hidden_terminal_scroll_offset: usize, // Independent scrolling for hidden panels
     cursor_visible: bool,
     cursor_blink_counter: u8,
     active_panel: usize,
@@ -27,6 +28,7 @@ impl AppState {
             terminal_output: Vec::new(),
             max_output_lines: 1000,
             terminal_scroll_offset: 0,
+            hidden_terminal_scroll_offset: 0, // Initialize independent scrolling
             cursor_visible: true,
             cursor_blink_counter: 0,
             active_panel: 0,
@@ -107,38 +109,96 @@ impl AppState {
 
     // Terminal scrolling methods
     pub fn terminal_scroll_up(&mut self) {
-        if self.terminal_scroll_offset > 0 {
-            self.terminal_scroll_offset -= 1;
+        if self.panels_visible {
+            if self.terminal_scroll_offset > 0 {
+                self.terminal_scroll_offset -= 1;
+            }
+        } else {
+            // Use independent scrolling when panels are hidden
+            if self.hidden_terminal_scroll_offset > 0 {
+                self.hidden_terminal_scroll_offset -= 1;
+            }
         }
     }
 
     pub fn terminal_scroll_down(&mut self) {
         let output_lines = self.terminal_output.len();
-        if self.terminal_scroll_offset < output_lines.saturating_sub(1) {
-            self.terminal_scroll_offset += 1;
+        if output_lines == 0 {
+            return;
+        }
+        
+        if self.panels_visible {
+            let max_scroll = output_lines.saturating_sub(1);
+            if self.terminal_scroll_offset < max_scroll {
+                self.terminal_scroll_offset += 1;
+            }
+        } else {
+            // Use independent scrolling when panels are hidden
+            let max_scroll = output_lines.saturating_sub(1);
+            if self.hidden_terminal_scroll_offset < max_scroll {
+                self.hidden_terminal_scroll_offset += 1;
+            }
         }
     }
 
     pub fn terminal_scroll_page_up(&mut self, page_height: usize) {
-        if self.terminal_scroll_offset < page_height {
-            self.terminal_scroll_offset = 0;
-            return;
+        if self.panels_visible {
+            if self.terminal_scroll_offset >= page_height {
+                self.terminal_scroll_offset -= page_height;
+            } else {
+                self.terminal_scroll_offset = 0;
+            }
+        } else {
+            // Use independent scrolling when panels are hidden
+            if self.hidden_terminal_scroll_offset >= page_height {
+                self.hidden_terminal_scroll_offset -= page_height;
+            } else {
+                self.hidden_terminal_scroll_offset = 0;
+            }
         }
-        self.terminal_scroll_offset -= page_height;
     }
 
     pub fn terminal_scroll_page_down(&mut self, page_height: usize) {
         let output_lines = self.terminal_output.len();
-        let max_scroll = output_lines.saturating_sub(1);
-        if self.terminal_scroll_offset + page_height > max_scroll {
-            self.terminal_scroll_offset = max_scroll;
+        if output_lines == 0 {
             return;
         }
-        self.terminal_scroll_offset += page_height;
+        
+        let max_scroll = output_lines.saturating_sub(1);
+        
+        if self.panels_visible {
+            if self.terminal_scroll_offset + page_height <= max_scroll {
+                self.terminal_scroll_offset += page_height;
+            } else {
+                self.terminal_scroll_offset = max_scroll;
+            }
+        } else {
+            // Use independent scrolling when panels are hidden
+            if self.hidden_terminal_scroll_offset + page_height <= max_scroll {
+                self.hidden_terminal_scroll_offset += page_height;
+            } else {
+                self.hidden_terminal_scroll_offset = max_scroll;
+            }
+        }
+    }
+
+    pub fn get_active_terminal_scroll_offset(&self) -> usize {
+        if self.panels_visible {
+            self.terminal_scroll_offset
+        } else {
+            self.hidden_terminal_scroll_offset
+        }
     }
 
     fn reset_terminal_scroll(&mut self) {
-        self.terminal_scroll_offset = self.terminal_output.len().saturating_sub(1);
+        // Only reset hidden panels scrolling - don't touch panels visible mode
+        let output_lines = self.terminal_output.len();
+        if output_lines == 0 {
+            self.hidden_terminal_scroll_offset = 0;
+        } else {
+            // Show latest content (bottom) when new content is added for hidden panels
+            self.hidden_terminal_scroll_offset = output_lines.saturating_sub(1);
+        }
     }
 
     // Cursor management methods
