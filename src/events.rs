@@ -46,24 +46,50 @@ impl EventHandler {
                         }
                     }
                     KeyCode::Enter => {
-                        if !app.command_input().is_empty() {
-                            app.execute_command()?;
+                        if app.panels_visible() {
+                            // Panels visible - normal Enter behavior
+                            if !app.command_input().is_empty() {
+                                app.execute_command()?;
+                            } else {
+                                app.active_panel_mut().enter_directory()?;
+                            }
                         } else {
-                            app.active_panel_mut().enter_directory()?;
+                            // Panels hidden - just add empty line to terminal output
+                            if !app.command_input().is_empty() {
+                                // Execute the command first
+                                app.execute_command()?;
+                            } else {
+                                // Empty command - just add empty line
+                                app.add_output_line(String::new());
+                            }
                         }
                     }
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             Self::handle_ctrl_key(app, c)?;
                         } else if c == '\t' {
-                            app.switch_panel()?;
+                            // Tab behavior depends on panel visibility
+                            if app.panels_visible() {
+                                app.switch_panel()?;
+                            } else {
+                                // Panels hidden - Tab behaves as normal Tab (insert tab character)
+                                app.add_command_char('\t');
+                                app.reset_cursor();
+                            }
                         } else {
                             app.add_command_char(c);
                             app.reset_cursor();
                         }
                     }
                     KeyCode::Tab => {
-                        app.switch_panel()?;
+                        // Tab behavior depends on panel visibility
+                        if app.panels_visible() {
+                            app.switch_panel()?;
+                        } else {
+                            // Panels hidden - Tab behaves as normal Tab (insert tab character)
+                            app.add_command_char('\t');
+                            app.reset_cursor();
+                        }
                     }
                     KeyCode::Backspace => {
                         app.remove_command_char();
