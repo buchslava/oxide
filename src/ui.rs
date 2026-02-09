@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Gauge},
     Frame,
 };
 use crate::panel::{Panel, PanelOperations, ViewMode};
@@ -114,20 +114,114 @@ impl Renderer {
     }
 
     fn draw_terminal_with_command_line(f: &mut Frame, app: &mut AppState, area: Rect) {
-        // Split area: terminal output takes most space, command line at bottom
-        let chunks = Layout::default()
+        // Split area: terminal output + scroll indicator, command line
+        let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),    // Terminal output
+                Constraint::Min(0),    // Terminal area
                 Constraint::Length(1), // Command line
             ])
             .split(area);
 
+        // Split terminal area: content + vertical scroll indicator
+        let terminal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Min(0),    // Terminal content
+                Constraint::Length(1), // Vertical scroll indicator
+            ])
+            .split(main_chunks[0]);
+
         // Draw terminal output
-        Self::draw_terminal_output(f, app, chunks[0]);
+        Self::draw_terminal_output(f, app, terminal_chunks[0]);
+        
+        // Draw vertical scroll indicator
+        Self::draw_vertical_scroll_indicator(f, app, terminal_chunks[1]);
         
         // Draw command line at bottom
-        Self::draw_command_line(f, app, chunks[1]);
+        Self::draw_command_line(f, app, main_chunks[1]);
+    }
+
+    fn draw_vertical_scroll_indicator(f: &mut Frame, app: &AppState, area: Rect) {
+        let output_lines = app.terminal_output();
+        let total_lines = output_lines.len();
+        let terminal_height = area.height as usize;
+        
+        // Only show indicator if there are multiple pages (scrolling is needed)
+        if total_lines <= terminal_height || area.height < 3 {
+            return; // No indicator needed for single page or too small area
+        }
+        
+        let scroll_offset = app.get_active_terminal_scroll_offset();
+        let indicator_height = area.height as usize;
+        
+        // Calculate scroll position (0.0 to 1.0)
+        let max_scroll = total_lines.saturating_sub(1);
+        let scroll_ratio = if max_scroll > 0 {
+            scroll_offset as f64 / max_scroll as f64
+        } else {
+            0.0
+        };
+        
+        // Calculate thumb position and size
+        let thumb_size = 1; // Always show 1 character as thumb
+        let thumb_position = (scroll_ratio * (indicator_height - thumb_size) as f64) as usize;
+        
+        // Build the vertical indicator
+        let mut indicator_lines = Vec::new();
+        for i in 0..indicator_height {
+            if i == thumb_position {
+                indicator_lines.push("█"); // Current position (thumb)
+            } else {
+                indicator_lines.push("░"); // Track
+            }
+        }
+        
+        let vertical_indicator = Paragraph::new(indicator_lines.join("\n"))
+            .style(Style::default().fg(Color::DarkGray));
+        
+        f.render_widget(vertical_indicator, area);
+    }
+
+    fn draw_scroll_indicator(f: &mut Frame, app: &AppState, area: Rect) {
+        let output_lines = app.terminal_output();
+        let total_lines = output_lines.len();
+        
+        if total_lines == 0 {
+            return; // No indicator needed for empty output
+        }
+        
+        let scroll_offset = app.get_active_terminal_scroll_offset();
+        let available_height = area.height as usize;
+        
+        // Calculate scroll position (0.0 to 1.0)
+        let max_scroll = total_lines.saturating_sub(1);
+        let scroll_ratio = if max_scroll > 0 {
+            scroll_offset as f64 / max_scroll as f64
+        } else {
+            0.0
+        };
+        
+        // Create a simple visual indicator using characters
+        let indicator_width = area.width as usize;
+        let indicator_position = (scroll_ratio * (indicator_width - 1) as f64) as usize;
+        
+        // Build the indicator string
+        let mut indicator = String::with_capacity(indicator_width);
+        for i in 0..indicator_width {
+            if i == indicator_position {
+                indicator.push('█'); // Current position
+            } else if i < indicator_position {
+                indicator.push('─'); // Scrolled past
+            } else {
+                indicator.push('░'); // Not yet scrolled
+            }
+        }
+        
+        let scroll_indicator = Paragraph::new(indicator)
+            .style(Style::default().fg(Color::DarkGray));
+        
+        f.render_widget(scroll_indicator, area);
     }
 
     fn draw_single_panel(f: &mut Frame, panel: &mut Panel, area: Rect, _title: &str, is_active_panel: bool) {
