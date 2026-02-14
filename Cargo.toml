@@ -1,9 +1,13 @@
 [package]
 name = "morning-commander"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 ratatui = "0.28"
 crossterm = "0.28"
 dirs = "5.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+nix = { version = "0.29", features = ["term", "poll", "fs", "process"] }

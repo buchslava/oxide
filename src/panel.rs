@@ -9,15 +9,15 @@ pub enum ViewMode {
 }
 
 pub trait PanelOperations {
-    fn move_up(&mut self);
-    fn move_down(&mut self);
-    fn page_up(&mut self);
-    fn page_down(&mut self);
+    fn move_up(&mut self, panel_height: usize);
+    fn move_down(&mut self, panel_height: usize);
+    fn page_up(&mut self, panel_height: usize);
+    fn page_down(&mut self, panel_height: usize);
     fn smart_move_left(&mut self, panel_height: usize);
     fn smart_move_right(&mut self, panel_height: usize);
     fn enter_directory(&mut self) -> io::Result<()>;
     fn refresh_files(&mut self) -> io::Result<()>;
-    fn update_scroll_offset(&mut self);
+    fn update_scroll_offset(&mut self, panel_height: usize);
     fn update_scroll_offset_double_column(&mut self, panel_height: usize);
     fn get_current_dir(&self) -> &str;
     fn get_selected_file(&self) -> Option<&FileInfo>;
@@ -91,54 +91,60 @@ impl Panel {
 }
 
 impl PanelOperations for Panel {
-    fn move_up(&mut self) {
+    fn move_up(&mut self, panel_height: usize) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
-            self.update_scroll_offset();
-        }
-    }
-
-    fn move_down(&mut self) {
-        if !self.files.is_empty() && self.selected_index < self.files.len() - 1 {
-            self.selected_index += 1;
-            
-            // Update scroll offset based on view mode
             if self.view_mode == ViewMode::DoubleColumn {
-                let panel_height = 20;
                 self.update_scroll_offset_double_column(panel_height);
             } else {
-                self.update_scroll_offset();
+                self.update_scroll_offset(panel_height);
             }
         }
     }
 
-    fn page_up(&mut self) {
-        let panel_height = 20;
-        if self.selected_index < panel_height {
-            self.selected_index = 0;
-        } else {
-            self.selected_index -= panel_height;
+    fn move_down(&mut self, panel_height: usize) {
+        if !self.files.is_empty() && self.selected_index < self.files.len() - 1 {
+            self.selected_index += 1;
+            if self.view_mode == ViewMode::DoubleColumn {
+                self.update_scroll_offset_double_column(panel_height);
+            } else {
+                self.update_scroll_offset(panel_height);
+            }
         }
-        self.update_scroll_offset();
     }
 
-    fn page_down(&mut self) {
-        let panel_height = 20;
+    fn page_up(&mut self, panel_height: usize) {
+        let h = panel_height.max(1);
+        if self.selected_index < h {
+            self.selected_index = 0;
+        } else {
+            self.selected_index -= h;
+        }
+        if self.view_mode == ViewMode::DoubleColumn {
+            self.update_scroll_offset_double_column(panel_height);
+        } else {
+            self.update_scroll_offset(panel_height);
+        }
+    }
+
+    fn page_down(&mut self, panel_height: usize) {
+        let h = panel_height.max(1);
         if self.files.is_empty() {
             return;
         }
-
-        // Don't move beyond the last file
         if self.selected_index >= self.files.len() - 1 {
             return;
         }
-
-        if self.selected_index + panel_height >= self.files.len() {
+        if self.selected_index + h >= self.files.len() {
             self.selected_index = self.files.len() - 1;
         } else {
-            self.selected_index += panel_height;
+            self.selected_index += h;
         }
-        self.update_scroll_offset();
+        if self.view_mode == ViewMode::DoubleColumn {
+            self.update_scroll_offset_double_column(panel_height);
+        } else {
+            self.update_scroll_offset(panel_height);
+        }
     }
 
     fn smart_move_left(&mut self, panel_height: usize) {
@@ -151,7 +157,7 @@ impl PanelOperations for Panel {
         
         if self.files.len() <= panel_height {
             self.selected_index = 0;
-            self.update_scroll_offset();
+            self.update_scroll_offset_double_column(panel_height);
             return;
         }
         
@@ -163,7 +169,7 @@ impl PanelOperations for Panel {
             }
         } else {
             // Move to previous page
-            self.page_up();
+            self.page_up(panel_height);
         }
         self.update_scroll_offset_double_column(panel_height);
     }
@@ -190,7 +196,7 @@ impl PanelOperations for Panel {
         } else {
             // We're in second column
             // Move to next page (right arrow in Midnight Commander)
-            self.page_down();
+            self.page_down(panel_height);
         }
         self.update_scroll_offset_double_column(panel_height);
     }
@@ -213,40 +219,42 @@ impl PanelOperations for Panel {
         self.files = FileOperations::read_directory(&self.current_dir)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
+        if !self.files.is_empty() && self.selected_index >= self.files.len() {
+            self.selected_index = self.files.len() - 1;
+        }
         Ok(())
     }
 
-    fn update_scroll_offset(&mut self) {
-        let panel_height = 20;
-        if self.selected_index >= self.scroll_offset + panel_height {
-            self.scroll_offset = self.selected_index - panel_height + 1;
+
+    fn update_scroll_offset(&mut self, panel_height: usize) {
+        let h = panel_height.max(1);
+        if self.selected_index >= self.scroll_offset + h {
+            self.scroll_offset = self.selected_index - h + 1;
         } else if self.selected_index < self.scroll_offset {
             self.scroll_offset = self.selected_index;
         }
     }
 
     fn update_scroll_offset_double_column(&mut self, panel_height: usize) {
-        let files_per_page = panel_height * 2;
+        let h = panel_height.max(1);
+        let files_per_page = h * 2;
         let total_files = self.files.len();
-        
-        // Simple rule: only scroll when selection is outside visible range
+
+        if total_files == 0 {
+            self.scroll_offset = 0;
+            return;
+        }
+        self.selected_index = self.selected_index.min(total_files - 1);
+
         if self.selected_index < self.scroll_offset {
-            // Selection is above visible area
             self.scroll_offset = self.selected_index;
         } else if self.selected_index >= self.scroll_offset + files_per_page {
-            // Selection is below visible area
             self.scroll_offset = (self.selected_index / files_per_page) * files_per_page;
         }
-        // If selection is visible - DON'T SCROLL AT ALL
-        
-        // CRITICAL: Ensure no gaps when we have enough files
-        if total_files >= files_per_page {
-            // We have enough files to fill screen completely
-            // Make sure we're not showing empty space at bottom
-            let max_scroll_offset = (total_files - files_per_page).max(0);
-            if self.scroll_offset > max_scroll_offset {
-                self.scroll_offset = max_scroll_offset;
-            }
+
+        let max_scroll_offset = total_files.saturating_sub(files_per_page).max(0);
+        if self.scroll_offset > max_scroll_offset {
+            self.scroll_offset = max_scroll_offset;
         }
     }
 
@@ -294,5 +302,28 @@ impl PanelOperations for Panel {
 
     fn set_current_dir(&mut self, dir: String) {
         self.current_dir = dir;
+    }
+}
+
+impl Panel {
+    /// Re-read directory and try to restore selection by file name (e.g. after running a command).
+    pub fn refresh_files_restore_selection(&mut self, preferred_name: Option<&str>) -> io::Result<()> {
+        self.files = FileOperations::read_directory(&self.current_dir)?;
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+        if let Some(name) = preferred_name {
+            let name_trimmed = name.trim_end_matches('/');
+            for (i, f) in self.files.iter().enumerate() {
+                let fname = f.name.trim_end_matches('/');
+                if fname == name_trimmed {
+                    self.selected_index = i;
+                    break;
+                }
+            }
+        }
+        if !self.files.is_empty() && self.selected_index >= self.files.len() {
+            self.selected_index = self.files.len().saturating_sub(1);
+        }
+        Ok(())
     }
 }

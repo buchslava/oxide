@@ -35,3 +35,21 @@ pub fn create_file_line(file: &FileInfo, is_selected: bool) -> Line<'static> {
 
     Line::from(vec![file_span(&file.name)])
 }
+
+/// Create a file line from a pre-formatted display string (e.g. truncated). Use for narrow columns.
+pub fn create_file_line_from_display(display: &str, is_dir: bool, is_selected: bool) -> Line<'static> {
+    let style = if is_dir {
+        if is_selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        }
+    } else {
+        if is_selected {
+            Style::default().fg(Color::White).add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(Color::White)
+        }
+    };
+    Line::from(Span::styled(display.to_string(), style))
+}
