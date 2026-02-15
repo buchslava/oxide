@@ -117,6 +117,7 @@ impl Renderer {
 
     fn draw_single_column_view(f: &mut Frame, panel: &mut Panel, area: Rect, is_active_panel: bool) {
         let panel_height = (area.height.saturating_sub(2) as usize).max(1);
+        panel.update_scroll_offset(panel_height);
         let panel_title = if is_active_panel && !panel.get_files().is_empty() {
             if let Some(current_file) = panel.get_selected_file() {
                 format!("{} - {}", panel.get_current_dir(), current_file.name)
