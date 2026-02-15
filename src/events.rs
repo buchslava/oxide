@@ -99,6 +99,7 @@ impl EventHandler {
                             }
                         }
                         panel.enter_directory()?;
+                        app.sync_process_cwd_to_active_panel();
                     }
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {

@@ -88,7 +88,8 @@ fn main() -> Result<(), io::Error> {
                     let _ = stdout.flush();
                 }
                 if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
-                    let _ = sub.run_relay_until_ctrl_o(true, Some(prepared));
+                    let cwd = app.get_current_dir().to_string();
+                    let _ = sub.run_cd_then_relay(&cwd, Some(prepared));
                 } else {
                     eprintln!("Subshell error");
                 }

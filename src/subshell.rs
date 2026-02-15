@@ -512,6 +512,18 @@ impl Subshell {
         relay_result
     }
 
+    /// Change shell cwd to match the active panel then relay until Ctrl+O (for Suspend so ls matches panel).
+    /// Sends `cd 'cwd'` then runs relay with show_prompt_first so the shell is in the right directory.
+    pub fn run_cd_then_relay(&self, cwd: &str, prepared: Option<PreparedRelay>) -> io::Result<()> {
+        let cd_escaped = format!("'{}'", cwd.replace('\'', "'\"'\"'"));
+        let mut buf = Vec::with_capacity(8 + cd_escaped.len() + 2);
+        buf.extend_from_slice(b"cd ");
+        buf.extend_from_slice(cd_escaped.as_bytes());
+        buf.push(b'\n');
+        Self::write_all_fd(self.master_fd, &buf)?;
+        self.run_relay_until_ctrl_o(true, prepared)
+    }
+
     /// Run a command in the subshell then relay until Ctrl+O (MC: invoke_subshell with command).
     /// If `prepared` is Some, caller already set relay raw and wrote reset to stdout (single-writer flow).
     pub fn run_command_then_relay(&self, cwd: &str, cmd: &str, prepared: Option<PreparedRelay>) -> io::Result<()> {
@@ -572,6 +584,9 @@ impl Subshell {
         Ok(0)
     }
     pub fn run_relay_until_ctrl_o(&self, _show_prompt_first: bool, _prepared: Option<PreparedRelay>) -> io::Result<()> {
+        Ok(())
+    }
+    pub fn run_cd_then_relay(&self, _cwd: &str, _prepared: Option<PreparedRelay>) -> io::Result<()> {
         Ok(())
     }
     pub fn run_command_then_relay(&self, _cwd: &str, _cmd: &str, _prepared: Option<PreparedRelay>) -> io::Result<()> {

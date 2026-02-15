@@ -60,6 +60,14 @@ impl AppState {
         }
     }
 
+    /// Sync the process current directory to the active panel's directory.
+    /// Call after any panel navigation (Enter on dir, ..) so that Ctrl+O shell and command line use the same cwd.
+    pub fn sync_process_cwd_to_active_panel(&self) {
+        if let Err(e) = std::env::set_current_dir(self.get_current_dir()) {
+            eprintln!("Failed to change directory: {}", e);
+        }
+    }
+
     pub fn toggle_view_mode(&mut self) {
         let panel = self.active_panel_mut();
         let new_mode = match panel.get_view_mode() {
