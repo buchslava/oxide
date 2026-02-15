@@ -2,15 +2,31 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub name: String,
     pub is_dir: bool,
+    pub is_executable: bool,
 }
 
 impl FileInfo {
-    pub fn new(name: String, is_dir: bool) -> Self {
-        Self { name, is_dir }
+    pub fn new(name: String, is_dir: bool, is_executable: bool) -> Self {
+        Self { name, is_dir, is_executable }
     }
 
     pub fn is_parent_dir(&self) -> bool {
@@ -27,7 +43,7 @@ impl FileOperations {
 
         // Add parent directory entry if not at root
         if path_ref.parent().is_some() {
-            files.push(FileInfo::new("..".to_string(), true));
+            files.push(FileInfo::new("..".to_string(), true, false));
         }
 
         // Read current directory
@@ -37,8 +53,9 @@ impl FileOperations {
             let file_name = entry.file_name().to_string_lossy().to_string();
             let metadata = entry.metadata()?;
             let is_dir = metadata.is_dir();
+            let is_executable = is_executable(&metadata);
 
-            files.push(FileInfo::new(file_name, is_dir));
+            files.push(FileInfo::new(file_name, is_dir, is_executable));
         }
 
         // Sort files: directories first, then files alphabetically
@@ -54,7 +71,7 @@ impl FileOperations {
     }
 
     pub fn join_path<P: AsRef<Path>>(base: P, name: &str) -> PathBuf {
-        let name_clean = name.trim_end_matches('/');
+        let name_clean = name.trim_start_matches('/').trim_end_matches('/');
         base.as_ref().join(name_clean)
     }
 

@@ -12,11 +12,14 @@ use crate::app_state::{AppState, Focus};
 pub struct Renderer;
 
 /// Truncate file display to fit column width (chars). Prevents wrapping/uglification in double-column view.
+/// Prefix: "/" for folders, "*" for executables, " " for regular files (as in screenshot).
 fn truncate_for_width(file: &FileInfo, max_width: usize) -> String {
     let full = if file.is_dir {
-        format!("{}/", file.name)
+        format!("/{}", file.name)
+    } else if file.is_executable {
+        format!("*{}", file.name)
     } else {
-        file.name.clone()
+        format!(" {}", file.name)
     };
     let w = max_width.saturating_sub(1); // leave room for "…"
     if full.chars().count() <= max_width {
@@ -204,7 +207,7 @@ impl Renderer {
             let actual_index = i + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let display = truncate_for_width(file, max_left_w);
-            let line = styles::create_file_line_from_display(&display, file.is_dir, is_selected);
+            let line = styles::create_file_line_from_display(&display, file.is_dir, file.is_executable, is_selected);
             let line_area = Rect {
                 x: left_col.x,
                 y: left_col.y + i as u16,
@@ -220,7 +223,7 @@ impl Renderer {
             let actual_index = i + left_files.len() + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let display = truncate_for_width(file, max_right_w);
-            let line = styles::create_file_line_from_display(&display, file.is_dir, is_selected);
+            let line = styles::create_file_line_from_display(&display, file.is_dir, file.is_executable, is_selected);
             let line_area = Rect {
                 x: right_col.x,
                 y: right_col.y + i as u16,

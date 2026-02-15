@@ -90,7 +90,16 @@ impl EventHandler {
                     KeyCode::Right => app.active_panel_mut().smart_move_right(panel_height),
                     KeyCode::PageUp => app.active_panel_mut().page_up(panel_height),
                     KeyCode::PageDown => app.active_panel_mut().page_down(panel_height),
-                    KeyCode::Enter => app.active_panel_mut().enter_directory()?,
+                    KeyCode::Enter => {
+                        let panel = app.active_panel_mut();
+                        if let Some(file) = panel.get_selected_file() {
+                            if !file.is_dir && file.is_executable {
+                                let cmd = format!("./{}", file.name);
+                                return Ok(Some(AppAction::RunCommand(cmd)));
+                            }
+                        }
+                        panel.enter_directory()?;
+                    }
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             return Ok(Some(Self::handle_ctrl_key(app, c)));
