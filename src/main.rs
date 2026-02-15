@@ -19,6 +19,15 @@ use events::{EventHandler, AppAction};
 use panel::PanelOperations;
 use ui::Renderer;
 
+fn reset_terminal_character_set_and_modes<W: Write>(out: &mut W) -> io::Result<()> {
+    // Defensive terminal reset after shell relay/commands:
+    // - ESC ( B / ESC ) B: ASCII G0/G1 (undo DEC special graphics)
+    // - SGR reset + ensure wrap is enabled
+    out.write_all(b"\x1b(B\x1b)B\x1b[0m\x1b[?7h")?;
+    out.flush()?;
+    Ok(())
+}
+
 fn get_or_create_subshell<'a>(
     subshell: &'a mut Option<subshell::Subshell>,
     cwd: &str,
@@ -67,22 +76,23 @@ fn main() -> Result<(), io::Error> {
         match EventHandler::handle_events(&mut app)? {
             AppAction::Quit => break,
             AppAction::Suspend => {
-                // --- Ctrl+O: hand terminal to subshell (see REFERENCE.md "Ctrl+O (subshell toggle)").
-                // 1) Leave alternate screen so shell runs on main terminal; show cursor; disable mouse.
-                execute!(
-                    terminal.backend_mut(),
-                    LeaveAlternateScreen,
-                    crossterm::cursor::Show,
-                    crossterm::event::DisableMouseCapture
-                )?;
+                // --- Ctrl+O: hand terminal to subshell. Use single-writer flow (REFERENCE.md "Solution: Second Ctrl+O uglification"): do NOT use backend for leave alternate; write everything to stdout.
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
-                // 2) Relay stdin <-> PTY until user presses Ctrl+O. Do not clear main screen (keep scrollback, MC-style).
+                let _ = std::io::stdout().flush();
+                let prepared = subshell::Subshell::prepare_for_relay();
+                {
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
+                    let _ = stdout.write_all(b"\r\n");
+                    let _ = stdout.flush();
+                }
                 if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
-                    let _ = sub.run_relay_until_ctrl_o();
+                    let _ = sub.run_relay_until_ctrl_o(true, Some(prepared));
                 } else {
                     eprintln!("Subshell error");
                 }
+                let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
                 // 3) Return: enter alternate first (Ratatui), then drain input (MC tty_flush_input), then clear + redraw.
                 execute!(
                     terminal.backend_mut(),
@@ -102,44 +112,36 @@ fn main() -> Result<(), io::Error> {
                 }
             }
             AppAction::RunCommand(cmd) => {
-                // Run on real terminal (no subshell/relay) so output is never uglified; latest results matter most.
+                // Run command in the subshell (MC-style): output and prompt stay visible; Ctrl+O returns to panels. Same single-writer flow as Suspend.
                 let left_selected = app.left_panel_mut().get_selected_file().map(|f| f.name.to_string());
                 let right_selected = app.right_panel_mut().get_selected_file().map(|f| f.name.to_string());
                 let cwd = app.get_current_dir().to_string();
-                // 1) Hide panels.
-                execute!(
-                    terminal.backend_mut(),
-                    LeaveAlternateScreen,
-                    crossterm::cursor::Show,
-                    crossterm::event::DisableMouseCapture
-                )?;
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
-                // 2) Run on real terminal: cooked mode, echo command, run (output goes straight to terminal).
-                disable_raw_mode()?;
+                let _ = std::io::stdout().flush();
+                let prepared = subshell::Subshell::prepare_for_relay();
                 {
-                    let mut out = io::stdout();
-                    writeln!(out, "$ {}", cmd)?;
-                    out.flush()?;
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
+                    let _ = stdout.write_all(b"\r\n");
+                    let _ = stdout.flush();
                 }
-                let _ = subshell::run_command_in_terminal(&cwd, &cmd);
-                let _ = terminal.backend_mut().flush();
-                // 3) Wait for key so user can read latest result, then re-enter TUI.
-                enable_raw_mode()?;
-                while !event::poll(std::time::Duration::from_millis(50))? {}
-                let _ = event::read()?;
-                // 4) Return: enter alternate, drain, focus panel, clear + refresh + draw.
+                if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
+                    let _ = sub.run_command_then_relay(&cwd, &cmd, Some(prepared));
+                } else {
+                    eprintln!("Subshell error");
+                }
+                let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
+                // 3) Return: enter alternate, drain, focus panel, clear + draw (panels visible again).
                 execute!(
                     terminal.backend_mut(),
                     EnterAlternateScreen,
                     crossterm::cursor::Hide,
                     crossterm::event::EnableMouseCapture
                 )?;
-                // Drain and discard all pending events so keyboard handling is clean after relay.
-                while event::poll(std::time::Duration::ZERO)? {
-                    let _ = event::read()?;
+                if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                    break;
                 }
-                // Return with focus on panel so arrows/Enter/etc work (user was on command line before).
                 app.focus_panel();
                 terminal.clear()?;
                 let _ = app.left_panel_mut().refresh_files_restore_selection(left_selected.as_deref());
