@@ -95,6 +95,12 @@ impl PanelOperations for Panel {
         if self.selected_index > 0 {
             self.selected_index -= 1;
             if self.view_mode == ViewMode::DoubleColumn {
+                let h = panel_height.max(1);
+                let files_per_page = h * 2;
+                // MC scroll_pages: when cursor went above visible area, scroll up by half page
+                if self.selected_index < self.scroll_offset {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(files_per_page / 2);
+                }
                 self.update_scroll_offset_double_column(panel_height);
             } else {
                 self.update_scroll_offset(panel_height);
@@ -106,6 +112,13 @@ impl PanelOperations for Panel {
         if !self.files.is_empty() && self.selected_index < self.files.len() - 1 {
             self.selected_index += 1;
             if self.view_mode == ViewMode::DoubleColumn {
+                let h = panel_height.max(1);
+                let files_per_page = h * 2;
+                // MC scroll_pages: when cursor hits bottom of visible area, scroll down by half page
+                if self.selected_index == self.scroll_offset + files_per_page {
+                    let max_scroll = self.files.len().saturating_sub(files_per_page).max(0);
+                    self.scroll_offset = (self.scroll_offset + files_per_page / 2).min(max_scroll);
+                }
                 self.update_scroll_offset_double_column(panel_height);
             } else {
                 self.update_scroll_offset(panel_height);
@@ -115,14 +128,26 @@ impl PanelOperations for Panel {
 
     fn page_up(&mut self, panel_height: usize) {
         let h = panel_height.max(1);
-        if self.selected_index < h {
-            self.selected_index = 0;
-        } else {
-            self.selected_index -= h;
-        }
         if self.view_mode == ViewMode::DoubleColumn {
+            // MC prev_page: move current and top together by one page (or less if near top)
+            let files_per_page = h * 2;
+            if self.files.is_empty() || (self.selected_index == 0 && self.scroll_offset == 0) {
+                return;
+            }
+            let items = files_per_page.min(self.scroll_offset);
+            if items == 0 {
+                self.selected_index = 0;
+            } else {
+                self.selected_index = self.selected_index.saturating_sub(items);
+                self.scroll_offset -= items;
+            }
             self.update_scroll_offset_double_column(panel_height);
         } else {
+            if self.selected_index < h {
+                self.selected_index = 0;
+            } else {
+                self.selected_index -= h;
+            }
             self.update_scroll_offset(panel_height);
         }
     }
@@ -132,71 +157,97 @@ impl PanelOperations for Panel {
         if self.files.is_empty() {
             return;
         }
-        if self.selected_index >= self.files.len() - 1 {
-            return;
-        }
-        if self.selected_index + h >= self.files.len() {
-            self.selected_index = self.files.len() - 1;
-        } else {
-            self.selected_index += h;
-        }
+        let total = self.files.len();
         if self.view_mode == ViewMode::DoubleColumn {
+            // MC next_page: current += items, top += items; items = min(files_per_page, room at end)
+            let files_per_page = h * 2;
+            let max_scroll = total.saturating_sub(files_per_page).max(0);
+            if self.selected_index >= total - 1 {
+                return;
+            }
+            let mut items = files_per_page;
+            if self.scroll_offset > max_scroll.saturating_sub(files_per_page) {
+                items = total.saturating_sub(files_per_page).saturating_sub(self.scroll_offset);
+            }
+            if self.scroll_offset + items > max_scroll {
+                items = max_scroll.saturating_sub(self.scroll_offset);
+            }
+            if items == 0 {
+                self.selected_index = total - 1;
+            } else {
+                self.selected_index = (self.selected_index + items).min(total - 1);
+                self.scroll_offset += items;
+            }
             self.update_scroll_offset_double_column(panel_height);
         } else {
+            if self.selected_index >= total - 1 {
+                return;
+            }
+            if self.selected_index + h >= total {
+                self.selected_index = total - 1;
+            } else {
+                self.selected_index += h;
+            }
             self.update_scroll_offset(panel_height);
         }
     }
 
+    /// MC move_left: panel_move_current(panel, -panel_lines). Same as MC: current -= lines;
+    /// if current goes above visible window, top += lines (top moves up by one column).
     fn smart_move_left(&mut self, panel_height: usize) {
-        if self.selected_index >= self.files.len() {
+        let h = panel_height.max(1);
+        let files_per_page = h * 2;
+        let total = self.files.len();
+        if total == 0 || self.selected_index >= total {
             return;
         }
-
-        let current_line = self.selected_index % panel_height;
-        let current_column = self.selected_index / panel_height;
-        
-        if self.files.len() <= panel_height {
-            self.selected_index = 0;
-            self.update_scroll_offset_double_column(panel_height);
-            return;
+        let lines = h;
+        let new_pos = self.selected_index.saturating_sub(lines);
+        self.selected_index = new_pos.min(total - 1);
+        let mut adjust = false;
+        if self.selected_index >= self.scroll_offset + files_per_page {
+            self.scroll_offset = self.scroll_offset.saturating_add(lines);
+            adjust = true;
         }
-        
-        if current_column == 1 {
-            // Move to left column, same line
-            let target_index = current_line;
-            if target_index < self.files.len() {
-                self.selected_index = target_index;
-            }
-        } else {
-            // Move to previous page
-            self.page_up(panel_height);
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+            adjust = true;
+        }
+        if adjust {
+            self.scroll_offset = self.scroll_offset.min(self.selected_index);
+            self.scroll_offset = self.scroll_offset.max(0);
+            let max_scroll = total.saturating_sub(files_per_page).max(0);
+            self.scroll_offset = self.scroll_offset.min(max_scroll);
         }
         self.update_scroll_offset_double_column(panel_height);
     }
 
+    /// MC move_right: panel_move_current(panel, panel_lines). Same as MC: current += lines;
+    /// if current goes below visible window, top += lines (window scrolls down by one column).
     fn smart_move_right(&mut self, panel_height: usize) {
-        if self.selected_index >= self.files.len() - 1 {
+        let h = panel_height.max(1);
+        let files_per_page = h * 2;
+        let total = self.files.len();
+        if total == 0 || self.selected_index >= total.saturating_sub(1) {
             return;
         }
-
-        let current_line = self.selected_index % panel_height;
-        let current_column = self.selected_index / panel_height;
-        
-        if self.files.len() <= panel_height {
-            self.selected_index = self.files.len().saturating_sub(1);
-            return;
+        let lines = h;
+        let new_pos = (self.selected_index + lines).min(total - 1);
+        self.selected_index = new_pos;
+        let mut adjust = false;
+        if self.selected_index >= self.scroll_offset + files_per_page {
+            self.scroll_offset += lines;
+            adjust = true;
         }
-        
-        if current_column == 0 {
-            // Move to right column, same line
-            let target_index = panel_height + current_line;
-            if target_index < self.files.len() {
-                self.selected_index = target_index;
-            }
-        } else {
-            // We're in second column
-            // Move to next page (right arrow in Midnight Commander)
-            self.page_down(panel_height);
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+            adjust = true;
+        }
+        if adjust {
+            self.scroll_offset = self.scroll_offset.min(self.selected_index);
+            self.scroll_offset = self.scroll_offset.max(0);
+            let max_scroll = total.saturating_sub(files_per_page).max(0);
+            self.scroll_offset = self.scroll_offset.min(max_scroll);
         }
         self.update_scroll_offset_double_column(panel_height);
     }
@@ -235,27 +286,37 @@ impl PanelOperations for Panel {
         }
     }
 
+    /// MC adjust_top_file: keep scroll so current is visible; minimal adjustment.
+    /// top in [current - items + 1, current] and in [0, len - items]. Only adjust when
+    /// current is outside the visible window (or clamp to valid range).
     fn update_scroll_offset_double_column(&mut self, panel_height: usize) {
         let h = panel_height.max(1);
         let files_per_page = h * 2;
         let total_files = self.files.len();
 
-        if total_files == 0 {
+        if total_files <= files_per_page {
             self.scroll_offset = 0;
             return;
         }
         self.selected_index = self.selected_index.min(total_files - 1);
 
+        let max_top = total_files.saturating_sub(files_per_page).max(0);
+        if self.scroll_offset > max_top {
+            self.scroll_offset = max_top;
+        }
+        // Selection above visible window: scroll up so current is at top
         if self.selected_index < self.scroll_offset {
             self.scroll_offset = self.selected_index;
-        } else if self.selected_index >= self.scroll_offset + files_per_page {
-            self.scroll_offset = (self.selected_index / files_per_page) * files_per_page;
         }
-
-        let max_scroll_offset = total_files.saturating_sub(files_per_page).max(0);
-        if self.scroll_offset > max_scroll_offset {
-            self.scroll_offset = max_scroll_offset;
+        // Selection below visible window: scroll down so current is visible
+        let min_top = self.selected_index.saturating_sub(files_per_page - 1);
+        if self.scroll_offset < min_top {
+            self.scroll_offset = min_top.min(max_top);
         }
+        if self.scroll_offset > self.selected_index {
+            self.scroll_offset = self.selected_index;
+        }
+        self.scroll_offset = self.scroll_offset.max(0);
     }
 
     fn get_debug_info(&self) -> String {

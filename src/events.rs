@@ -4,7 +4,7 @@ use crossterm::{
     terminal::size,
 };
 use crate::app_state::{AppState, Focus};
-use crate::panel::PanelOperations;
+use crate::panel::{PanelOperations, ViewMode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
@@ -76,12 +76,18 @@ impl EventHandler {
                 if app.focus == Focus::CommandLine {
                     return Ok(Some(Self::handle_command_line_key(app, code, key.modifiers)));
                 }
-                // Panel height must match draw (area.height - 2) so scroll stays in sync after panel switch / Ctrl+O.
-                let panel_height = size()
+                // Panel height must match draw so scroll and left/right land on same row (MC behavior).
+                // Single-column: area.height - 2. Double-column: (area.height - 2) - 2 for inner border (same as draw_double_column_view).
+                let raw_height = size()
                     .map(|(_, h)| h as usize)
                     .unwrap_or(24)
                     .saturating_sub(2)
                     .max(1);
+                let panel = app.active_panel_mut();
+                let panel_height = match panel.get_view_mode() {
+                    ViewMode::DoubleColumn => raw_height.saturating_sub(2).max(1),
+                    ViewMode::SingleColumn => raw_height,
+                };
                 // Panel has focus: navigation, panel switch, or move to command line.
                 match code {
                     KeyCode::Up => app.active_panel_mut().move_up(panel_height),
@@ -193,11 +199,16 @@ impl EventHandler {
     }
 
     fn handle_mouse_event(app: &mut AppState, mouse_event: MouseEvent) -> io::Result<()> {
-        let panel_height = size()
+        let raw_height = size()
             .map(|(_, h)| h as usize)
             .unwrap_or(24)
             .saturating_sub(2)
             .max(1);
+        let panel = app.active_panel_mut();
+        let panel_height = match panel.get_view_mode() {
+            ViewMode::DoubleColumn => raw_height.saturating_sub(2).max(1),
+            ViewMode::SingleColumn => raw_height,
+        };
         match mouse_event.kind {
             MouseEventKind::ScrollUp => app.active_panel_mut().move_up(panel_height),
             MouseEventKind::ScrollDown => app.active_panel_mut().move_down(panel_height),
