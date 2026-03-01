@@ -19,6 +19,8 @@ For Linux (Debian/Ubuntu), see [BUILD_LINUX.md](doc/BUILD_LINUX.md) for system d
 - [Rust](https://www.rust-lang.org/tools/install) (edition 2021)
 - On Unix: `libc`, `nix` (for permissions, subshell PTY)
 
+For theory on the subshell, PTY, terminals, and file descriptors, see [SHELL_PTY_TERMINAL.md](doc/SHELL_PTY_TERMINAL.md).
+
 ### Build commands
 
 ```bash
