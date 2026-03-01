@@ -303,8 +303,13 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
 }
 
 /// Handle mouse when embedded editor is open. Returns true if handled.
+/// Clicks on the bottom (hint) row are not passed to the editor so the cursor cannot move there.
 pub fn handle_editor_mouse(app: &mut AppState, mouse_event: crossterm::event::MouseEvent) -> bool {
     if let Some(ref mut ed) = app.editor_screen {
+        let hint_row = ed.area.y + ed.area.height;
+        if mouse_event.row >= hint_row {
+            return true;
+        }
         let _ = ed.editor.mouse(mouse_event, &ed.area);
         return true;
     }
@@ -370,10 +375,13 @@ pub fn apply_confirm_choice(app: &mut AppState, choice: EditorConfirmChoice) {
 }
 
 /// Draw the embedded editor and, if editor_confirm_pending, the "Save changes?" dialog.
+/// The bottom row is reserved for the hint; the editor content area excludes it so the cursor
+/// cannot reach that line.
 pub fn draw(f: &mut Frame, app: &mut AppState) {
     if let Some(ref mut ed) = app.editor_screen {
         let area = f.area();
-        ed.area = area;
+        let content_height = area.height.saturating_sub(1);
+        ed.area = Rect { x: area.x, y: area.y, width: area.width, height: content_height };
         let dark_bg = Color::Rgb(30, 30, 35);
         f.render_widget(
             Block::default().style(Style::default().bg(dark_bg)),
