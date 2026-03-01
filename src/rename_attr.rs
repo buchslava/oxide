@@ -92,7 +92,6 @@ pub fn open(app: &mut AppState) {
             group_list,
             user_index,
             group_index,
-            cwd: cwd.clone(),
             old_name: name,
             focus: RenameAttrField::Name,
         });
@@ -107,7 +106,6 @@ pub fn open(app: &mut AppState) {
             group_list,
             user_index,
             group_index,
-            cwd,
             items,
             focus: RenameAttrField::Permissions,
         });
@@ -141,7 +139,6 @@ pub fn apply(app: &mut AppState) -> bool {
             group_list,
             user_index,
             group_index,
-            cwd: _,
             old_name,
             focus,
         } => {
@@ -160,10 +157,9 @@ pub fn apply(app: &mut AppState) -> bool {
                         group,
                         user_list,
                         group_list,
-                        user_index,
-                        group_index,
-                        cwd: cwd.clone(),
-                        old_name,
+            user_index,
+            group_index,
+            old_name,
                         focus,
                     });
                     app.rename_attr_error = Some(format!("Rename failed: {}", e));
@@ -181,10 +177,9 @@ pub fn apply(app: &mut AppState) -> bool {
                     group,
                     user_list,
                     group_list,
-                    user_index,
-                    group_index,
-                    cwd: cwd.clone(),
-                    old_name,
+            user_index,
+            group_index,
+            old_name,
                     focus,
                 });
                 app.rename_attr_error = Some(format!("Set permissions failed: {}", e));
@@ -201,10 +196,9 @@ pub fn apply(app: &mut AppState) -> bool {
                         group,
                         user_list,
                         group_list,
-                        user_index,
-                        group_index,
-                        cwd: cwd.clone(),
-                        old_name,
+            user_index,
+            group_index,
+            old_name,
                         focus,
                     });
                     app.rename_attr_error = Some(format!("Chown failed: {}", e));
@@ -228,7 +222,6 @@ pub fn apply(app: &mut AppState) -> bool {
             group_list,
             user_index,
             group_index,
-            cwd: _,
             items,
             focus,
         } => {
@@ -244,10 +237,9 @@ pub fn apply(app: &mut AppState) -> bool {
                         group,
                         user_list,
                         group_list,
-                        user_index,
-                        group_index,
-                        cwd: cwd.clone(),
-                        items: items.clone(),
+            user_index,
+            group_index,
+            items: items.clone(),
                         focus,
                     });
                     app.rename_attr_error = Some(format!("Set permissions failed: {}: {}", name, e));
@@ -263,10 +255,9 @@ pub fn apply(app: &mut AppState) -> bool {
                             group,
                             user_list,
                             group_list,
-                            user_index,
-                            group_index,
-                            cwd: cwd.clone(),
-                            items: items.clone(),
+            user_index,
+            group_index,
+            items: items.clone(),
                             focus,
                         });
                         app.rename_attr_error = Some(format!("Chown failed: {}: {}", name, e));

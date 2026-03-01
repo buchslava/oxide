@@ -118,7 +118,6 @@ pub enum SizeInfoProgress {
         total_bytes: u64,
         file_count: usize,
         dir_count: usize,
-        current_name: String,
     },
     /// Calculation complete.
     Done {
@@ -138,7 +137,6 @@ pub enum SizeInfoDialogState {
         total_bytes: u64,
         file_count: usize,
         dir_count: usize,
-        current_name: String,
     },
     /// Calculation complete; show final size.
     Done {
@@ -182,7 +180,6 @@ pub enum RenameAttrDialogState {
         group_list: Vec<String>,
         user_index: usize,
         group_index: usize,
-        cwd: String,
         old_name: String,
         focus: RenameAttrField,
     },
@@ -196,7 +193,6 @@ pub enum RenameAttrDialogState {
         group_list: Vec<String>,
         user_index: usize,
         group_index: usize,
-        cwd: String,
         items: Vec<(String, bool)>,
         focus: RenameAttrField,
     },

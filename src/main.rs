@@ -297,7 +297,6 @@ fn main() -> Result<(), io::Error> {
                     total_bytes,
                     file_count,
                     dir_count,
-                    current_name,
                 }) => {
                     app.size_info_dialog = Some(SizeInfoDialogState::Calculating {
                         current,
@@ -305,7 +304,6 @@ fn main() -> Result<(), io::Error> {
                         total_bytes,
                         file_count,
                         dir_count,
-                        current_name,
                     });
                     app.size_info_pending_rx = Some(rx);
                     terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;

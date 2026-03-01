@@ -42,7 +42,6 @@ pub fn open(app: &mut AppState) {
                 total_bytes,
                 file_count,
                 dir_count,
-                current_name: name.clone(),
             });
         }
         let _ = tx.send(SizeInfoProgress::Done {
@@ -57,7 +56,6 @@ pub fn open(app: &mut AppState) {
         total_bytes: 0,
         file_count: 0,
         dir_count: 0,
-        current_name: items.first().map(|(n, _)| n.clone()).unwrap_or_default(),
     });
     app.size_info_pending_rx = Some(rx);
 }

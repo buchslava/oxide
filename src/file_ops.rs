@@ -215,48 +215,6 @@ impl FileOperations {
         base.as_ref().join(name_clean)
     }
 
-    pub fn path_exists<P: AsRef<Path>>(path: P) -> bool {
-        path.as_ref().exists()
-    }
-
-    pub fn is_directory<P: AsRef<Path>>(path: P) -> bool {
-        path.as_ref().is_dir()
-    }
-
-    /// Parse a 9- or 10-char rwx string (e.g. "rwxr-xr-x" or "-rwxr-xr-x") to Unix mode (0o777 bits).
-    /// Returns None if the string is invalid.
-    #[cfg(unix)]
-    pub fn parse_permissions(s: &str) -> Option<u32> {
-        let s = s.trim();
-        let rwx = if s.len() == 10 && s.chars().next().map(|c| c == 'd' || c == '-' || c == 'l').unwrap_or(false) {
-            &s[1..]
-        } else if s.len() == 9 {
-            s
-        } else {
-            return None;
-        };
-        let mut mode = 0u32;
-        for (i, c) in rwx.chars().enumerate() {
-            if i >= 9 {
-                return None;
-            }
-            let bit = match (i % 3, c) {
-                (0, 'r') => 0o400 >> (i / 3 * 3),
-                (1, 'w') => 0o200 >> (i / 3 * 3),
-                (2, 'x') | (2, 's') | (2, 't') => 0o100 >> (i / 3 * 3),
-                (_, '-') => 0,
-                _ => return None,
-            };
-            mode |= bit;
-        }
-        Some(mode & 0o777)
-    }
-
-    #[cfg(not(unix))]
-    pub fn parse_permissions(_s: &str) -> Option<u32> {
-        None
-    }
-
     /// Get file mode (0o7777: suid, sgid, sticky + rwx for owner/group/other). Unix only.
     #[cfg(unix)]
     pub fn get_file_mode<P: AsRef<Path>>(path: P) -> io::Result<u32> {

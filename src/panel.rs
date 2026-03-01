@@ -27,14 +27,11 @@ pub trait PanelOperations {
     fn get_files(&self) -> &[FileInfo];
     fn get_view_mode(&self) -> ViewMode;
     fn set_view_mode(&mut self, mode: ViewMode);
-    fn set_current_dir(&mut self, dir: String);
     /// Toggle selection (mark) of the current file and move to the next. F12 / MC Insert.
     fn toggle_mark_and_move_next(&mut self, panel_height: usize);
     /// Invert selection: all marked become unmarked, all unmarked (except "..") become marked. MC *.
     fn invert_selection(&mut self);
     fn is_marked(&self, index: usize) -> bool;
-    /// Names and is_dir of items to copy: marked items (excluding ".."), or current file if none marked. For F5 Copy.
-    fn get_names_to_copy(&self) -> Vec<(String, bool)>;
     /// Same as get_names_to_copy plus names of file before (first-1) and after (first+count) for restore after delete/move.
     fn get_names_to_copy_with_restore_neighbors(&self) -> (Vec<(String, bool)>, Option<String>, Option<String>);
 }
@@ -365,10 +362,6 @@ impl PanelOperations for Panel {
         self.view_mode = mode;
     }
 
-    fn set_current_dir(&mut self, dir: String) {
-        self.current_dir = dir;
-    }
-
     fn toggle_mark_and_move_next(&mut self, panel_height: usize) {
         if self.files.is_empty() {
             return;
@@ -405,10 +398,6 @@ impl PanelOperations for Panel {
 
     fn is_marked(&self, index: usize) -> bool {
         self.marked_indices.contains(&index)
-    }
-
-    fn get_names_to_copy(&self) -> Vec<(String, bool)> {
-        self.get_names_to_copy_with_restore_neighbors().0
     }
 
     fn get_names_to_copy_with_restore_neighbors(&self) -> (Vec<(String, bool)>, Option<String>, Option<String>) {
@@ -481,19 +470,6 @@ impl Panel {
         match self.view_mode {
             ViewMode::SingleColumn => self.update_scroll_offset(panel_height),
             ViewMode::DoubleColumn => self.update_scroll_offset_double_column(panel_height),
-        }
-    }
-
-    /// Toggle mark (F12-style) at the given index only; does not move selection.
-    pub fn toggle_mark_at(&mut self, index: usize) {
-        if let Some(f) = self.files.get(index) {
-            if !f.is_parent_dir() {
-                if self.marked_indices.contains(&index) {
-                    self.marked_indices.remove(&index);
-                } else {
-                    self.marked_indices.insert(index);
-                }
-            }
         }
     }
 

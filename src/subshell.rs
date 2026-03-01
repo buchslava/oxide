@@ -20,7 +20,9 @@ const CTRL_O_KITTY: &[u8] = b"\x1b[111;5u";
 #[cfg(unix)]
 const CTRL_O_MODIFY_OTHER_KEYS: &[u8] = b"\x1b[27;5;111~";
 
-/// Cached "relay raw" termios from first run; reused on 2nd+ run so we always apply the same state (avoids TUI-modified termios causing uglified output).
+// Cached "relay raw" termios from first run; reused on 2nd+ run so we always apply the same state
+// (avoids TUI-modified termios causing uglified output). Doc omitted: thread_local! macro does not
+// propagate doc comments.
 #[cfg(unix)]
 std::thread_local!(static RELAY_RAW_TERMIOS: std::cell::RefCell<Option<libc::termios>> = std::cell::RefCell::new(None));
 
@@ -110,7 +112,7 @@ impl Subshell {
         let result = match nix::unistd::read(fd, buf) {
             Ok(0) => Ok(Some(0)),
             Ok(n) => Ok(Some(n)),
-            Err(Errno::EAGAIN) | Err(Errno::EWOULDBLOCK) => Ok(None),
+            Err(e) if e == Errno::EAGAIN || e == Errno::EWOULDBLOCK => Ok(None),
             Err(Errno::EINTR) => Ok(None),
             Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
         };
@@ -377,39 +379,6 @@ impl Subshell {
                     child_pid,
                 })
             }
-        }
-    }
-
-    /// Write data to the shell (e.g. command line + newline). Non-blocking friendly.
-    pub fn write(&self, data: &[u8]) -> io::Result<usize> {
-        nix::unistd::write(unsafe { BorrowedFd::borrow_raw(self.master_fd) }, data)
-            .map_err(io::Error::from)
-    }
-
-    /// Read any data currently available from the shell (non-blocking).
-    pub fn read_available(&self) -> io::Result<Vec<u8>> {
-        use nix::errno::Errno;
-        use nix::poll::{poll, PollFd, PollFlags};
-
-        let mut fds = [PollFd::new(
-            unsafe { BorrowedFd::borrow_raw(self.master_fd) },
-            PollFlags::POLLIN,
-        )];
-        match poll(&mut fds, 0u16) {
-            Ok(0) => return Ok(Vec::new()),
-            Ok(_) => {}
-            Err(Errno::EINTR) => return Ok(Vec::new()),
-            Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
-        }
-        if !fds[0].revents().map_or(false, |r| r.contains(PollFlags::POLLIN)) {
-            return Ok(Vec::new());
-        }
-        let mut buf = [0u8; 4096];
-        match nix::unistd::read(self.master_fd, &mut buf) {
-            Ok(0) => Ok(Vec::new()),
-            Ok(n) => Ok(buf[..n].to_vec()),
-            Err(Errno::EINTR) => Ok(Vec::new()),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
         }
     }
 
