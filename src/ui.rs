@@ -171,9 +171,6 @@ impl Renderer {
         if app.rename_attr_dialog.is_some() {
             crate::rename_attr::draw(f, app);
         }
-        if app.size_info_dialog.is_some() {
-            crate::size_info_dialog::draw(f, app);
-        }
         if app.settings_dialog.is_some() {
             crate::settings_dialog::draw(f, app);
         }
@@ -595,7 +592,6 @@ impl Renderer {
             ("6 Move", 6),
             ("7 Folder", 7),
             ("8 Delete", 8),
-            ("9 Size", 9),
             ("10 Quit", 10),
         ]
     }
@@ -724,40 +720,50 @@ impl Renderer {
         Self::draw_menu_bar(f, menu_rect);
     }
 
-    /// Bottom bar (MC-style): vertical │ at split; left = file attributes, right = disk space.
+    /// Bottom bar (MC-style): vertical │ at split; left = file attributes or size info (Ctrl+G), right = disk space.
     fn draw_bottom_file_bar(f: &mut Frame, app: &AppState, area: Rect, sep_x: u16) {
         let bar_style = Style::default().bg(MAIN_DARK_BG).fg(Color::White);
-        let file_opt = if app.active_panel() == 0 {
-            app.left_panel().get_selected_file()
-        } else {
-            app.right_panel().get_selected_file()
-        };
-        let (size, permissions) = if let Some(file) = file_opt {
-            (
-                file.size,
-                if file.permissions.is_empty() {
-                    "----------"
-                } else {
-                    file.permissions.as_str()
-                },
-            )
-        } else {
-            (0u64, "----------")
-        };
-        let size_str = format_size(size);
-        let left_text = if permissions.is_empty() || permissions == "----------" {
-            format!(" {} - ", size_str)
-        } else {
-            format!(" {} {}", size_str, permissions)
-        };
         let left_w = (sep_x.saturating_sub(area.x)) as usize;
+        let (left_text, is_size_info) = if let Some(line) = crate::size_info_dialog::format_bottom_bar_line(app) {
+            (line, true)
+        } else {
+            let file_opt = if app.active_panel() == 0 {
+                app.left_panel().get_selected_file()
+            } else {
+                app.right_panel().get_selected_file()
+            };
+            let (size, permissions) = if let Some(file) = file_opt {
+                (
+                    file.size,
+                    if file.permissions.is_empty() {
+                        "----------"
+                    } else {
+                        file.permissions.as_str()
+                    },
+                )
+            } else {
+                (0u64, "----------")
+            };
+            let size_str = format_size(size);
+            let text = if permissions.is_empty() || permissions == "----------" {
+                format!(" {} - ", size_str)
+            } else {
+                format!(" {} {}", size_str, permissions)
+            };
+            (text, false)
+        };
         let left_line = if left_text.chars().count() > left_w {
             left_text.chars().take(left_w).collect::<String>()
         } else {
             format!("{}{}", left_text, " ".repeat(left_w.saturating_sub(left_text.chars().count())))
         };
         let left_rect = Rect { x: area.x, y: area.y, width: left_w as u16, height: 1 };
-        f.render_widget(Paragraph::new(left_line).style(bar_style), left_rect);
+        let left_style = if is_size_info {
+            bar_style.fg(Color::Green)
+        } else {
+            bar_style
+        };
+        f.render_widget(Paragraph::new(left_line).style(left_style), left_rect);
         f.render_widget(Paragraph::new("│").style(bar_style), Rect { x: sep_x, y: area.y, width: 1, height: 1 });
         let right_w = area.width.saturating_sub((sep_x - area.x) + 1);
         let disk = disk_space_string(app.get_current_dir());

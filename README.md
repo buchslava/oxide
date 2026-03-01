@@ -15,7 +15,7 @@ Oxide is a terminal user interface (TUI) file manager with a dual-panel layout. 
 - **Embedded editor (F4)** — Syntax highlighting, Ctrl+F search, save/discard
 - **Create directory (F7)**
 - **Rename / Attributes (F2)** — Change name, permissions, owner/group (Unix)
-- **Size info (F9)** — Total size of selected files and folders (background calculation)
+- **Size info (Ctrl+G)** — Total size of selected files/folders in panel status bar (any key/click to dismiss)
 - **Shell relay (Ctrl+O)** — Spawn subshell, run commands, return to panels
 - **Command line** — Run shell commands
 - **Mouse support** — Clicks, scroll
@@ -78,8 +78,8 @@ xd
 | | F6 | Move |
 | | F7 | New directory |
 | | F8 | Delete |
-| | F9 | Size info |
 | | F10 | Quit |
+| | Ctrl+G | Size info |
 | **Shortcuts** | Ctrl+O | Shell |
 | | Ctrl+R | Refresh |
 | | Ctrl+T | View mode |

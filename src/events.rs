@@ -408,12 +408,6 @@ impl EventHandler {
                             }
                         }
                     }
-                    KeyCode::F(9) => {
-                        let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
-                        if !items.is_empty() {
-                            return Ok(Some(AppAction::OpenSizeInfoDialog));
-                        }
-                    }
                     KeyCode::F(8) => {
                         let (items, restore_after, restore_before) =
                             app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
@@ -508,6 +502,14 @@ impl EventHandler {
     fn handle_ctrl_key(app: &mut AppState, c: char) -> AppAction {
         match c {
             'o' => AppAction::Suspend,
+            'g' => {
+                let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
+                if !items.is_empty() {
+                    AppAction::OpenSizeInfoDialog
+                } else {
+                    AppAction::Continue
+                }
+            }
             't' => {
                 app.toggle_view_mode();
                 AppAction::Continue
@@ -811,14 +813,6 @@ impl EventHandler {
                             ));
                             app.operation_confirm_focus_yes = true;
                             Some(AppAction::Continue)
-                        } else {
-                            None
-                        }
-                    }
-                    9 => {
-                        let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
-                        if !items.is_empty() {
-                            Some(AppAction::OpenSizeInfoDialog)
                         } else {
                             None
                         }
