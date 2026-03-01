@@ -501,6 +501,25 @@ fn main() -> Result<(), io::Error> {
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
             AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
             AppAction::SettingsClose => settings_dialog::close(&mut app),
+            AppAction::ToggleShowHidden => {
+                let new_show = !app.show_hidden_files;
+                app.show_hidden_files = new_show;
+                let panel_height = util::compute_panel_height();
+                let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
+                let right_name = app.right_panel().get_selected_file().map(|f| f.name.clone());
+                app.left_panel_mut().set_show_hidden(new_show);
+                app.right_panel_mut().set_show_hidden(new_show);
+                let _ = app.left_panel_mut().refresh_files_restore_selection(
+                    left_name.as_deref(),
+                    None,
+                    Some(panel_height),
+                );
+                let _ = app.right_panel_mut().refresh_files_restore_selection(
+                    right_name.as_deref(),
+                    None,
+                    Some(panel_height),
+                );
+            }
             AppAction::RenameAttrConfirm => {
                 if rename_attr::apply(&mut app) {
                     terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;

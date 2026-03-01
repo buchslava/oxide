@@ -140,7 +140,8 @@ impl FileInfo {
 pub struct FileOperations;
 
 impl FileOperations {
-    pub fn read_directory<P: AsRef<Path>>(path: P) -> io::Result<Vec<FileInfo>> {
+    /// Read directory contents. When show_hidden is false, entries starting with "." are excluded.
+    pub fn read_directory<P: AsRef<Path>>(path: P, show_hidden: bool) -> io::Result<Vec<FileInfo>> {
         let mut files = Vec::new();
         let path_ref = path.as_ref();
 
@@ -156,6 +157,9 @@ impl FileOperations {
         for entry in entries {
             let entry = entry?;
             let file_name = entry.file_name().to_string_lossy().to_string();
+            if !show_hidden && file_name.starts_with('.') {
+                continue;
+            }
             let metadata = entry.metadata()?;
             let file_type = entry.file_type()?;
             let is_symlink = file_type.is_symlink();

@@ -49,6 +49,8 @@ pub struct Panel {
     navigation_history: Vec<(String, usize)>,
     /// Indices of files marked for group operations (F12 / MC Insert).
     marked_indices: HashSet<usize>,
+    /// When true, show hidden files (names starting with "."). Toggled by Ctrl+H.
+    show_hidden: bool,
 }
 
 impl Panel {
@@ -61,6 +63,7 @@ impl Panel {
             scroll_offset: 0,
             navigation_history: Vec::new(),
             marked_indices: HashSet::new(),
+            show_hidden: true,
         };
         panel.refresh_files()?;
         Ok(panel)
@@ -282,7 +285,7 @@ impl PanelOperations for Panel {
 
     fn refresh_files(&mut self) -> io::Result<()> {
         self.marked_indices.clear();
-        self.files = FileOperations::read_directory(&self.current_dir)?;
+        self.files = FileOperations::read_directory(&self.current_dir, self.show_hidden)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
@@ -463,6 +466,11 @@ impl PanelOperations for Panel {
 }
 
 impl Panel {
+    /// Set whether hidden files (names starting with ".") are shown. Used by Ctrl+H toggle.
+    pub fn set_show_hidden(&mut self, show: bool) {
+        self.show_hidden = show;
+    }
+
     /// Set the current selection to the given index and update scroll so it is visible.
     pub fn set_selection(&mut self, index: usize, panel_height: usize) {
         let len = self.files.len();
@@ -500,7 +508,7 @@ impl Panel {
         panel_height: Option<usize>,
     ) -> io::Result<()> {
         self.marked_indices.clear();
-        self.files = FileOperations::read_directory(&self.current_dir)?;
+        self.files = FileOperations::read_directory(&self.current_dir, self.show_hidden)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
 

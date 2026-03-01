@@ -104,6 +104,8 @@ pub struct AppState {
     pub last_mouse_click: Option<(std::time::Instant, usize, usize)>,
     /// Last mouse (column, row) from any mouse event (scroll, move, click).
     pub last_mouse_position: Option<(u16, u16)>,
+    /// When true, show hidden files (names starting with "."). Default true. Toggled by Ctrl+H.
+    pub show_hidden_files: bool,
 }
 
 /// Message from background size-calculation thread.
@@ -273,6 +275,7 @@ impl AppState {
             size_info_pending_rx: None,
             last_mouse_click: None,
             last_mouse_position: None,
+            show_hidden_files: true,
         })
     }
 

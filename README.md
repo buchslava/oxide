@@ -20,6 +20,7 @@ Oxide is a terminal user interface (TUI) file manager with a dual-panel layout. 
 - **Command line** — Run shell commands
 - **Mouse support** — Clicks, scroll
 - **Disk space display** — Shows usage on Unix
+- **Hidden files** — Shown by default; Ctrl+H toggles visibility
 
 ## Build
 
@@ -80,6 +81,7 @@ xd
 | | F8 | Delete |
 | | F10 | Quit |
 | | Ctrl+G | Size info |
+| | Ctrl+H | Toggle hidden files |
 | **Shortcuts** | Ctrl+O | Shell |
 | | Ctrl+R | Refresh |
 | | Ctrl+T | View mode |

@@ -60,6 +60,8 @@ pub enum AppAction {
     OpenSettingsDialog,
     /// ESC or mouse click in Settings dialog: close.
     SettingsClose,
+    /// Ctrl+H: toggle hidden files visibility.
+    ToggleShowHidden,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,6 +462,9 @@ impl EventHandler {
                         app.command_line_clear();
                         return AppAction::Continue;
                     }
+                    if c == 'h' {
+                        return AppAction::ToggleShowHidden;
+                    }
                 }
                 app.command_line_insert(c);
                 AppAction::Continue
@@ -514,6 +519,7 @@ impl EventHandler {
                 app.toggle_view_mode();
                 AppAction::Continue
             }
+            'h' => AppAction::ToggleShowHidden,
             'r' => {
                 let _ = app.active_panel_mut().refresh_files();
                 AppAction::Continue
