@@ -186,6 +186,7 @@ impl Renderer {
 
     /// Operation confirmation dialog (Copy/Move/Delete): operation alert, Yes/No buttons.
     /// Tab switches focus. Y/y=Yes, N/n/Esc=No. Mouse/touchpad friendly. Y and N highlighted in orange.
+    /// For Copy/Move: shows "From" and "To" paths.
     fn draw_operation_confirm_dialog(f: &mut Frame, app: &AppState) {
         let (op, params) = match app.operation_confirm_pending.as_ref() {
             Some(x) => x,
@@ -197,10 +198,11 @@ impl Renderer {
             Operation::Move => (" Move ", format!("Move {} {}?", count, if count == 1 { "file" } else { "files" })),
             Operation::Delete => (" Delete ", format!("Delete {} {}?", count, if count == 1 { "file" } else { "files" })),
         };
+        let show_paths = matches!(op, Operation::Copy | Operation::Move);
         let area = f.area();
-        let max_w = 46u16;
+        let max_w = 60u16;
         let w = max_w.min(area.width.saturating_sub(4));
-        let h = 8u16;
+        let h = if show_paths { 11 } else { 8 };
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
         let rect = Rect { x, y, width: w, height: h };
@@ -222,12 +224,27 @@ impl Renderer {
             height: inner.height,
         };
         let max_msg_w = content.width as usize;
+        let mut row = content.y;
+        if show_paths {
+            let path_w = max_msg_w.saturating_sub(2);
+            let from_str = compact_path(params.source_dir.trim_end_matches('/'), path_w);
+            let to_str = compact_path(params.target_dir.trim_end_matches('/'), path_w);
+            let from_line = format!("From: {}", from_str);
+            let to_line = format!("To:   {}", to_str);
+            f.render_widget(Paragraph::new(from_line).style(fill_style), Rect { x: content.x, y: row, width: content.width, height: 1 });
+            row += 1;
+            f.render_widget(Paragraph::new(to_line).style(fill_style), Rect { x: content.x, y: row, width: content.width, height: 1 });
+            row += 2; // blank before message
+        }
         let msg_display = truncate_str_ellipsis(&message, max_msg_w);
-        // Centered message
         let msg_para = Paragraph::new(msg_display.as_str())
             .style(fill_style)
             .alignment(Alignment::Center);
-        let msg_y = content.y + (content.height.saturating_sub(3)) / 2;
+        let msg_y = if show_paths {
+            row
+        } else {
+            content.y + (content.height.saturating_sub(3)) / 2
+        };
         f.render_widget(msg_para, Rect {
             x: content.x,
             y: msg_y,
@@ -281,10 +298,11 @@ impl Renderer {
     }
 
     /// Return (dialog_rect, yes_button_rect, no_button_rect) for operation confirm hit-testing.
-    pub fn operation_confirm_button_rects(area: Rect) -> Option<(Rect, Rect, Rect)> {
-        let max_w = 46u16;
+    /// show_paths: true for Copy/Move (taller dialog).
+    pub fn operation_confirm_button_rects(area: Rect, show_paths: bool) -> Option<(Rect, Rect, Rect)> {
+        let max_w = 60u16;
         let w = max_w.min(area.width.saturating_sub(4));
-        let h = 8u16;
+        let h = if show_paths { 11 } else { 8 };
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
         let rect = Rect { x, y, width: w, height: h };
@@ -296,23 +314,20 @@ impl Renderer {
             width: inner.width.saturating_sub(PAD_H * 2),
             height: inner.height,
         };
-        const YES_W: u16 = 10;
-        const NO_W: u16 = 10;
-        let btn_gap = 4u16;
-        let total_btns = YES_W + NO_W + btn_gap;
-        let btn_start_x = content.x + content.width.saturating_sub(total_btns) / 2;
         let btn_y = content.y + content.height.saturating_sub(2);
+        // Mouse-friendly: split bottom row 50/50 — left half = Yes, right half = No
+        let btn_half_w = content.width / 2;
         let yes_rect = Rect {
-            x: btn_start_x,
+            x: content.x,
             y: btn_y,
-            width: YES_W,
-            height: 1,
+            width: btn_half_w,
+            height: 2, // extend down for easier clicking
         };
         let no_rect = Rect {
-            x: btn_start_x + YES_W + btn_gap,
+            x: content.x + btn_half_w,
             y: btn_y,
-            width: NO_W,
-            height: 1,
+            width: content.width.saturating_sub(btn_half_w),
+            height: 2,
         };
         Some((rect, yes_rect, no_rect))
     }

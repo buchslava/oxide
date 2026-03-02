@@ -630,10 +630,11 @@ impl EventHandler {
             return Ok(Some(AppAction::Continue));
         }
         // Operation confirm dialog: handle clicks on Yes/No buttons (mouse/touchpad friendly).
-        if app.operation_confirm_pending.is_some() {
+        if let Some((op, _)) = app.operation_confirm_pending.as_ref() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let show_paths = matches!(op, crate::app_state::Operation::Copy | crate::app_state::Operation::Move);
                 if let Some((_dialog_rect, yes_rect, no_rect)) =
-                    Renderer::operation_confirm_button_rects(area)
+                    Renderer::operation_confirm_button_rects(area, show_paths)
                 {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= yes_rect.x

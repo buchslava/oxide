@@ -505,10 +505,16 @@ impl Panel {
                 for (i, f) in self.files.iter().enumerate() {
                     if f.name.trim_end_matches('/') == name_trimmed && !f.is_parent_dir() {
                         self.selected_index = i;
+                        found = true;
                         break;
                     }
                 }
             }
+        }
+        // When neither preferred_after nor preferred_before was found (e.g. deleted last file, name_before was ".."),
+        // select the new last file so we don't jump to the first.
+        if !found && !self.files.is_empty() {
+            self.selected_index = self.files.len().saturating_sub(1);
         }
 
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
