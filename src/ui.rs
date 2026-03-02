@@ -107,6 +107,14 @@ fn format_mtime(t: &std::time::SystemTime) -> String {
     datetime.format("%b %e %H:%M").to_string()
 }
 
+/// Filename only for bottom bar display (no path).
+fn filename_for_bottom_bar(file: Option<&FileInfo>) -> String {
+    match file {
+        None => String::new(),
+        Some(f) => f.name.trim_end_matches('/').to_string(),
+    }
+}
+
 /// Size display: "UP--DIR" for ".." (parent), nothing for other dirs, human-readable for files.
 fn size_display(file: &FileInfo) -> String {
     if file.is_parent_dir() {
@@ -639,55 +647,48 @@ impl Renderer {
             width: area.width,
             height: content_height,
         };
-        let path = app.get_current_dir();
-        let title_w = (frame_rect.width.saturating_sub(2)) as usize;
-        let title_line = if let Some(file) = app.active_panel_ref().get_selected_file() {
-            if !file.is_parent_dir() {
-                let combined = format!("{}/{}", path.trim_end_matches('/'), file.name.trim_start_matches('/'));
-                Line::from(Span::styled(
-                    compact_path(&combined, title_w.max(1)),
-                    Style::default().fg(Color::Rgb(255, 180, 80)),
-                ))
-            } else {
-                Line::from(Span::styled(
-                    compact_path(path, title_w.max(1)),
-                    Style::default().fg(Color::Rgb(255, 180, 80)),
-                ))
-            }
-        } else {
-            Line::from(Span::styled(
-                compact_path(path, title_w.max(1)),
-                Style::default().fg(Color::Rgb(255, 180, 80)),
-            ))
-        };
         let frame_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White).bg(MAIN_DARK_BG))
-            .style(Style::default().bg(MAIN_DARK_BG))
-            .title(title_line);
+            .style(Style::default().bg(MAIN_DARK_BG));
         let inner = frame_block.inner(frame_rect);
         f.render_widget(frame_block, frame_rect);
 
-        let panel_content_height = inner.height.saturating_sub(1); // bottom bar 1
         let left_w = inner.width / 2;
         let right_w = inner.width.saturating_sub(left_w).saturating_sub(1);
         let sep_x = inner.x + left_w;
 
+        // Row 0: path (without filename) at top-left of each panel
+        let path_style = Style::default().fg(Color::Rgb(255, 180, 80));
+        let left_path = app.left_panel().get_current_dir();
+        let right_path = app.right_panel().get_current_dir();
+        let left_path_display = compact_path(left_path.trim_end_matches('/'), left_w as usize);
+        let right_path_display = compact_path(right_path.trim_end_matches('/'), right_w as usize);
+        f.render_widget(
+            Paragraph::new(left_path_display).style(path_style),
+            Rect { x: inner.x, y: inner.y, width: left_w, height: 1 },
+        );
+        f.render_widget(
+            Paragraph::new(right_path_display).style(path_style),
+            Rect { x: sep_x + 1, y: inner.y, width: right_w, height: 1 },
+        );
+
+        let panel_content_height = inner.height.saturating_sub(2); // 1 for path row, 1 for bottom bar
         let left_panel = Rect {
             x: inner.x,
-            y: inner.y,
+            y: inner.y + 1,
             width: left_w,
             height: panel_content_height,
         };
         let right_panel = Rect {
             x: sep_x + 1,
-            y: inner.y,
+            y: inner.y + 1,
             width: right_w,
             height: panel_content_height,
         };
         let bottom_file_rect = Rect {
             x: inner.x,
-            y: inner.y + panel_content_height,
+            y: inner.y + 1 + panel_content_height,
             width: inner.width,
             height: 1,
         };
@@ -707,9 +708,9 @@ impl Renderer {
         let active_panel = app.active_panel();
         Self::draw_single_panel(f, app.left_panel_mut(), left_panel, "Left Panel", active_panel == 0);
         Self::draw_single_panel(f, app.right_panel_mut(), right_panel, "Right Panel", active_panel == 1);
-        // Vertical separator │ from top of content to bottom bar
+        // Vertical separator │ from path row through bottom bar
         let sep_style = Style::default().bg(MAIN_DARK_BG).fg(Color::White);
-        for row in inner.y..(inner.y + panel_content_height + 1) {
+        for row in inner.y..(inner.y + panel_content_height + 2) {
             f.render_widget(
                 Paragraph::new("│").style(sep_style),
                 Rect { x: sep_x, y: row, width: 1, height: 1 },
@@ -720,58 +721,69 @@ impl Renderer {
         Self::draw_menu_bar(f, menu_rect);
     }
 
-    /// Bottom bar (MC-style): vertical │ at split; left = file attributes or size info (Ctrl+G), right = disk space.
+    /// Bottom bar: filename (without path) per panel; size info (Ctrl+G) replaces active panel's filename; disk space only on Ctrl+G.
     fn draw_bottom_file_bar(f: &mut Frame, app: &AppState, area: Rect, sep_x: u16) {
         let bar_style = Style::default().bg(MAIN_DARK_BG).fg(Color::White);
-        let left_w = (sep_x.saturating_sub(area.x)) as usize;
-        let (left_text, is_size_info) = if let Some(line) = crate::size_info_dialog::format_bottom_bar_line(app) {
-            (line, true)
+        let left_half_w = (sep_x.saturating_sub(area.x)) as usize;
+        let right_total_w = area.width.saturating_sub((sep_x - area.x) + 1) as usize;
+
+        let show_disk = app.size_info_dialog.is_some();
+        const DISK_W: usize = 20; // "12G / 466G (2%)"
+        let right_content_w = if show_disk && right_total_w > DISK_W {
+            right_total_w.saturating_sub(DISK_W)
         } else {
-            let file_opt = if app.active_panel() == 0 {
-                app.left_panel().get_selected_file()
-            } else {
-                app.right_panel().get_selected_file()
-            };
-            let (size, permissions) = if let Some(file) = file_opt {
-                (
-                    file.size,
-                    if file.permissions.is_empty() {
-                        "----------"
-                    } else {
-                        file.permissions.as_str()
-                    },
-                )
-            } else {
-                (0u64, "----------")
-            };
-            let size_str = format_size(size);
-            let text = if permissions.is_empty() || permissions == "----------" {
-                format!(" {} - ", size_str)
-            } else {
-                format!(" {} {}", size_str, permissions)
-            };
-            (text, false)
+            right_total_w
         };
-        let left_line = if left_text.chars().count() > left_w {
-            left_text.chars().take(left_w).collect::<String>()
+
+        let size_info_line = crate::size_info_dialog::format_bottom_bar_line(app);
+        let active = app.active_panel();
+
+        let left_text = if active == 0 {
+            size_info_line.clone().unwrap_or_else(|| filename_for_bottom_bar(app.left_panel().get_selected_file()))
         } else {
-            format!("{}{}", left_text, " ".repeat(left_w.saturating_sub(left_text.chars().count())))
+            filename_for_bottom_bar(app.left_panel().get_selected_file())
         };
-        let left_rect = Rect { x: area.x, y: area.y, width: left_w as u16, height: 1 };
-        let left_style = if is_size_info {
+        let right_text = if active == 1 {
+            size_info_line.clone().unwrap_or_else(|| filename_for_bottom_bar(app.right_panel().get_selected_file()))
+        } else {
+            filename_for_bottom_bar(app.right_panel().get_selected_file())
+        };
+
+        let filename_color = Color::Rgb(255, 180, 80); // orange, matches path
+        let left_style = if active == 0 && size_info_line.is_some() {
             bar_style.fg(Color::Green)
         } else {
-            bar_style
+            bar_style.fg(filename_color)
         };
-        f.render_widget(Paragraph::new(left_line).style(left_style), left_rect);
+        let right_style = if active == 1 && size_info_line.is_some() {
+            bar_style.fg(Color::Green)
+        } else {
+            bar_style.fg(filename_color)
+        };
+
+        let left_trunc: String = left_text.chars().take(left_half_w).collect();
+        let left_pad = left_half_w.saturating_sub(left_trunc.chars().count());
+        f.render_widget(
+            Paragraph::new(format!("{}{}", left_trunc, " ".repeat(left_pad))).style(left_style),
+            Rect { x: area.x, y: area.y, width: left_half_w as u16, height: 1 },
+        );
         f.render_widget(Paragraph::new("│").style(bar_style), Rect { x: sep_x, y: area.y, width: 1, height: 1 });
-        let right_w = area.width.saturating_sub((sep_x - area.x) + 1);
-        let disk = disk_space_string(app.get_current_dir());
-        let disk_len = disk.chars().count().min(right_w as usize);
-        let right_pad = (right_w as usize).saturating_sub(disk_len);
-        let right_line = format!("{}{}", " ".repeat(right_pad), disk);
-        let right_rect = Rect { x: sep_x + 1, y: area.y, width: right_w, height: 1 };
-        f.render_widget(Paragraph::new(right_line).style(bar_style), right_rect);
+
+        let right_trunc: String = right_text.chars().take(right_content_w).collect();
+        let right_pad = right_content_w.saturating_sub(right_trunc.chars().count());
+        let right_display = format!("{}{}", right_trunc, " ".repeat(right_pad));
+        f.render_widget(
+            Paragraph::new(right_display).style(right_style),
+            Rect { x: sep_x + 1, y: area.y, width: right_content_w as u16, height: 1 },
+        );
+
+        if show_disk && right_total_w > right_content_w {
+            let disk = disk_space_string(app.get_current_dir());
+            let disk_str: String = disk.chars().take(DISK_W).collect();
+            let disk_x = sep_x + 1 + right_content_w as u16;
+            let disk_rect = Rect { x: disk_x, y: area.y, width: (right_total_w - right_content_w) as u16, height: 1 };
+            f.render_widget(Paragraph::new(disk_str).style(bar_style), disk_rect);
+        }
     }
 
     fn draw_command_line(f: &mut Frame, app: &AppState, area: Rect) {
