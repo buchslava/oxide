@@ -806,11 +806,7 @@ impl Renderer {
         let line = format!("{}{}", prompt, app.command_line);
         let is_focused = app.focus == Focus::CommandLine;
         let base = Style::default().bg(MAIN_DARK_BG);
-        let style = if is_focused {
-            base.fg(Color::Yellow)
-        } else {
-            base.fg(Color::DarkGray)
-        };
+        let style = base.fg(Color::White);
         let p = Paragraph::new(line.clone()).style(style);
         f.render_widget(p, area);
         if is_focused {
