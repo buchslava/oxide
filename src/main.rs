@@ -268,7 +268,7 @@ fn main() -> Result<(), io::Error> {
                 app.rename_attr_dialog.as_ref(),
                 Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
             )
-            || (app.focus == Focus::CommandLine && !app.command_line.is_empty());
+            || (app.focus == Focus::CommandLine);
         if show_cursor {
             let _ = terminal.show_cursor();
         } else {

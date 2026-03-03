@@ -122,8 +122,8 @@ impl EventHandler {
     ///
     /// **Panel ↔ command line flow (MC-style):**
     /// - **Focus** is the single source of truth: `Panel` (default) or `CommandLine`.
-    /// - **Panel → command line:** Type a printable character (focus moves and char is inserted), or press **F6** (focus only).
-    /// - **Command line → panel:** **Tab** or **Esc** (focus returns to active panel; command line text is kept).
+    /// - **Panel → command line:** Type a printable character (focus moves and char is inserted), press **F6** (focus only), or **Esc** (focus only; cursor position preserved).
+    /// - **Command line → panel:** **Tab** or **Esc** (focus returns to active panel; command line text and cursor position kept).
     /// - **Between panels:** **Tab** when focus is Panel switches left/right panel; from command line Tab first returns focus to panel.
     /// - All key handling branches on `app.focus` first; no key is handled by both panel and command line.
     fn dispatch_event(
@@ -358,6 +358,7 @@ impl EventHandler {
                         }
                     }
                     KeyCode::Tab => app.switch_panel()?,
+                    KeyCode::Esc => app.focus_command_line(),
                     KeyCode::F(5) => {
                         let source = app.get_current_dir().to_string();
                         let target = app.get_opposite_panel_dir().to_string();
