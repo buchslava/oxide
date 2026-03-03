@@ -5,7 +5,7 @@
 - **Two-panel layout** — Single- or double-column view modes
 - **Full keyboard navigation** — Arrow keys, Tab, Enter, F-keys
 - **File operations** — Copy, move, delete with overwrite and error handling
-- **Viewer (F3)** — Text and hex modes, scroll
+- **Viewer (F3)** — Text and hex modes, scroll. Large files are read in a background thread so Esc closes immediately; a "Loading…" screen is shown until the read completes. In text mode, binary and non-printable characters are shown as `.` to avoid terminal corruption
 - **Embedded editor (F4)** — Syntax highlighting, Ctrl+F search, save/discard
 - **Create directory (F7)**
 - **Rename / Attributes (F2)** — Change name, permissions, owner/group (Unix)
@@ -84,3 +84,5 @@ When focus is on the command line (e.g. after typing a character or F6):
 | H | Hex/text toggle |
 | ↑↓ PgUp/PgDn | Scroll |
 | Esc | Close |
+
+In text mode, control and binary characters are displayed as `.` (same convention as the hex dump ASCII column) so the terminal is not corrupted.

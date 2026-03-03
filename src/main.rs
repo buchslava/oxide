@@ -26,7 +26,7 @@ mod viewer;
 use app_state::{AppState, CopyInProgress, CopyProgress, Focus, Operation, RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress};
 use editor::{apply_confirm_choice, close, open_editor, save};
 use events::{EventHandler, AppAction, CopyErrorChoice, DeleteConfirmChoice};
-use viewer::{close_viewer, open_viewer};
+use viewer::{close_viewer, open_viewer, poll_viewer_loading};
 use file_ops::FileOperations;
 use panel::PanelOperations;
 use ui::Renderer;
@@ -288,6 +288,11 @@ fn main() -> Result<(), io::Error> {
             }
         }
 
+        // Poll viewer file loading (background thread); Esc stays responsive for large files.
+        if poll_viewer_loading(&mut app) {
+            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+        }
+
         // Poll size info calculation progress (background thread).
         if let Some(rx) = app.size_info_pending_rx.take() {
             match rx.try_recv() {
@@ -477,7 +482,10 @@ fn main() -> Result<(), io::Error> {
             AppAction::OpenViewer => {
                 open_viewer(&mut app);
             }
-            AppAction::ViewerClose => close_viewer(&mut app),
+            AppAction::ViewerClose => {
+                close_viewer(&mut app);
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            }
             AppAction::OpenEditor => {
                 open_editor(&mut app);
             }

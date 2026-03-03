@@ -86,8 +86,8 @@ pub struct AppState {
     pub editor_confirm_pending: bool,
     /// Editor confirm dialog: focused option index 0=Save, 1=Discard, 2=Cancel.
     pub editor_confirm_focus: usize,
-    /// When Some, the file viewer is open (F3). None = panels or editor view.
-    pub viewer_screen: Option<ViewerScreenState>,
+    /// When Some, the file viewer is open (F3). Loading = reading file in background; Ready = content available. None = panels or editor view.
+    pub viewer_screen: Option<ViewerState>,
     /// When Some, F7 "Create directory" dialog is open (text field for new folder name).
     pub mkdir_dialog: Option<MkdirDialogState>,
     /// When Some, F2 "Rename / Attributes" dialog is open (single file: name + attrs; group: attrs only).
@@ -198,7 +198,18 @@ pub enum RenameAttrDialogState {
     },
 }
 
-/// State when the file viewer is open (F3). Text and hex modes.
+/// Viewer is either loading file in background (Esc still closes) or ready with content.
+pub enum ViewerState {
+    /// File is being read on a background thread; Esc closes without waiting.
+    Loading {
+        file_path: String,
+        rx: mpsc::Receiver<io::Result<Vec<u8>>>,
+    },
+    /// Content loaded; normal view.
+    Ready(ViewerScreenState),
+}
+
+/// State when the file viewer content is ready (F3). Text and hex modes.
 pub struct ViewerScreenState {
     pub file_path: String,
     /// Raw file bytes (for hex mode; text mode uses same buffer decoded).
@@ -209,6 +220,12 @@ pub struct ViewerScreenState {
     pub scroll: usize,
     /// Last draw area (for consistent layout).
     pub area: Rect,
+    /// Text mode: byte offset of start of each logical line (len = num_lines+1). Used for fast paging (MC-style).
+    pub text_line_starts: Option<Vec<usize>>,
+    /// Text mode: cumulative display line count after each logical line. cumulative[i] = total display lines for logical lines 0..=i.
+    pub text_display_cumulative: Option<Vec<usize>>,
+    /// Text mode: content width (chars) this cache was built for; 0 = invalid.
+    pub text_cache_width: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
