@@ -484,6 +484,15 @@ impl EventHandler {
                 app.command_line_move_right();
                 AppAction::Continue
             }
+            KeyCode::F(12) => {
+                // F12: insert current file at cursor only (don't run). Works on all terminals and macOS
+                // where Ctrl+Enter and Option+Enter are often consumed or not reported.
+                let name = app.active_panel_ref().get_selected_file().map(|f| f.name.clone());
+                if let Some(name) = name {
+                    app.command_line_insert_str(&name);
+                }
+                AppAction::Continue
+            }
             KeyCode::Enter => {
                 let cmd = app.take_command_line();
                 if !cmd.trim().is_empty() {

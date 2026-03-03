@@ -12,7 +12,7 @@
 - **Size info (Ctrl+G)** — Total size of selected files/folders shown in the panel bottom bar. Requires at least one selected item. Shows progress during calculation, then final total. Any key or mouse click dismisses (Ctrl+O spawns shell instead).
 - **Hidden files (Ctrl+H)** — Shown by default; Ctrl+H toggles visibility in both panels
 - **Shell relay (Ctrl+O)** — Spawn subshell, run commands, return to panels
-- **Command line** — Run shell commands
+- **Command line** — Run shell commands; F12 inserts the current (selected) file name at the cursor without running (Enter runs the command)
 - **Mouse support** — Clicks, scroll
 - **Disk space display** — Shows usage on Unix
 
@@ -42,6 +42,17 @@
 | F7 | New directory |
 | F8 | Delete |
 | F10 | Quit |
+| F12 | (command line) Insert current file at cursor |
+
+### Command line
+
+When focus is on the command line (e.g. after typing a character or F6):
+
+| Keys | Action |
+|------|--------|
+| Enter | Run command |
+| F12 | Insert current (selected) file name at cursor (no run) |
+| Tab / Esc | Return focus to panel |
 
 ### Shortcuts
 
@@ -52,7 +63,7 @@
 | Ctrl+O | Shell |
 | Ctrl+R | Refresh |
 | Ctrl+T | View mode |
-| Type char | Command line |
+| Type char | Focus command line and insert character |
 | Tab/Esc | Panel focus |
 
 ### Editor (F4)

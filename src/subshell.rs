@@ -242,9 +242,8 @@ impl Subshell {
         if unsafe { libc::tcgetattr(slave_fd, &mut tio) } != 0 {
             return;
         }
-        // Cooked input: canonical mode, echo, CR→NL
-        tio.c_lflag |= libc::ICANON | libc::ECHO | libc::IEXTEN;
-        tio.c_lflag &= !libc::ISIG; // let shell handle signals
+        // Cooked input: canonical mode, echo, CR→NL; ISIG so Ctrl+C sends SIGINT to foreground (e.g. interrupt tail -f).
+        tio.c_lflag |= libc::ICANON | libc::ECHO | libc::IEXTEN | libc::ISIG;
         tio.c_iflag |= libc::ICRNL;
         tio.c_iflag &= !libc::IXON; // pass ^S/^Q to shell (MC does this in raw_mode)
         // Cooked output: postprocess, \n → \r\n

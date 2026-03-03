@@ -421,6 +421,13 @@ impl AppState {
         self.command_line_cursor = at + 1;
     }
 
+    /// Insert a string at the current command-line cursor (e.g. for Ctrl+Enter to insert current file).
+    pub fn command_line_insert_str(&mut self, s: &str) {
+        let at = self.command_line_cursor.min(self.command_line.len());
+        self.command_line.insert_str(at, s);
+        self.command_line_cursor = at + s.len();
+    }
+
     pub fn command_line_backspace(&mut self) {
         if self.command_line_cursor > 0 && self.command_line_cursor <= self.command_line.len() {
             self.command_line.remove(self.command_line_cursor - 1);

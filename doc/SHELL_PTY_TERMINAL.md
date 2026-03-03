@@ -103,7 +103,7 @@ Functions: `tcgetattr()` (get), `tcsetattr()` (set), `tcflush()` (flush buffers)
 ### In Oxide
 
 1. **Real terminal (stdout)** — Set to raw for relay (`set_real_tty_relay_raw`) so Ctrl+O is seen as byte 0x0F; restored when returning to the TUI.
-2. **PTY slave** — Left in cooked mode (`set_pty_slave_cooked_mode`) so the shell behaves normally.
+2. **PTY slave** — Left in cooked mode (`set_pty_slave_cooked_mode`) so the shell behaves normally. ISIG is enabled so that Ctrl+C sends SIGINT to the foreground process group (e.g. interrupting `tail -f`).
 3. **Caching** — Raw mode for relay is cached in `RELAY_RAW_TERMIOS` and reused, so subsequent Ctrl+O uses the same state instead of whatever the TUI left behind.
 
 ---
