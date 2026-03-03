@@ -1,9 +1,10 @@
 //! File viewer (F3): view file as text or hex dump. ESC to close.
 
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -14,7 +15,21 @@ use crate::events::AppAction;
 use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
 
-const HEX_BYTES_PER_LINE: usize = 16;
+/// Default bytes per line when width unknown; also minimum.
+const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;
+const HEX_BYTES_PER_LINE_MAX: usize = 64;
+
+/// Bytes per line to use so the hex dump fills the given width (address + hex + "  |" + ascii + "|").
+/// Rounds to multiple of 8 for neat grouping; clamps to 8..=HEX_BYTES_PER_LINE_MAX.
+fn hex_bytes_per_line_from_width(width: u16) -> usize {
+    let w = width as usize;
+    if w < 45 {
+        return HEX_BYTES_PER_LINE_DEFAULT;
+    }
+    let bpl = (w - 13) / 4;
+    let bpl = (bpl / 8).max(1) * 8;
+    bpl.min(HEX_BYTES_PER_LINE_MAX).max(8)
+}
 
 /// Close the viewer and return to panels.
 pub fn close_viewer(app: &mut AppState) {
@@ -82,14 +97,15 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
 }
 
 /// Content width in characters (from last draw; fallback when not yet drawn).
+/// Use full area width; we don't draw borders, so subtracting would leave right columns undrawn.
 fn content_width(v: &ViewerScreenState) -> usize {
-    let w = v.area.width.saturating_sub(2); // borders
+    let w = v.area.width;
     if w > 0 { w as usize } else { 80 }
 }
 
-/// Visible lines in viewer (area minus block borders and status line).
+/// Visible lines in viewer (area minus header and bottom bar).
 fn visible_lines(v: &ViewerScreenState) -> usize {
-    v.area.height.saturating_sub(3).max(1) as usize
+    v.area.height.saturating_sub(2).max(1) as usize
 }
 
 /// Split a single line into display lines of at most `width` chars (wrap long lines).
@@ -162,7 +178,23 @@ fn line_count(v: &mut ViewerScreenState) -> usize {
             ensure_text_cache(v);
             text_line_count_cached(v)
         }
-        ViewerMode::Hex => hex_line_count(v),
+        ViewerMode::Hex => {
+            if v.area.width == 0 {
+                return hex_line_count(v, 80);
+            }
+            let area = Rect {
+                x: 0,
+                y: 0,
+                width: v.area.width,
+                height: 1,
+            };
+            let chunks = Layout::horizontal([
+                Constraint::Percentage(70),
+                Constraint::Percentage(30),
+            ])
+            .split(area);
+            hex_line_count_two_columns(v, chunks[0].width, chunks[1].width)
+        }
     }
 }
 
@@ -308,57 +340,99 @@ fn text_visible_lines_cached(v: &mut ViewerScreenState, scroll: usize, height: u
     (out, total)
 }
 
-/// Total hex lines (one per HEX_BYTES_PER_LINE bytes). O(1), no formatting.
-fn hex_line_count(v: &ViewerScreenState) -> usize {
+/// Total hex lines (one per row). Single-column: from content_width; two-column: from left/right widths.
+fn hex_line_count(v: &ViewerScreenState, content_width: u16) -> usize {
     let len = v.content.len();
     if len == 0 {
         return 0;
     }
-    (len + HEX_BYTES_PER_LINE - 1) / HEX_BYTES_PER_LINE
+    let bpl = hex_bytes_per_line_from_width(content_width);
+    (len + bpl - 1) / bpl
 }
 
-/// Format only the visible window of hex lines (lazy: no full-file iteration).
-fn hex_visible_lines(v: &ViewerScreenState, scroll: usize, height: usize) -> Vec<String> {
+/// Total hex lines when using two-column layout (responsive left/right).
+fn hex_line_count_two_columns(v: &ViewerScreenState, left_width: u16, right_width: u16) -> usize {
+    let len = v.content.len();
+    if len == 0 {
+        return 0;
+    }
+    let bpl = hex_bpl_two_columns(left_width, right_width);
+    (len + bpl - 1) / bpl
+}
+
+/// Bytes per line for two-column layout: left (address+hex) and right (ASCII, no pipes).
+fn hex_bpl_two_columns(left_width: u16, right_width: u16) -> usize {
+    let l = left_width as usize;
+    let r = right_width as usize;
+    if l < 19 || r < 8 {
+        return HEX_BYTES_PER_LINE_DEFAULT;
+    }
+    let bpl_left = (l - 10) / 3;
+    let bpl_right = r;
+    let bpl = bpl_left.min(bpl_right).max(8);
+    let bpl = (bpl / 8).max(1) * 8;
+    bpl.min(HEX_BYTES_PER_LINE_MAX)
+}
+
+/// Two-column hex: (left_lines, right_lines, total). Left = address + hex; right = ascii only (no pipes).
+fn hex_visible_lines_two_columns(
+    v: &ViewerScreenState,
+    scroll: usize,
+    height: usize,
+    left_width: u16,
+    right_width: u16,
+) -> (Vec<String>, Vec<String>, usize) {
     let bytes = &v.content;
     if bytes.is_empty() {
-        return vec!["(empty file)".to_string()];
+        return (
+            vec!["(empty file)".to_string()],
+            vec!["".to_string()],
+            0,
+        );
     }
-    let total_lines = hex_line_count(v);
+    let bpl = hex_bpl_two_columns(left_width, right_width);
+    let total_lines = (bytes.len() + bpl - 1) / bpl;
     let scroll = scroll.min(total_lines.saturating_sub(1));
-    let start_byte = scroll * HEX_BYTES_PER_LINE;
-    let end_byte = ((scroll + height) * HEX_BYTES_PER_LINE).min(bytes.len());
-    let mut lines = Vec::with_capacity(height.min(total_lines.saturating_sub(scroll)));
+    let start_byte = scroll * bpl;
+    let end_byte = ((scroll + height) * bpl).min(bytes.len());
+    let mut left_lines = Vec::with_capacity(height.min(total_lines.saturating_sub(scroll)));
+    let mut right_lines = Vec::with_capacity(left_lines.capacity());
     let mut offset = start_byte;
-    while offset < end_byte && lines.len() < height {
-        let chunk = &bytes[offset..(offset + HEX_BYTES_PER_LINE).min(bytes.len())];
+    while offset < end_byte && left_lines.len() < height {
+        let chunk = &bytes[offset..(offset + bpl).min(bytes.len())];
         let addr = format!("{:08x}: ", offset);
         let hex_part: Vec<String> = chunk.iter().map(|b| format!("{:02x}", b)).collect();
-        let hex_str = if hex_part.len() <= 8 {
-            hex_part.join(" ")
-        } else {
-            format!(
-                "{}  {}",
-                hex_part[..8].join(" "),
-                hex_part[8..].join(" ")
-            )
-        };
+        let hex_str = hex_part
+            .chunks(8)
+            .map(|c| c.join(" "))
+            .collect::<Vec<_>>()
+            .join("  ");
         let ascii: String = chunk
             .iter()
             .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
             .collect();
-        let padding = HEX_BYTES_PER_LINE - chunk.len();
+        let padding = bpl - chunk.len();
         let pad_hex = "   ".repeat(padding);
         let pad_ascii = " ".repeat(padding);
-        lines.push(format!(
-            "{}{}{}  |{}{}|",
-            addr, hex_str, pad_hex, ascii, pad_ascii
-        ));
-        offset += HEX_BYTES_PER_LINE;
+        let mut left_line = format!("{}{}{}", addr, hex_str, pad_hex);
+        let mut right_line = format!("{}{}", ascii, pad_ascii);
+        let lw = left_width as usize;
+        let rw = right_width as usize;
+        if left_line.len() > lw {
+            left_line.truncate(lw);
+        }
+        if right_line.len() > rw {
+            right_line.truncate(rw);
+        }
+        left_lines.push(left_line);
+        right_lines.push(right_line);
+        offset += bpl;
     }
-    if lines.is_empty() && start_byte < bytes.len() {
-        lines.push("00000000: (empty)".to_string());
+    if left_lines.is_empty() && start_byte < bytes.len() {
+        left_lines.push("00000000: (empty)".to_string());
+        right_lines.push(String::new());
     }
-    lines
+    (left_lines, right_lines, total_lines)
 }
 
 /// Draw the viewer (text or hex) with scroll and status.
@@ -370,79 +444,136 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
 
         match state {
             ViewerState::Loading { file_path, .. } => {
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" {} | Loading… ", file_path))
-                    .style(Style::default().bg(dark_bg).fg(Color::Cyan));
-                let inner = block.inner(area);
-                f.render_widget(block, area);
-                let msg = "Reading file in background — Esc to close";
-                let para = Paragraph::new(msg).style(content_style);
-                f.render_widget(para, inner);
-                let status = " Esc: close ";
-                let status_rect = Rect {
-                    x: inner.x,
-                    y: inner.y + inner.height.saturating_sub(1),
-                    width: inner.width,
+                let header_rect = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
                     height: 1,
                 };
+                let content_rect = Rect {
+                    x: area.x,
+                    y: area.y + 1,
+                    width: area.width,
+                    height: area.height.saturating_sub(2),
+                };
+                let bottom_rect = Rect {
+                    x: area.x,
+                    y: area.y + area.height.saturating_sub(1),
+                    width: area.width,
+                    height: 1,
+                };
+                let header = Line::from(vec![
+                    Span::styled(file_path.as_str(), Style::default().fg(Color::Cyan)),
+                    Span::raw("  "),
+                    Span::styled("Loading…", Style::default().fg(Color::DarkGray)),
+                ]);
+                f.render_widget(Paragraph::new(header).style(content_style), header_rect);
+                let msg = "Reading file in background — Esc to close";
+                f.render_widget(Paragraph::new(msg).style(content_style), content_rect);
                 f.render_widget(
-                    Paragraph::new(status).style(content_style.fg(Color::DarkGray)),
-                    status_rect,
+                    Paragraph::new(" Esc: close ").style(content_style.fg(Color::DarkGray)),
+                    bottom_rect,
                 );
             }
             ViewerState::Ready(v) => {
                 v.area = area;
-                let block = Block::default().borders(Borders::ALL).title(" ");
-                let inner = block.inner(area);
-                let content_height = inner.height.saturating_sub(1);
+                let header_height = 1u16;
+                let bottom_height = 1u16;
+                let content_height = area.height.saturating_sub(header_height + bottom_height);
                 let content_height_usize = content_height as usize;
 
-                let (lines, total) = match v.view_mode {
+                let header_rect = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: header_height,
+                };
+                let content_rect = Rect {
+                    x: area.x,
+                    y: area.y + header_height,
+                    width: area.width,
+                    height: content_height,
+                };
+                let bottom_rect = Rect {
+                    x: area.x,
+                    y: area.y + area.height.saturating_sub(bottom_height),
+                    width: area.width,
+                    height: bottom_height,
+                };
+
+                let total = match v.view_mode {
                     ViewerMode::Text => {
-                        text_visible_lines_cached(v, v.scroll, content_height_usize)
+                        let (lines, total) =
+                            text_visible_lines_cached(v, v.scroll, content_height_usize);
+                        let content: String = lines.join("\n");
+                        let para = Paragraph::new(content)
+                            .style(content_style)
+                            .wrap(Wrap { trim: false });
+                        f.render_widget(para, content_rect);
+                        total
                     }
                     ViewerMode::Hex => {
-                        let total = hex_line_count(v);
-                        let visible = hex_visible_lines(v, v.scroll, content_height_usize);
-                        (visible, total)
+                        // Use Min(0) for right column so it takes all remaining space;
+                        // Percentage(70)+Percentage(30) can leave 1–2 columns undrawn when
+                        // width doesn't divide evenly, leaving text-mode leftovers visible.
+                        let chunks = Layout::horizontal([
+                            Constraint::Percentage(70),
+                            Constraint::Min(0),
+                        ])
+                        .split(content_rect);
+                        let (left_lines, right_lines, total) = hex_visible_lines_two_columns(
+                            v,
+                            v.scroll,
+                            content_height_usize,
+                            chunks[0].width,
+                            chunks[1].width,
+                        );
+                        let left_content = left_lines.join("\n");
+                        let right_content = right_lines.join("\n");
+                        f.render_widget(
+                            Paragraph::new(left_content)
+                                .style(content_style)
+                                .wrap(Wrap { trim: false }),
+                            chunks[0],
+                        );
+                        f.render_widget(
+                            Paragraph::new(right_content)
+                                .style(content_style)
+                                .wrap(Wrap { trim: false }),
+                            chunks[1],
+                        );
+                        total
                     }
                 };
 
                 let mode_label = match v.view_mode {
                     ViewerMode::Text => "TEXT",
-                    ViewerMode::Hex => "HEX ",
+                    ViewerMode::Hex => "HEX",
                 };
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" {} | {} | {} lines ", v.file_path, mode_label, total))
-                    .style(Style::default().bg(dark_bg).fg(Color::Cyan));
-                let inner = block.inner(area);
-                f.render_widget(block, area);
-                let content_height = inner.height.saturating_sub(1);
-                let content_rect = Rect {
-                    x: inner.x,
-                    y: inner.y,
-                    width: inner.width,
-                    height: content_height,
-                };
-                let content: String = lines.join("\n");
-                let para = Paragraph::new(content)
-                    .style(content_style)
-                    .wrap(Wrap { trim: false });
-                f.render_widget(para, content_rect);
-
-                let status = " Esc: close  H: toggle hex/text  ↑↓ PgUp/PgDn: scroll ";
-                let status_rect = Rect {
-                    x: inner.x,
-                    y: inner.y + content_height,
-                    width: inner.width,
-                    height: 1,
-                };
+                let path_span = v.file_path.as_str();
+                let right_info = format!("{} | {} lines", mode_label, total);
+                let pad_len = (header_rect.width as usize)
+                    .saturating_sub(path_span.len() + right_info.len())
+                    .max(1);
+                let header_line = Line::from(vec![
+                    Span::styled(path_span, Style::default().fg(Color::Cyan)),
+                    Span::raw(" ".repeat(pad_len)),
+                    Span::styled(right_info, Style::default().fg(Color::DarkGray)),
+                ]);
                 f.render_widget(
-                    Paragraph::new(status).style(content_style.fg(Color::DarkGray)),
-                    status_rect,
+                    Paragraph::new(header_line).style(content_style),
+                    header_rect,
                 );
+
+                let bar = Line::from(vec![
+                    Span::styled(" Esc ", content_style.fg(Color::DarkGray)),
+                    Span::raw("close  "),
+                    Span::styled(" H ", content_style.fg(Color::DarkGray)),
+                    Span::raw("hex/text  "),
+                    Span::styled(" ↑↓ ", content_style.fg(Color::DarkGray)),
+                    Span::raw("PgUp/PgDn scroll"),
+                ]);
+                f.render_widget(Paragraph::new(bar).style(content_style.fg(Color::DarkGray)), bottom_rect);
             }
         }
     }
