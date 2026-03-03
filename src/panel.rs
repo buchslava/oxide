@@ -405,13 +405,13 @@ impl PanelOperations for Panel {
         if files.is_empty() {
             return (Vec::new(), None, None);
         }
-        let (first_index, count, items) = if self.marked_indices.is_empty() {
+        let (first_index, last_index, items) = if self.marked_indices.is_empty() {
             if let Some(f) = self.get_selected_file() {
                 if !f.is_parent_dir() {
                     let idx = self.selected_index;
                     let mut v = Vec::with_capacity(1);
                     v.push((f.name.clone(), f.is_dir));
-                    (idx, 1, v)
+                    (idx, idx, v)
                 } else {
                     return (Vec::new(), None, None);
                 }
@@ -420,6 +420,7 @@ impl PanelOperations for Panel {
             }
         } else {
             let first_index = *self.marked_indices.iter().min().unwrap();
+            let last_index = *self.marked_indices.iter().max().unwrap();
             let mut items = Vec::new();
             for &idx in &self.marked_indices {
                 if let Some(f) = files.get(idx) {
@@ -428,8 +429,11 @@ impl PanelOperations for Panel {
                     }
                 }
             }
-            (first_index, items.len(), items)
+            (first_index, last_index, items)
         };
+        if items.is_empty() {
+            return (Vec::new(), None, None);
+        }
         let name_before = if first_index > 0 {
             let f = &files[first_index - 1];
             if !f.is_parent_dir() {
@@ -440,8 +444,10 @@ impl PanelOperations for Panel {
         } else {
             None
         };
-        let name_after = if first_index + count < files.len() {
-            let f = &files[first_index + count];
+        // Prefer the file immediately after the last deleted item (or after the block for single selection).
+        let after_index = last_index + 1;
+        let name_after = if after_index < files.len() {
+            let f = &files[after_index];
             if !f.is_parent_dir() {
                 Some(f.name.clone())
             } else {
