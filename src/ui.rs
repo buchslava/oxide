@@ -663,7 +663,7 @@ impl Renderer {
             height: content_height,
         };
         let frame_block = Block::default()
-            .borders(Borders::ALL)
+            .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
             .border_style(Style::default().fg(Color::White).bg(MAIN_DARK_BG))
             .style(Style::default().bg(MAIN_DARK_BG));
         let inner = frame_block.inner(frame_rect);

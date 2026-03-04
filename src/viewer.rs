@@ -428,7 +428,7 @@ fn hex_visible_lines_two_columns_styled(
     height: usize,
     left_width: u16,
     right_width: u16,
-) -> (Vec<Line>, Vec<Line>, usize) {
+) -> (Vec<Line<'_>>, Vec<Line<'_>>, usize) {
     let bytes = &v.content;
     let cursor_byte = v.hex_cursor;
     if bytes.is_empty() {
