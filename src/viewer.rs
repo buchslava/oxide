@@ -77,6 +77,7 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
                 content,
                 view_mode: ViewerMode::Text,
                 scroll: 0,
+                hex_cursor: 0,
                 area: Rect::default(),
                 text_line_starts: None,
                 text_display_cumulative: None,
@@ -154,6 +155,45 @@ pub fn handle_viewer_key(app: &mut AppState, key: crossterm::event::KeyEvent) ->
                     ViewerMode::Hex => ViewerMode::Text,
                 };
                 v.scroll = 0;
+                v.hex_cursor = 0;
+                return Some(AppAction::Continue);
+            }
+            if v.view_mode == ViewerMode::Hex && !v.content.is_empty() {
+                let content_rect = Rect {
+                    x: 0,
+                    y: 0,
+                    width: v.area.width,
+                    height: v.area.height.saturating_sub(2).max(1),
+                };
+                let chunks = Layout::horizontal([
+                    Constraint::Percentage(70),
+                    Constraint::Min(0),
+                ])
+                .split(content_rect);
+                let bpl = hex_bpl_two_columns(chunks[0].width, chunks[1].width).max(1);
+                let len = v.content.len();
+                let total_lines = (len + bpl - 1) / bpl;
+                let _max_scroll = total_lines.saturating_sub(height as usize).max(0);
+                match key.code {
+                    KeyCode::Left => v.hex_cursor = v.hex_cursor.saturating_sub(1),
+                    KeyCode::Right => v.hex_cursor = (v.hex_cursor + 1).min(len.saturating_sub(1)),
+                    KeyCode::Up => v.hex_cursor = v.hex_cursor.saturating_sub(bpl),
+                    KeyCode::Down => v.hex_cursor = (v.hex_cursor + bpl).min(len.saturating_sub(1)),
+                    KeyCode::PageUp => v.hex_cursor = v.hex_cursor.saturating_sub(bpl * height as usize),
+                    KeyCode::PageDown => {
+                        v.hex_cursor = (v.hex_cursor + bpl * height as usize).min(len.saturating_sub(1))
+                    }
+                    KeyCode::Home => v.hex_cursor = 0,
+                    KeyCode::End => v.hex_cursor = len.saturating_sub(1),
+                    _ => {}
+                }
+                // Keep scroll so the line containing hex_cursor is visible.
+                let cursor_line = v.hex_cursor / bpl;
+                if cursor_line < v.scroll {
+                    v.scroll = cursor_line;
+                } else if cursor_line >= v.scroll + height as usize {
+                    v.scroll = cursor_line.saturating_sub(height as usize).saturating_add(1);
+                }
                 return Some(AppAction::Continue);
             }
             let total_lines = line_count(v);
@@ -374,19 +414,27 @@ fn hex_bpl_two_columns(left_width: u16, right_width: u16) -> usize {
     bpl.min(HEX_BYTES_PER_LINE_MAX)
 }
 
-/// Two-column hex: (left_lines, right_lines, total). Left = address + hex; right = ascii only (no pipes).
-fn hex_visible_lines_two_columns(
+/// Byte index i (in line) → start character index of its hex pair in the left line (after "AAAAAAAA: ").
+fn hex_byte_column_in_line(i: usize) -> usize {
+    (i / 8) * (8 * 3 + 2) + (i % 8) * 3
+}
+
+/// Two-column hex with optional cursor highlight: (left_lines, right_lines, total).
+/// Left = address + hex; right = ascii. When cursor_byte is in the visible range, that byte is
+/// highlighted in both columns (inverted style).
+fn hex_visible_lines_two_columns_styled(
     v: &ViewerScreenState,
     scroll: usize,
     height: usize,
     left_width: u16,
     right_width: u16,
-) -> (Vec<String>, Vec<String>, usize) {
+) -> (Vec<Line>, Vec<Line>, usize) {
     let bytes = &v.content;
+    let cursor_byte = v.hex_cursor;
     if bytes.is_empty() {
         return (
-            vec!["(empty file)".to_string()],
-            vec!["".to_string()],
+            vec![Line::from("(empty file)")],
+            vec![Line::from("")],
             0,
         );
     }
@@ -397,6 +445,8 @@ fn hex_visible_lines_two_columns(
     let end_byte = ((scroll + height) * bpl).min(bytes.len());
     let mut left_lines = Vec::with_capacity(height.min(total_lines.saturating_sub(scroll)));
     let mut right_lines = Vec::with_capacity(left_lines.capacity());
+    let addr_len = 10usize; // "AAAAAAAA: "
+    let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
     let mut offset = start_byte;
     while offset < end_byte && left_lines.len() < height {
         let chunk = &bytes[offset..(offset + bpl).min(bytes.len())];
@@ -414,23 +464,54 @@ fn hex_visible_lines_two_columns(
         let padding = bpl - chunk.len();
         let pad_hex = "   ".repeat(padding);
         let pad_ascii = " ".repeat(padding);
-        let mut left_line = format!("{}{}{}", addr, hex_str, pad_hex);
-        let mut right_line = format!("{}{}", ascii, pad_ascii);
+        let mut left_line_str = format!("{}{}{}", addr, hex_str, pad_hex);
+        let mut right_line_str = format!("{}{}", ascii, pad_ascii);
         let lw = left_width as usize;
         let rw = right_width as usize;
-        if left_line.len() > lw {
-            left_line.truncate(lw);
+        if left_line_str.len() > lw {
+            left_line_str.truncate(lw);
         }
-        if right_line.len() > rw {
-            right_line.truncate(rw);
+        if right_line_str.len() > rw {
+            right_line_str.truncate(rw);
         }
+        let cursor_in_this_line =
+            cursor_byte >= offset && cursor_byte < offset + chunk.len();
+        let local_cursor = cursor_byte.saturating_sub(offset);
+        let left_line = if cursor_in_this_line && local_cursor < chunk.len() {
+            let hex_start = addr_len + hex_byte_column_in_line(local_cursor);
+            let hex_end = (hex_start + 2).min(left_line_str.len());
+            let before = left_line_str.get(..hex_start).unwrap_or("").to_string();
+            let sel = left_line_str.get(hex_start..hex_end).unwrap_or("").to_string();
+            let after = left_line_str.get(hex_end..).unwrap_or("").to_string();
+            Line::from(vec![
+                Span::raw(before),
+                Span::styled(sel, highlight_style),
+                Span::raw(after),
+            ])
+        } else {
+            Line::from(left_line_str.clone())
+        };
+        let right_line = if cursor_in_this_line && local_cursor < right_line_str.len() {
+            let ch_start = local_cursor;
+            let ch_end = (ch_start + 1).min(right_line_str.len());
+            let before = right_line_str.get(..ch_start).unwrap_or("").to_string();
+            let sel = right_line_str.get(ch_start..ch_end).unwrap_or("").to_string();
+            let after = right_line_str.get(ch_end..).unwrap_or("").to_string();
+            Line::from(vec![
+                Span::raw(before),
+                Span::styled(sel, highlight_style),
+                Span::raw(after),
+            ])
+        } else {
+            Line::from(right_line_str.clone())
+        };
         left_lines.push(left_line);
         right_lines.push(right_line);
         offset += bpl;
     }
     if left_lines.is_empty() && start_byte < bytes.len() {
-        left_lines.push("00000000: (empty)".to_string());
-        right_lines.push(String::new());
+        left_lines.push(Line::from("00000000: (empty)"));
+        right_lines.push(Line::from(""));
     }
     (left_lines, right_lines, total_lines)
 }
@@ -521,23 +602,23 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                             Constraint::Min(0),
                         ])
                         .split(content_rect);
-                        let (left_lines, right_lines, total) = hex_visible_lines_two_columns(
+                        let (left_lines, right_lines, total) = hex_visible_lines_two_columns_styled(
                             v,
                             v.scroll,
                             content_height_usize,
                             chunks[0].width,
                             chunks[1].width,
                         );
-                        let left_content = left_lines.join("\n");
-                        let right_content = right_lines.join("\n");
+                        let left_text = ratatui::text::Text::from(left_lines);
+                        let right_text = ratatui::text::Text::from(right_lines);
                         f.render_widget(
-                            Paragraph::new(left_content)
+                            Paragraph::new(left_text)
                                 .style(content_style)
                                 .wrap(Wrap { trim: false }),
                             chunks[0],
                         );
                         f.render_widget(
-                            Paragraph::new(right_content)
+                            Paragraph::new(right_text)
                                 .style(content_style)
                                 .wrap(Wrap { trim: false }),
                             chunks[1],

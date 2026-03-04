@@ -218,6 +218,8 @@ pub struct ViewerScreenState {
     pub view_mode: ViewerMode,
     /// First visible line index (scroll offset).
     pub scroll: usize,
+    /// Hex mode: byte offset of the current character (highlighted in hex and ASCII columns).
+    pub hex_cursor: usize,
     /// Last draw area (for consistent layout).
     pub area: Rect,
     /// Text mode: byte offset of start of each logical line (len = num_lines+1). Used for fast paging (MC-style).
