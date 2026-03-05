@@ -1,6 +1,6 @@
 //! Embedded code editor (F4): open file, edit, F2 save, ESC exit, Page Up/Down, Home/End,
 //! Ctrl+F search (in file), unsaved-changes dialog.
-//! Selection: Shift+arrow extends; F3 toggle extend mode. Ctrl+C copies then clears selection.
+//! Selection (MC-style): F3 starts or stops selection; then ←→↑↓ extend. Ctrl+C copies then clears.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -11,6 +11,7 @@ use ratatui::{
     Frame,
 };
 use ratatui_code_editor::editor::Editor;
+use ratatui_code_editor::selection::Selection;
 use ratatui_code_editor::theme::vesper;
 
 use crate::app_state::{AppState, EditorScreenState};
@@ -164,9 +165,14 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
     if key.code == KeyCode::F(2) {
         return Some(AppAction::EditorSave);
     }
-    // F3: toggle selection-extend mode (editor only; F3 opens viewer when not in editor)
+    // F3: 1st = start selection (extend mode on). 2nd = stop extending, keep selection. 3rd = clear & start new.
     if key.code == KeyCode::F(3) {
-        ed.selection_extend_mode = !ed.selection_extend_mode;
+        if ed.selection_extend_mode {
+            ed.selection_extend_mode = false; // stop extending, selection stays
+        } else {
+            ed.editor.clear_selection();
+            ed.selection_extend_mode = true; // clear any selection, start new from cursor
+        }
         return Some(AppAction::Continue);
     }
     if key.code == KeyCode::Esc {
@@ -192,9 +198,42 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
         return Some(AppAction::Continue);
     }
 
-    // Extend when Shift (if reported) or F3 mode.
+    // Extend when Shift (if reported) or F3 selection mode (MC-style).
     let extend = key.modifiers.contains(KeyModifiers::SHIFT) || ed.selection_extend_mode;
+    // After 2nd F3: selection is visible but "stopped" — arrows must not clear it, typing must preserve it.
+    let selection_frozen = !ed.selection_extend_mode
+        && ed.editor.get_selection().map_or(false, |s| !s.is_empty());
 
+    if key.code == KeyCode::Left {
+        let cursor = ed.editor.get_cursor();
+        if cursor > 0 {
+            let new_cursor = cursor - 1;
+            if extend {
+                ed.editor.extend_selection(new_cursor);
+            } else if !selection_frozen {
+                ed.editor.clear_selection();
+            }
+            ed.editor.set_cursor(new_cursor);
+        }
+        ed.editor.focus(&ed.area);
+        return Some(AppAction::Continue);
+    }
+    if key.code == KeyCode::Right {
+        let code = ed.editor.code_ref();
+        let cursor = ed.editor.get_cursor();
+        let len = code.len_chars();
+        if cursor < len {
+            let new_cursor = cursor + 1;
+            if extend {
+                ed.editor.extend_selection(new_cursor);
+            } else if !selection_frozen {
+                ed.editor.clear_selection();
+            }
+            ed.editor.set_cursor(new_cursor);
+        }
+        ed.editor.focus(&ed.area);
+        return Some(AppAction::Continue);
+    }
     if key.code == KeyCode::Up {
         let code = ed.editor.code_ref();
         let cursor = ed.editor.get_cursor();
@@ -203,7 +242,11 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
             let prev_start = code.line_to_char(row - 1);
             let prev_len = code.line_len(row - 1);
             let new_cursor = prev_start + col.min(prev_len);
-            if extend { ed.editor.extend_selection(new_cursor); } else { ed.editor.clear_selection(); }
+            if extend {
+                ed.editor.extend_selection(new_cursor);
+            } else if !selection_frozen {
+                ed.editor.clear_selection();
+            }
             ed.editor.set_cursor(new_cursor);
         }
         ed.editor.focus(&ed.area);
@@ -217,7 +260,11 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
             let next_start = code.line_to_char(row + 1);
             let next_len = code.line_len(row + 1);
             let new_cursor = next_start + col.min(next_len);
-            if extend { ed.editor.extend_selection(new_cursor); } else { ed.editor.clear_selection(); }
+            if extend {
+                ed.editor.extend_selection(new_cursor);
+            } else if !selection_frozen {
+                ed.editor.clear_selection();
+            }
             ed.editor.set_cursor(new_cursor);
         }
         ed.editor.focus(&ed.area);
@@ -233,7 +280,7 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
         };
         if extend {
             ed.editor.extend_selection(new_cursor);
-        } else {
+        } else if !selection_frozen {
             ed.editor.clear_selection();
         }
         ed.editor.set_cursor(new_cursor);
@@ -256,7 +303,7 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
         };
         if extend {
             ed.editor.extend_selection(new_cursor);
-        } else {
+        } else if !selection_frozen {
             ed.editor.clear_selection();
         }
         ed.editor.set_cursor(new_cursor);
@@ -273,7 +320,7 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
         };
         if extend {
             ed.editor.extend_selection(new_cursor);
-        } else {
+        } else if !selection_frozen {
             ed.editor.clear_selection();
         }
         ed.editor.set_cursor(new_cursor);
@@ -291,13 +338,50 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
         };
         if extend {
             ed.editor.extend_selection(new_cursor);
-        } else {
+        } else if !selection_frozen {
             ed.editor.clear_selection();
         }
         ed.editor.set_cursor(new_cursor);
         ed.editor.focus(&ed.area);
         return Some(AppAction::Continue);
     }
+
+    // When selection is frozen (after 2nd F3), typing and Enter must insert at cursor and shift selection — not clear it.
+    if selection_frozen && !ctrl {
+        let text_opt = match key.code {
+            KeyCode::Char(c) => Some(c.to_string()),
+            KeyCode::Enter => Some("\n".to_string()),
+            _ => None,
+        };
+        if let Some(text) = text_opt {
+            if let Some(sel) = ed.editor.get_selection() {
+                if !sel.is_empty() {
+                    let cursor = ed.editor.get_cursor();
+                    let (start, end) = sel.sorted();
+                    let len = text.chars().count();
+                    let (new_cursor, new_sel) = {
+                        let code = ed.editor.code_mut();
+                        code.tx();
+                        code.set_state_before(cursor, Some(sel));
+                        code.insert(cursor, &text);
+                        let new_cursor = cursor + len;
+                        let new_start = if start >= cursor { start + len } else { start };
+                        let new_end = if end >= cursor { end + len } else { end };
+                        let new_sel = Selection::new(new_start, new_end);
+                        code.set_state_after(new_cursor, Some(new_sel));
+                        code.commit();
+                        (new_cursor, new_sel)
+                    };
+                    ed.editor.set_cursor(new_cursor);
+                    ed.editor.set_selection(Some(new_sel));
+                    ed.editor.reset_highlight_cache();
+                    ed.editor.focus(&ed.area);
+                    return Some(AppAction::Continue);
+                }
+            }
+        }
+    }
+
     let _ = ed.editor.input(key, &ed.area);
     Some(AppAction::Continue)
 }
@@ -392,7 +476,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
             f.set_cursor_position((cx, cy));
         }
         if area.height > 0 {
-            let hint = " Shift+← →: selection | F3: select lines | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
+            let hint = " F3: start/stop selection | ←→↑↓ extend | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
             let row = area.bottom().saturating_sub(1);
             let w = hint.chars().count().min(area.width as usize) as u16;
             let r = Rect { x: area.x, y: row, width: w, height: 1 };

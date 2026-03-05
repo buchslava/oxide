@@ -246,7 +246,7 @@ pub struct EditorScreenState {
     pub area: Rect,
     /// When Some, search bar is open and the string is the current query (Ctrl+F).
     pub search_query: Option<String>,
-    /// Toggle with F3: when true, Up/Down/PageUp/PageDown extend selection (editor only).
+    /// F3 selection mode (MC-style): when true, arrows extend selection.
     pub selection_extend_mode: bool,
 }
 
