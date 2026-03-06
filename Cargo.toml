@@ -9,6 +9,7 @@ ratatui = "0.29"
 crossterm = "0.29"
 dirs = "5.0"
 ratatui-code-editor = "0.0.1"
+zip = "2.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

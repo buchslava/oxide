@@ -8,6 +8,7 @@ use ratatui::{
 use crate::app_state::{AppState, Focus, Operation};
 use crate::editor;
 use crate::file_ops::FileInfo;
+use crate::panel_backend;
 use crate::viewer;
 use crate::panel::{Panel, PanelOperations, ViewMode};
 use crate::styles;
@@ -124,6 +125,10 @@ fn size_display(file: &FileInfo) -> String {
     } else {
         format_size(file.size)
     }
+}
+
+fn is_zip_file(file: &FileInfo) -> bool {
+    !file.is_dir && file.name.trim_end_matches('/').to_ascii_lowercase().ends_with(".zip")
 }
 
 /// Truncate file display to fit column width (chars). Prevents wrapping/uglification in double-column view.
@@ -619,7 +624,37 @@ impl Renderer {
         ]
     }
 
-    fn draw_menu_bar(f: &mut Frame, area: Rect) {
+    fn is_menu_action_available(app: &AppState, key: u16) -> bool {
+        match key {
+            3 => app
+                .active_panel_ref()
+                .get_selected_file()
+                .map_or(false, |f| !f.is_dir && !f.is_parent_dir()),
+            4 => panel_backend::supports_edit(&app.get_current_location())
+                && app
+                    .active_panel_ref()
+                    .get_selected_file()
+                    .map_or(false, |f| !f.is_dir && !f.is_parent_dir()),
+            5 | 6 => {
+                let source = app.get_current_dir();
+                let target = app.get_opposite_panel_dir();
+                let (items, ..) = app
+                    .active_panel_ref()
+                    .get_names_to_copy_with_restore_neighbors();
+                source != target && !items.is_empty()
+            }
+            7 => panel_backend::supports_mkdir(&app.get_current_location()),
+            8 => {
+                let (items, ..) = app
+                    .active_panel_ref()
+                    .get_names_to_copy_with_restore_neighbors();
+                !items.is_empty()
+            }
+            _ => true,
+        }
+    }
+
+    fn draw_menu_bar(f: &mut Frame, area: Rect, app: &AppState) {
         let dark_bg = Color::Rgb(60, 60, 60);
         f.render_widget(
             Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(dark_bg)),
@@ -633,15 +668,22 @@ impl Renderer {
         let slot_w = area.width / n;
         let num_style = Style::default().fg(Color::Rgb(255, 180, 80)).bg(dark_bg);
         let label_style = Style::default().fg(Color::Rgb(180, 180, 180)).bg(dark_bg);
-        for (i, (label, _)) in items.iter().enumerate() {
+        let unavailable_style = Style::default().fg(Color::DarkGray).bg(dark_bg);
+        for (i, (label, key)) in items.iter().enumerate() {
             let slot_start = area.x + (i as u16) * slot_w;
-            let label_len = label.chars().count() as u16;
+            let unavailable = !Self::is_menu_action_available(app, *key);
+            let display_label = truncate_str_ellipsis(label, slot_w as usize);
+            let label_len = display_label.chars().count() as u16;
             let x = slot_start + (slot_w.saturating_sub(label_len)) / 2;
-            let digits_end = label.char_indices().find(|(_, c)| !c.is_ascii_digit()).map(|(i, _)| i).unwrap_or(label.len());
-            let (num_part, rest) = label.split_at(digits_end);
+            let digits_end = display_label
+                .char_indices()
+                .find(|(_, c)| !c.is_ascii_digit())
+                .map(|(i, _)| i)
+                .unwrap_or(display_label.len());
+            let (num_part, rest) = display_label.split_at(digits_end);
             let line = Line::from(vec![
-                Span::styled(num_part, num_style),
-                Span::styled(rest, label_style),
+                Span::styled(num_part, if unavailable { unavailable_style } else { num_style }),
+                Span::styled(rest, if unavailable { unavailable_style } else { label_style }),
             ]);
             let rect = Rect { x, y: area.y, width: label_len.min(slot_w), height: 1 };
             f.render_widget(Paragraph::new(line), rect);
@@ -733,7 +775,7 @@ impl Renderer {
         }
         Self::draw_bottom_file_bar(f, app, bottom_file_rect, sep_x);
         Self::draw_command_line(f, app, command_rect);
-        Self::draw_menu_bar(f, menu_rect);
+        Self::draw_menu_bar(f, menu_rect, app);
     }
 
     /// Bottom bar: filename (without path) per panel; size info (Ctrl+G) replaces active panel's filename; disk space only on Ctrl+G.
@@ -883,6 +925,8 @@ impl Renderer {
                 (dir, base)
             } else if file.is_executable {
                 (base.fg(Color::Green), base)
+            } else if is_zip_file(file) {
+                (base.fg(Color::Rgb(160, 120, 255)), base)
             } else if file.is_symlink {
                 (base.fg(Color::Magenta), base)
             } else {
@@ -958,7 +1002,15 @@ impl Renderer {
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
             let display = truncate_for_width(file, max_left_w);
-            let line = styles::create_file_line_from_display(&display, file.is_dir, file.is_symlink, file.is_executable, is_selected, is_marked);
+            let line = styles::create_file_line_from_display(
+                &display,
+                file.is_dir,
+                file.is_symlink,
+                file.is_executable,
+                is_zip_file(file),
+                is_selected,
+                is_marked,
+            );
             let line_area = Rect {
                 x: left_col.x,
                 y: left_col.y + i as u16,
@@ -975,7 +1027,15 @@ impl Renderer {
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
             let display = truncate_for_width(file, max_right_w);
-            let line = styles::create_file_line_from_display(&display, file.is_dir, file.is_symlink, file.is_executable, is_selected, is_marked);
+            let line = styles::create_file_line_from_display(
+                &display,
+                file.is_dir,
+                file.is_symlink,
+                file.is_executable,
+                is_zip_file(file),
+                is_selected,
+                is_marked,
+            );
             let line_area = Rect {
                 x: right_col.x,
                 y: right_col.y + i as u16,

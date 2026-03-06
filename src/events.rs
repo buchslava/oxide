@@ -369,6 +369,8 @@ impl EventHandler {
                                 return Ok(Some(AppAction::Copy(CopyParams {
                                     source_dir: source,
                                     target_dir: target,
+                                    source_location: Some(app.get_current_location()),
+                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
                                     items,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -386,6 +388,8 @@ impl EventHandler {
                                 return Ok(Some(AppAction::Move(CopyParams {
                                     source_dir: source,
                                     target_dir: target,
+                                    source_location: Some(app.get_current_location()),
+                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
                                     items,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -402,12 +406,18 @@ impl EventHandler {
                         }
                     }
                     KeyCode::F(1) => return Ok(Some(AppAction::OpenSettingsDialog)),
-                    KeyCode::F(7) => return Ok(Some(AppAction::OpenMkdirDialog)),
+                    KeyCode::F(7) => {
+                        if crate::panel_backend::supports_mkdir(&app.get_current_location()) {
+                            return Ok(Some(AppAction::OpenMkdirDialog));
+                        }
+                    }
                     KeyCode::F(2) => return Ok(Some(AppAction::OpenRenameAttrDialog)),
                     KeyCode::F(4) => {
-                        if let Some(file) = app.active_panel_mut().get_selected_file() {
-                            if !file.is_dir && !file.is_parent_dir() {
-                                return Ok(Some(AppAction::OpenEditor));
+                        if crate::panel_backend::supports_edit(&app.get_current_location()) {
+                            if let Some(file) = app.active_panel_mut().get_selected_file() {
+                                if !file.is_dir && !file.is_parent_dir() {
+                                    return Ok(Some(AppAction::OpenEditor));
+                                }
                             }
                         }
                     }
@@ -420,6 +430,8 @@ impl EventHandler {
                                 CopyParams {
                                     source_dir: app.get_current_dir().to_string(),
                                     target_dir: String::new(),
+                                    source_location: Some(app.get_current_location()),
+                                    target_fs_path: None,
                                     items,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -717,7 +729,9 @@ impl EventHandler {
                                 app.right_panel_mut()
                             };
                             if let Some(file) = panel.get_selected_file() {
-                                if file.is_dir {
+                                let name_lower = file.name.trim_end_matches('/').to_lowercase();
+                                let is_zip = name_lower.ends_with(".zip");
+                                if file.is_dir || is_zip {
                                     panel.enter_directory()?;
                                     app.sync_process_cwd_to_active_panel();
                                 } else if !file.is_parent_dir() && file.is_executable {
@@ -757,7 +771,9 @@ impl EventHandler {
                         }
                     }
                     4 => {
-                        if app.active_panel_ref().get_selected_file().map_or(false, |f| !f.is_dir && !f.is_parent_dir()) {
+                        if crate::panel_backend::supports_edit(&app.get_current_location())
+                            && app.active_panel_ref().get_selected_file().map_or(false, |f| !f.is_dir && !f.is_parent_dir())
+                        {
                             Some(AppAction::OpenEditor)
                         } else {
                             None
@@ -773,6 +789,8 @@ impl EventHandler {
                                 let params = CopyParams {
                                     source_dir: source,
                                     target_dir: target,
+                                    source_location: Some(app.get_current_location()),
+                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
                                     items: names,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -797,6 +815,8 @@ impl EventHandler {
                                 let params = CopyParams {
                                     source_dir: source,
                                     target_dir: target,
+                                    source_location: Some(app.get_current_location()),
+                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
                                     items: names,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -813,7 +833,13 @@ impl EventHandler {
                             None
                         }
                     }
-                    7 => Some(AppAction::OpenMkdirDialog),
+                    7 => {
+                        if crate::panel_backend::supports_mkdir(&app.get_current_location()) {
+                            Some(AppAction::OpenMkdirDialog)
+                        } else {
+                            None
+                        }
+                    }
                     8 => {
                         let (names, restore_after, restore_before) =
                             app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
@@ -823,6 +849,8 @@ impl EventHandler {
                                 CopyParams {
                                     source_dir: app.get_current_dir().to_string(),
                                     target_dir: String::new(),
+                                    source_location: Some(app.get_current_location()),
+                                    target_fs_path: None,
                                     items: names,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,

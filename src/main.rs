@@ -13,8 +13,10 @@ mod copy_ops;
 mod editor;
 mod events;
 mod file_ops;
+mod location;
 mod mkdir_dialog;
 mod panel;
+mod panel_backend;
 mod rename_attr;
 mod settings_dialog;
 mod size_info_dialog;
@@ -68,6 +70,17 @@ fn restore_source_panel_and_refresh(
 
 /// Start a copy/move operation and clear overwrite/error dialogs.
 fn start_copy_operation(app: &mut AppState, operation: Operation, params: app_state::CopyParams) {
+    let total = params.items.len();
+    let initial_path = params.items.first().map(|(name, _)| {
+        if let Some(loc) = params.source_location.as_ref() {
+            panel_backend::join_path_display(loc, name)
+        } else {
+            FileOperations::join_path(&params.source_dir, name)
+                .to_string_lossy()
+                .to_string()
+        }
+    }).unwrap_or_default();
+
     app.copy_in_progress = Some(CopyInProgress {
         operation,
         params,
@@ -75,6 +88,12 @@ fn start_copy_operation(app: &mut AppState, operation: Operation, params: app_st
         overwrite_all: false,
         skip_all: false,
         ignore_all_errors: false,
+    });
+    app.copy_progress = Some(CopyProgress {
+        operation,
+        current_path: initial_path,
+        current: 0,
+        total,
     });
     app.copy_overwrite_dialog = None;
     app.copy_error_dialog = None;
@@ -88,6 +107,56 @@ fn get_or_create_subshell<'a>(
         *subshell = Some(subshell::Subshell::spawn(cwd)?);
     }
     Ok(subshell.as_ref().unwrap())
+}
+
+/// One step of copy/move/delete when source is PanelLocation (Fs or Zip). Returns (advance, overwrite_name, error_message).
+fn run_copy_step_backend(
+    source_loc: &crate::location::PanelLocation,
+    name: &str,
+    is_dir: bool,
+    current_path: &str,
+    target_dir: &std::path::Path,
+    operation: Operation,
+    overwrite_all: bool,
+    skip_all: bool,
+    ignore_all_errors: bool,
+) -> (bool, Option<String>, Option<String>) {
+    let target_path = target_dir.join(name.trim_end_matches('/'));
+
+    if operation == Operation::Delete {
+        let items = &[(name.to_string(), is_dir)];
+        return match panel_backend::delete_items(source_loc, items) {
+            Ok(()) => (true, None, None),
+            Err(e) => (
+                ignore_all_errors,
+                None,
+                Some(format!("{}: {}", current_path, e)),
+            ),
+        };
+    }
+
+    if target_path.exists() && !overwrite_all && !skip_all {
+        return (false, Some(name.to_string()), None);
+    }
+    if target_path.exists() && skip_all {
+        return (true, None, None);
+    }
+
+    let items = &[(name.to_string(), is_dir)];
+    let result = if operation == Operation::Move {
+        panel_backend::move_items_to_fs(source_loc, items, target_dir)
+    } else {
+        panel_backend::copy_items_to_fs(source_loc, items, target_dir)
+    };
+
+    match result {
+        Ok(()) => (true, None, None),
+        Err(e) => (
+            ignore_all_errors,
+            None,
+            Some(format!("{} -> {}: {}", current_path, name, e)),
+        ),
+    }
 }
 
 /// Advance the in-progress copy/move by one item. If target exists and no overwrite_all/skip_all, shows overwrite dialog.
@@ -105,15 +174,51 @@ fn run_copy_step(app: &mut AppState) {
         return;
     }
     let (name, is_dir) = &c.params.items[c.current_index];
-    let current_path = FileOperations::join_path(&c.params.source_dir, name)
-        .to_string_lossy()
-        .to_string();
+    let current_path = c.params.source_location.as_ref()
+        .map(|loc| panel_backend::join_path_display(loc, name))
+        .unwrap_or_else(|| FileOperations::join_path(&c.params.source_dir, name).to_string_lossy().to_string());
     app.copy_progress = Some(CopyProgress {
         operation: c.operation,
         current_path: current_path.clone(),
         current: c.current_index + 1,
         total,
     });
+
+    if let Some(ref source_loc) = c.params.source_location {
+        let target_dir = c.params.target_fs_path.as_deref()
+            .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
+        let (advance, overwrite_name, error_msg) = run_copy_step_backend(
+            source_loc,
+            name,
+            *is_dir,
+            &current_path,
+            target_dir,
+            c.operation,
+            c.overwrite_all,
+            c.skip_all,
+            c.ignore_all_errors,
+        );
+        if let Some(n) = overwrite_name {
+            app.copy_overwrite_dialog = Some(n);
+            app.copy_overwrite_focus = 0;
+            return;
+        }
+        if let Some(msg) = error_msg {
+            if !advance {
+                app.copy_error_dialog = Some(app_state::CopyErrorState {
+                    operation: c.operation,
+                    message: msg,
+                });
+                app.copy_error_focus = 0;
+            }
+        }
+        if advance {
+            c.current_index += 1;
+        }
+        return;
+    }
+
+    // Legacy path: copy_ops with filesystem paths only.
     // Delete: no target or overwrite; just remove from source_dir. Run directory delete in background so UI stays responsive.
     if c.operation == Operation::Delete {
         // Poll pending directory delete from previous step
@@ -259,6 +364,10 @@ fn main() -> Result<(), io::Error> {
     // Preload subshell so first Ctrl+O has no spawn delay (MC inits subshell at startup).
     let _ = get_or_create_subshell(&mut subshell, app.get_current_dir());
 
+    // Software blinking for command-line cursor (terminal-native blink is not reliable everywhere).
+    let mut cmd_cursor_blink_visible = true;
+    let mut cmd_cursor_blink_last_toggle = std::time::Instant::now();
+
     loop {
         terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
 
@@ -269,10 +378,37 @@ fn main() -> Result<(), io::Error> {
                 Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
             )
             || (app.focus == Focus::CommandLine);
-        if show_cursor {
-            let _ = terminal.show_cursor();
+        let command_line_cursor_active = app.focus == Focus::CommandLine
+            && app.editor_screen.is_none()
+            && app.mkdir_dialog.is_none()
+            && app.rename_attr_dialog.is_none();
+
+        if command_line_cursor_active {
+            if cmd_cursor_blink_last_toggle.elapsed() >= std::time::Duration::from_millis(500) {
+                cmd_cursor_blink_visible = !cmd_cursor_blink_visible;
+                cmd_cursor_blink_last_toggle = std::time::Instant::now();
+            }
         } else {
-            let _ = crossterm::execute!(terminal.backend_mut(), crossterm::cursor::Hide);
+            // Reset blink state when leaving command line so it appears immediately on next focus.
+            cmd_cursor_blink_visible = true;
+            cmd_cursor_blink_last_toggle = std::time::Instant::now();
+        }
+
+        if show_cursor {
+            if command_line_cursor_active {
+                if cmd_cursor_blink_visible {
+                    let _ = terminal.show_cursor();
+                } else {
+                    let _ = crossterm::execute!(terminal.backend_mut(), crossterm::cursor::Hide);
+                }
+            } else {
+                let _ = terminal.show_cursor();
+            }
+        } else {
+            let _ = crossterm::execute!(
+                terminal.backend_mut(),
+                crossterm::cursor::Hide
+            );
         }
 
         if app.copy_in_progress.is_some()
@@ -356,29 +492,40 @@ fn main() -> Result<(), io::Error> {
                 } else if let Some(ref mut c) = app.copy_in_progress {
                     let idx = c.current_index;
                     if idx < c.params.items.len() {
-                        let (name, is_dir) = &c.params.items[idx];
+                        let (name, is_dir) = c.params.items[idx].clone();
                         let mut advance = false;
-                        let do_op = || {
-                            if c.operation == Operation::Move {
+                        let do_op = || -> io::Result<()> {
+                            if let Some(ref loc) = c.params.source_location {
+                                let target = c.params.target_fs_path.as_deref()
+                                    .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
+                                let items = &[(name.clone(), is_dir)];
+                                if c.operation == Operation::Move {
+                                    panel_backend::move_items_to_fs(loc, items, target)
+                                } else {
+                                    panel_backend::copy_items_to_fs(loc, items, target)
+                                }
+                            } else if c.operation == Operation::Move {
                                 copy_ops::move_item(
                                     &c.params.source_dir,
                                     &c.params.target_dir,
-                                    name,
-                                    *is_dir,
+                                    &name,
+                                    is_dir,
                                 )
                             } else {
                                 copy_ops::copy_item(
                                     &c.params.source_dir,
                                     &c.params.target_dir,
-                                    name,
-                                    *is_dir,
+                                    &name,
+                                    is_dir,
                                 )
                             }
                         };
                         match n {
-                            1 => match do_op() {
-                                Ok(()) => advance = true,
-                                Err(e) => {
+                            1 => {
+                                let result = do_op();
+                                if result.is_ok() {
+                                    advance = true;
+                                } else if let Err(e) = result {
                                     if c.ignore_all_errors {
                                         advance = true;
                                     } else {
@@ -389,21 +536,21 @@ fn main() -> Result<(), io::Error> {
                                         app.copy_error_focus = 0;
                                     }
                                 }
-                            },
+                            }
                             2 => {
                                 c.overwrite_all = true;
-                                match do_op() {
-                                    Ok(()) => advance = true,
-                                    Err(e) => {
-                                        if c.ignore_all_errors {
-                                            advance = true;
-                                        } else {
-                                            app.copy_error_dialog = Some(app_state::CopyErrorState {
-                                                operation: c.operation,
-                                                message: format!("{} -> {}: {}", c.params.source_dir, name, e),
-                                            });
-                                            app.copy_error_focus = 0;
-                                        }
+                                let result = do_op();
+                                if result.is_ok() {
+                                    advance = true;
+                                } else if let Err(e) = result {
+                                    if c.ignore_all_errors {
+                                        advance = true;
+                                    } else {
+                                        app.copy_error_dialog = Some(app_state::CopyErrorState {
+                                            operation: c.operation,
+                                            message: format!("{} -> {}: {}", c.params.source_dir, name, e),
+                                        });
+                                        app.copy_error_focus = 0;
                                     }
                                 }
                             }

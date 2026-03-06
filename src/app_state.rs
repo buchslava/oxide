@@ -1,7 +1,9 @@
 use std::io;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use ratatui::layout::Rect;
 use ratatui_code_editor::editor::Editor;
+use crate::location::PanelLocation;
 use crate::panel::{Panel, PanelOperations, ViewMode};
 
 /// Single source of truth for input target: panel (navigation) or command line (typing).
@@ -30,11 +32,16 @@ pub struct CopyProgress {
 }
 
 /// Parameters for a copy operation: source dir, target dir, list of (name, is_dir).
+/// source_location: when Some, use panel_backend (handles Zip and Fs); when None, use legacy copy_ops with source_dir.
 /// restore_selection_after/before: after delete/move, try to select this file (after first, else before).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyParams {
     pub source_dir: String,
     pub target_dir: String,
+    /// When Some, use panel_backend for copy/move/delete (supports Zip).
+    pub source_location: Option<PanelLocation>,
+    /// When Some, use this as target path for panel_backend copy/move (e.g. when opposite panel is Zip, this is archive's parent).
+    pub target_fs_path: Option<PathBuf>,
     pub items: Vec<(String, bool)>,
     pub restore_selection_after: Option<String>,
     pub restore_selection_before: Option<String>,
@@ -400,6 +407,15 @@ impl AppState {
         }
     }
 
+    /// Current panel location (for backend operations and CopyParams).
+    pub fn get_current_location(&self) -> PanelLocation {
+        match self.active_panel {
+            0 => self.left_panel.current_location().clone(),
+            1 => self.right_panel.current_location().clone(),
+            _ => self.left_panel.current_location().clone(),
+        }
+    }
+
     /// Directory of the panel opposite to the active one (target for F5 Copy).
     pub fn get_opposite_panel_dir(&self) -> &str {
         match self.active_panel {
@@ -409,11 +425,30 @@ impl AppState {
         }
     }
 
+    /// Filesystem path to use as copy/move target (for panel_backend). When opposite is Fs, that path; when Zip, the directory containing the archive.
+    pub fn get_opposite_panel_target_fs_path(&self) -> PathBuf {
+        let loc = match self.active_panel {
+            0 => self.right_panel.current_location(),
+            1 => self.left_panel.current_location(),
+            _ => self.right_panel.current_location(),
+        };
+        match loc {
+            PanelLocation::Fs(p) => p.clone(),
+            PanelLocation::Zip { archive, .. } => archive
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("/")),
+        }
+    }
+
     /// Sync the process current directory to the active panel's directory.
-    /// Call after any panel navigation (Enter on dir, ..) so that Ctrl+O shell and command line use the same cwd.
+    /// Only when the active panel is on the filesystem (not inside a ZIP). Call after panel navigation.
     pub fn sync_process_cwd_to_active_panel(&self) {
-        if let Err(e) = std::env::set_current_dir(self.get_current_dir()) {
-            eprintln!("Failed to change directory: {}", e);
+        let loc = self.get_current_location();
+        if let Some(p) = loc.as_fs_path() {
+            if let Err(e) = std::env::set_current_dir(p) {
+                eprintln!("Failed to change directory: {}", e);
+            }
         }
     }
 
@@ -479,13 +514,15 @@ impl AppState {
 
     pub fn switch_panel(&mut self) -> io::Result<()> {
         let new_active_panel = if self.active_panel == 0 { 1 } else { 0 };
-        let target_dir = if new_active_panel == 0 {
-            self.left_panel.get_current_dir()
+        let target_loc = if new_active_panel == 0 {
+            self.left_panel.current_location()
         } else {
-            self.right_panel.get_current_dir()
+            self.right_panel.current_location()
         };
-        if let Err(e) = std::env::set_current_dir(target_dir) {
-            eprintln!("Failed to change directory: {}", e);
+        if let Some(p) = target_loc.as_fs_path() {
+            if let Err(e) = std::env::set_current_dir(p) {
+                eprintln!("Failed to change directory: {}", e);
+            }
         }
         self.active_panel = new_active_panel;
         Ok(())

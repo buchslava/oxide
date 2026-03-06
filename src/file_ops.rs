@@ -198,8 +198,14 @@ impl FileOperations {
             ));
         }
 
-        // Sort files: directories first, then files alphabetically
+        // Sort files: ".." always first, then directories, then files alphabetically
         files.sort_by(|a, b| {
+            if a.is_parent_dir() && !b.is_parent_dir() {
+                return std::cmp::Ordering::Less;
+            }
+            if !a.is_parent_dir() && b.is_parent_dir() {
+                return std::cmp::Ordering::Greater;
+            }
             match (a.is_dir, b.is_dir) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,

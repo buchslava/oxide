@@ -1,8 +1,6 @@
 //! F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name;
 //! Enter = create (if non-empty), Esc = cancel.
 
-use std::path::Path;
-
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Margin, Rect},
@@ -14,6 +12,7 @@ use ratatui::{
 
 use crate::app_state::AppState;
 use crate::events::AppAction;
+use crate::panel_backend;
 
 /// Open the dialog with an empty folder name.
 pub fn open(app: &mut AppState) {
@@ -30,12 +29,11 @@ pub fn confirm(app: &mut AppState) -> Option<String> {
     app.take_mkdir_dialog()
 }
 
-/// Create the directory in the active panel's cwd and refresh the panel to select the new folder.
-/// Call only when name is non-empty (after trim). Logs error to stderr on create_dir failure.
+/// Create the directory in the active panel's current location and refresh the panel.
+/// Call only when name is non-empty (after trim). Only supported on filesystem (F7 unavailable in ZIP).
 pub fn create_and_refresh(app: &mut AppState, name: &str) {
-    let cwd = app.get_current_dir();
-    let path = Path::new(cwd).join(name);
-    if let Err(e) = std::fs::create_dir(&path) {
+    let loc = app.get_current_location();
+    if let Err(e) = panel_backend::mkdir(&loc, name) {
         eprintln!("Cannot create directory: {}", e);
         return;
     }

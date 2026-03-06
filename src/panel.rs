@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::io;
-use std::path::{Path, PathBuf};
-use crate::file_ops::{FileOperations, FileInfo};
+
+use crate::file_ops::FileInfo;
+use crate::location::PanelLocation;
+use crate::panel_backend;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewMode {
@@ -39,11 +41,13 @@ pub trait PanelOperations {
 #[derive(Debug)]
 pub struct Panel {
     pub view_mode: ViewMode,
-    current_dir: String,
+    current_location: PanelLocation,
+    /// Cached display string for get_current_dir() (kept in sync with current_location).
+    current_dir_display: String,
     files: Vec<FileInfo>,
     selected_index: usize,
     scroll_offset: usize,
-    navigation_history: Vec<(String, usize)>,
+    navigation_history: Vec<(PanelLocation, usize)>,
     /// Indices of files marked for group operations (F12 / MC Insert).
     marked_indices: HashSet<usize>,
     /// When true, show hidden files (names starting with "."). Toggled by Ctrl+H.
@@ -52,9 +56,12 @@ pub struct Panel {
 
 impl Panel {
     pub fn new(dir: String) -> io::Result<Self> {
+        let loc = PanelLocation::fs(dir);
+        let current_dir_display = loc.display_string();
         let mut panel = Self {
             view_mode: ViewMode::DoubleColumn,
-            current_dir: dir,
+            current_location: loc,
+            current_dir_display,
             files: Vec::new(),
             selected_index: 0,
             scroll_offset: 0,
@@ -66,41 +73,60 @@ impl Panel {
         Ok(panel)
     }
 
-    fn navigate_to_directory(&mut self, new_path: PathBuf) -> io::Result<()> {
+    fn navigate_to_location(&mut self, new_location: PanelLocation) -> io::Result<()> {
         self.marked_indices.clear();
-        self.navigation_history.push((self.current_dir.clone(), self.selected_index));
-        self.current_dir = new_path.to_string_lossy().to_string();
+        self.navigation_history
+            .push((self.current_location.clone(), self.selected_index));
+        self.current_location = new_location;
+        self.current_dir_display = self.current_location.display_string();
         self.selected_index = 0;
         self.scroll_offset = 0;
         self.refresh_files()
     }
 
     fn navigate_to_parent(&mut self) -> io::Result<()> {
-        if let Some(parent) = Path::new(&self.current_dir).parent() {
-            self.marked_indices.clear();
-            self.navigation_history.push((self.current_dir.clone(), self.selected_index));
-            let parent_path = parent.to_string_lossy().to_string();
-            self.current_dir = parent_path;
-            self.scroll_offset = 0;
-            self.refresh_files()?;
+        let Some(parent) = self.current_location.parent() else {
+            return Ok(());
+        };
+        self.marked_indices.clear();
+        self.navigation_history
+            .push((self.current_location.clone(), self.selected_index));
+        self.current_location = parent.clone();
+        self.current_dir_display = self.current_location.display_string();
+        self.scroll_offset = 0;
+        self.refresh_files()?;
 
-            // Try to find the directory we came from in the parent
-            if let Some((prev_dir, _)) = self.navigation_history.pop() {
-                if let Some(prev_name) = Path::new(&prev_dir).file_name() {
-                    let prev_name_str = prev_name.to_string_lossy();
-                    for (i, file) in self.files.iter().enumerate() {
-                        if file.is_dir && file.name != ".." {
-                            let file_name_clean = file.name.trim_end_matches('/');
-                            if file_name_clean == prev_name_str {
-                                self.selected_index = i;
-                                break;
-                            }
+        // Try to find the directory we came from in the parent list
+        if let Some((prev_loc, _)) = self.navigation_history.pop() {
+            let prev_name_str = match &prev_loc {
+                PanelLocation::Fs(p) => p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()),
+                PanelLocation::Zip { archive, path_inside } => {
+                    let inside = path_inside.trim_end_matches('/');
+                    if inside.is_empty() {
+                        archive.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                    } else {
+                        inside.rsplit_once('/').map(|(_, last)| last.to_string()).or_else(|| Some(inside.to_string()))
+                    }
+                }
+            };
+            if let Some(prev_name_str) = prev_name_str {
+                for (i, file) in self.files.iter().enumerate() {
+                    if !file.is_parent_dir() {
+                        let file_name_clean = file.name.trim_end_matches('/');
+                        if file_name_clean == prev_name_str {
+                            self.selected_index = i;
+                            break;
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Reference to current location (for backend operations).
+    pub fn current_location(&self) -> &PanelLocation {
+        &self.current_location
     }
 }
 
@@ -268,12 +294,22 @@ impl PanelOperations for Panel {
 
     fn enter_directory(&mut self) -> io::Result<()> {
         if let Some(file) = self.get_selected_file() {
+            if file.is_parent_dir() {
+                self.navigate_to_parent()?;
+                return Ok(());
+            }
             if file.is_dir {
-                if file.is_parent_dir() {
-                    self.navigate_to_parent()?;
-                } else {
-                    let new_path = FileOperations::join_path(&self.current_dir, &file.name);
-                    self.navigate_to_directory(new_path)?;
+                if let Some(new_loc) = self.current_location.enter(&file.name, true) {
+                    self.navigate_to_location(new_loc)?;
+                }
+                return Ok(());
+            }
+            // Enter on a file: only .zip is enterable (open archive)
+            let name_clean = file.name.trim_end_matches('/');
+            let lower = name_clean.to_lowercase();
+            if lower.ends_with(".zip") {
+                if let Some(new_loc) = self.current_location.enter(name_clean, false) {
+                    self.navigate_to_location(new_loc)?;
                 }
             }
         }
@@ -282,7 +318,7 @@ impl PanelOperations for Panel {
 
     fn refresh_files(&mut self) -> io::Result<()> {
         self.marked_indices.clear();
-        self.files = FileOperations::read_directory(&self.current_dir, self.show_hidden)?;
+        self.files = panel_backend::list(&self.current_location, self.show_hidden)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
@@ -335,7 +371,7 @@ impl PanelOperations for Panel {
     }
 
     fn get_current_dir(&self) -> &str {
-        &self.current_dir
+        &self.current_dir_display
     }
 
     fn get_selected_file(&self) -> Option<&FileInfo> {
@@ -489,8 +525,15 @@ impl Panel {
         preferred_before: Option<&str>,
         panel_height: Option<usize>,
     ) -> io::Result<()> {
+        let prev_selected_index = self.selected_index;
+        let prev_selected_name = self
+            .files
+            .get(self.selected_index)
+            .filter(|f| !f.is_parent_dir())
+            .map(|f| f.name.trim_end_matches('/').to_string());
+
         self.marked_indices.clear();
-        self.files = FileOperations::read_directory(&self.current_dir, self.show_hidden)?;
+        self.files = panel_backend::list(&self.current_location, self.show_hidden)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
 
@@ -517,23 +560,42 @@ impl Panel {
                 }
             }
         }
-        // When neither preferred_after nor preferred_before was found (e.g. deleted last file, name_before was ".."),
-        // select the new last file so we don't jump to the first.
+        // If no explicit target from delete/move, keep the current file when it still exists.
+        if !found {
+            if let Some(prev_name) = prev_selected_name.as_deref() {
+                for (i, f) in self.files.iter().enumerate() {
+                    if !f.is_parent_dir() && f.name.trim_end_matches('/') == prev_name {
+                        self.selected_index = i;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If selected file was removed, pick the next item by previous index (or nearest available).
         if !found && !self.files.is_empty() {
-            self.selected_index = self.files.len().saturating_sub(1);
+            self.selected_index = prev_selected_index.min(self.files.len().saturating_sub(1));
         }
 
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
             self.selected_index = self.files.len().saturating_sub(1);
         }
-        // Never leave selection on "..": choose nearest real file.
-        while self.selected_index < self.files.len()
-            && self.files[self.selected_index].is_parent_dir()
-        {
-            self.selected_index += 1;
-        }
-        if self.selected_index >= self.files.len() && !self.files.is_empty() {
-            self.selected_index = self.files.len().saturating_sub(1);
+
+        // Never leave selection on "..": prefer next real file, else previous.
+        if !self.files.is_empty() && self.files[self.selected_index].is_parent_dir() {
+            let mut idx = self.selected_index;
+            while idx < self.files.len() && self.files[idx].is_parent_dir() {
+                idx += 1;
+            }
+            if idx < self.files.len() {
+                self.selected_index = idx;
+            } else {
+                self.selected_index = self.files.len().saturating_sub(1);
+                while self.selected_index > 0 && self.files[self.selected_index].is_parent_dir() {
+                    self.selected_index -= 1;
+                }
+            }
         }
 
         if let Some(h) = panel_height {

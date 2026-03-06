@@ -12,8 +12,8 @@ use std::sync::mpsc;
 
 use crate::app_state::{AppState, ViewerMode, ViewerScreenState, ViewerState};
 use crate::events::AppAction;
-use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
+use crate::panel_backend;
 
 /// Default bytes per line when width unknown; also minimum.
 const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;
@@ -37,16 +37,18 @@ pub fn close_viewer(app: &mut AppState) {
 }
 
 /// Open the currently selected file in the viewer. Reads file in a background thread so Esc works immediately for large files.
+/// Works for both filesystem and files inside ZIP (uses panel_backend::read_file).
 /// Returns true if the viewer was opened (shows "Loading..." until read completes).
 pub fn open_viewer(app: &mut AppState) -> bool {
-    let cwd = app.get_current_dir().to_string();
+    let loc = app.get_current_location();
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
-            let path = FileOperations::join_path(&cwd, &file.name);
-            let file_path_str = path.to_string_lossy().to_string();
+            let file_path_str = panel_backend::join_path_display(&loc, &file.name);
+            let loc_clone = loc.clone();
+            let name = file.name.clone();
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
-                let _ = tx.send(std::fs::read(&path));
+                let _ = tx.send(panel_backend::read_file(&loc_clone, &name));
             });
             app.viewer_screen = Some(ViewerState::Loading {
                 file_path: file_path_str,
@@ -240,13 +242,24 @@ fn line_count(v: &mut ViewerScreenState) -> usize {
 
 /// Characters safe to show in text mode (avoids binary/control chars that corrupt the terminal).
 fn safe_text_char(c: char) -> bool {
-    c == '\t' || c == '\n' || c == '\r' || (c.is_ascii() && c >= ' ' && c <= '~')
+    c == '\n' || (c.is_ascii() && c >= ' ' && c <= '~')
 }
 
 /// Replace non-printable and binary characters with '.' so the terminal display is not corrupted.
-/// Keeps tab, newline, carriage return and printable ASCII (0x20–0x7E); same convention as hex dump ASCII column.
+/// Keeps tab, newline and printable ASCII (0x20–0x7E); same convention as hex dump ASCII column.
+/// Carriage returns are stripped to avoid terminal redraw artifacts on CRLF files.
 fn sanitize_text_for_display(s: &str) -> String {
-    s.chars().map(|c| if safe_text_char(c) { c } else { '.' }).collect()
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\r' => {}
+            '\t' => out.push_str("    "),
+            '\n' => out.push('\n'),
+            _ if safe_text_char(c) => out.push(c),
+            _ => out.push('.'),
+        }
+    }
+    out
 }
 
 /// Logical (file) lines, sanitized for display.
@@ -272,6 +285,16 @@ fn text_lines_wrapped(v: &ViewerScreenState) -> Vec<String> {
     let logical = text_lines_logical(v);
     let width = content_width(v);
     logical.iter().flat_map(|l| wrap_line(l, width)).collect()
+}
+
+/// Convert one logical line byte-slice to a clean display string:
+/// strip trailing CR/LF separators, then sanitize control/binary chars.
+fn sanitize_line_bytes_for_display(line_bytes: &[u8]) -> String {
+    let mut raw = String::from_utf8_lossy(line_bytes).to_string();
+    while raw.ends_with('\n') || raw.ends_with('\r') {
+        raw.pop();
+    }
+    sanitize_text_for_display(&raw)
 }
 
 /// Build or refresh text cache (line starts + cumulative display count) so paging is O(1)/O(log n) like MC.
@@ -300,7 +323,7 @@ fn ensure_text_cache(v: &mut ViewerScreenState) {
         let start = line_starts[i];
         let end = *line_starts.get(i + 1).unwrap_or(&content.len());
         let line_bytes = &content[start..end];
-        let s = sanitize_text_for_display(&String::from_utf8_lossy(line_bytes));
+        let s = sanitize_line_bytes_for_display(line_bytes);
         cum += wrap_line(&s, width).len();
         cumulative.push(cum);
     }
@@ -362,7 +385,7 @@ fn text_visible_lines_cached(v: &mut ViewerScreenState, scroll: usize, height: u
         let start = line_starts[line_idx];
         let end = line_starts.get(line_idx + 1).copied().unwrap_or(content.len());
         let line_bytes = &content[start..end];
-        let s = sanitize_text_for_display(&String::from_utf8_lossy(line_bytes));
+        let s = sanitize_line_bytes_for_display(line_bytes);
         let wrapped = wrap_line(&s, width);
         for (_seg_idx, seg) in wrapped.into_iter().enumerate() {
             if segment_skip > 0 {
@@ -582,14 +605,21 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                     height: bottom_height,
                 };
 
+                // Clear the whole content area each frame to prevent stale glyphs when
+                // new page has fewer/shorter lines than the previous one.
+                f.render_widget(
+                    ratatui::widgets::Block::default().style(content_style),
+                    content_rect,
+                );
+
                 let total = match v.view_mode {
                     ViewerMode::Text => {
                         let (lines, total) =
                             text_visible_lines_cached(v, v.scroll, content_height_usize);
-                        let content: String = lines.join("\n");
-                        let para = Paragraph::new(content)
-                            .style(content_style)
-                            .wrap(Wrap { trim: false });
+                        let text_lines: Vec<Line> =
+                            lines.into_iter().map(Line::from).collect();
+                        let para = Paragraph::new(ratatui::text::Text::from(text_lines))
+                            .style(content_style);
                         f.render_widget(para, content_rect);
                         total
                     }

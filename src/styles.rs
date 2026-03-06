@@ -7,7 +7,15 @@ fn mark_prefix_span() -> Span<'static> {
 }
 
 /// Create a file line from a pre-formatted display string (e.g. truncated). Use for narrow columns.
-pub fn create_file_line_from_display(display: &str, is_dir: bool, is_symlink: bool, is_executable: bool, is_selected: bool, is_marked: bool) -> Line<'static> {
+pub fn create_file_line_from_display(
+    display: &str,
+    is_dir: bool,
+    is_symlink: bool,
+    is_executable: bool,
+    is_zip: bool,
+    is_selected: bool,
+    is_marked: bool,
+) -> Line<'static> {
     let mut spans = Vec::new();
     if is_marked {
         spans.push(mark_prefix_span());
@@ -29,6 +37,13 @@ pub fn create_file_line_from_display(display: &str, is_dir: bool, is_symlink: bo
             Style::default().fg(Color::Black).bg(Color::Cyan)
         } else {
             Style::default().fg(Color::Green)
+        }
+    } else if is_zip {
+        let zip_color = Color::Rgb(160, 120, 255);
+        if is_selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(zip_color)
         }
     } else {
         if is_selected {
