@@ -481,6 +481,10 @@ impl EventHandler {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> AppAction {
+        // F10 in command prompt mode: exit immediately.
+        if code == KeyCode::F(10) {
+            return AppAction::Quit;
+        }
         // Tab may be passed as KeyCode::Tab (normalized from Char('\t') in dispatch_event).
         match code {
             KeyCode::Char(c) => {
@@ -778,6 +782,10 @@ impl EventHandler {
         let slot_w = term_w / n;
         let slot_index = (col / slot_w).min(n - 1) as usize;
         let (_, key) = items.get(slot_index)?;
+        // In command prompt mode only F10 (Quit) is active.
+        if app.focus == Focus::CommandLine && *key != 10 {
+            return None;
+        }
         match key {
                     1 => Some(AppAction::OpenSettingsDialog),
                     2 => Some(AppAction::OpenRenameAttrDialog),

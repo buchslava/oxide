@@ -297,44 +297,6 @@ pub struct CopyErrorState {
 }
 
 impl AppState {
-    pub fn new() -> io::Result<Self> {
-        let current_dir = std::env::current_dir()?;
-        let current_dir_str = current_dir.to_string_lossy().to_string();
-
-        Ok(Self {
-            active_panel: 0,
-            left_panel: Panel::new(current_dir_str.clone())?,
-            right_panel: Panel::new(current_dir_str)?,
-            focus: Focus::Panel,
-            command_line: String::new(),
-            command_line_cursor: 0,
-            copy_progress: None,
-            copy_in_progress: None,
-            copy_overwrite_dialog: None,
-            copy_overwrite_focus: 0,
-            copy_error_dialog: None,
-            copy_error_focus: 0,
-            operation_confirm_pending: None,
-            operation_confirm_focus_yes: true,
-            delete_pending_rx: None,
-            source_panel_restore: None,
-            editor_screen: None,
-            editor_confirm_pending: false,
-            editor_confirm_focus: 0,
-            viewer_screen: None,
-            mkdir_dialog: None,
-            rename_attr_dialog: None,
-            rename_attr_error: None,
-            size_info_dialog: None,
-            settings_dialog: None,
-            size_info_pending_rx: None,
-            last_mouse_click: None,
-            last_mouse_position: None,
-            show_hidden_files: true,
-            persisted_settings: crate::settings::load(),
-        })
-    }
-
     /// Create app with initial panel dirs and settings from ~/.oxide/settings.json (used on startup).
     /// If a saved path is missing/invalid, that panel is opened in home_dir.
     /// Panels are created with default state, then sync_from_persisted_settings() is called so

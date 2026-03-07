@@ -497,11 +497,6 @@ impl PanelOperations for Panel {
 }
 
 impl Panel {
-    /// Navigate to a filesystem path (used when applying saved settings on start).
-    pub fn set_location_path(&mut self, path: &str) -> io::Result<()> {
-        self.navigate_to_location(PanelLocation::fs(path))
-    }
-
     /// Whether hidden files are shown (for Ctrl+H and settings sync).
     pub fn get_show_hidden(&self) -> bool {
         self.show_hidden

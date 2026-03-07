@@ -623,6 +623,10 @@ impl Renderer {
     }
 
     fn is_menu_action_available(app: &AppState, key: u16) -> bool {
+        // In command prompt mode only F10 (Quit) is available.
+        if app.focus == Focus::CommandLine {
+            return key == 10;
+        }
         match key {
             3 => app
                 .active_panel_ref()
