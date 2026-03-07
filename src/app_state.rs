@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui_code_editor::editor::Editor;
 use crate::location::PanelLocation;
 use crate::panel::{Panel, PanelOperations, ViewMode};
+use crate::settings::PersistedSettings;
 
 /// Single source of truth for input target: panel (navigation) or command line (typing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,8 +104,8 @@ pub struct AppState {
     pub rename_attr_error: Option<String>,
     /// When Some, F9 "Size info" dialog is open (total size of selected items).
     pub size_info_dialog: Option<SizeInfoDialogState>,
-    /// When Some, F1 Settings dialog is open (placeholder).
-    pub settings_dialog: Option<()>,
+    /// When Some, F1 Settings dialog is open (two-column: sections list + content).
+    pub settings_dialog: Option<SettingsDialogState>,
     /// Receiver for background size calculation; polled in main loop.
     pub size_info_pending_rx: Option<mpsc::Receiver<SizeInfoProgress>>,
     /// Last left-click (instant, panel_index, file_index) for double-click detection.
@@ -113,6 +114,8 @@ pub struct AppState {
     pub last_mouse_position: Option<(u16, u16)>,
     /// When true, show hidden files (names starting with "."). Default true. Toggled by Ctrl+H.
     pub show_hidden_files: bool,
+    /// Last saved/loaded settings from ~/.oxide/settings.json. Used to persist on change and for autosave.
+    pub persisted_settings: PersistedSettings,
 }
 
 /// Message from background size-calculation thread.
@@ -152,6 +155,36 @@ pub enum SizeInfoDialogState {
         dir_count: usize,
     },
 }
+
+/// State for F1 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
+#[derive(Debug, Clone)]
+pub struct SettingsDialogState {
+    /// Selected section index: 0 General, 1 Left panel, 2 Right panel, 3 Info, 4 Help.
+    pub selected_section: usize,
+    /// true = focus on left list, false = focus on right content.
+    pub focus_left: bool,
+    /// When focus_left is false and section is Left/Right panel: 0 = listbox, 1 = checkbox.
+    pub content_focus: usize,
+}
+
+impl Default for SettingsDialogState {
+    fn default() -> Self {
+        Self {
+            selected_section: 0,
+            focus_left: true,
+            content_focus: 0,
+        }
+    }
+}
+
+/// Section indices for the Settings dialog sidebar.
+pub const SETTINGS_SECTIONS: [&str; 5] = [
+    "General settings",
+    "Left panel",
+    "Right panel",
+    "Info",
+    "Help",
+];
 
 /// State for F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name.
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
@@ -298,7 +331,94 @@ impl AppState {
             last_mouse_click: None,
             last_mouse_position: None,
             show_hidden_files: true,
+            persisted_settings: crate::settings::load(),
         })
+    }
+
+    /// Create app with initial panel dirs and settings from ~/.oxide/settings.json (used on startup).
+    /// If a saved path is missing/invalid, that panel is opened in home_dir.
+    /// Panels are created with default state, then sync_from_persisted_settings() is called so
+    /// view_mode and show_hidden (and file lists) match persisted_settings before first render.
+    pub fn new_with_initial(
+        left_cwd: String,
+        right_cwd: String,
+        home_dir: &str,
+        settings: PersistedSettings,
+    ) -> io::Result<Self> {
+        let left = Panel::new(left_cwd.clone()).or_else(|_| Panel::new(home_dir.to_string()))?;
+        let right = Panel::new(right_cwd.clone()).or_else(|_| Panel::new(home_dir.to_string()))?;
+        let active = if settings.active_panel == 0 { 0 } else { 1 };
+        let mut app = Self {
+            active_panel: active,
+            left_panel: left,
+            right_panel: right,
+            focus: Focus::Panel,
+            command_line: String::new(),
+            command_line_cursor: 0,
+            copy_progress: None,
+            copy_in_progress: None,
+            copy_overwrite_dialog: None,
+            copy_overwrite_focus: 0,
+            copy_error_dialog: None,
+            copy_error_focus: 0,
+            operation_confirm_pending: None,
+            operation_confirm_focus_yes: true,
+            delete_pending_rx: None,
+            source_panel_restore: None,
+            editor_screen: None,
+            editor_confirm_pending: false,
+            editor_confirm_focus: 0,
+            viewer_screen: None,
+            mkdir_dialog: None,
+            rename_attr_dialog: None,
+            rename_attr_error: None,
+            size_info_dialog: None,
+            settings_dialog: None,
+            size_info_pending_rx: None,
+            last_mouse_click: None,
+            last_mouse_position: None,
+            show_hidden_files: true,
+            persisted_settings: settings,
+        };
+        app.sync_from_persisted_settings();
+        Ok(app)
+    }
+
+    /// Single sync point: apply persisted_settings to both panels (view_mode, show_hidden, refresh file lists).
+    /// Call after startup and whenever persisted_settings change so UI always matches the source of truth.
+    pub fn sync_from_persisted_settings(&mut self) {
+        let view_left = if self.persisted_settings.left_view.as_str() == "one" {
+            ViewMode::SingleColumn
+        } else {
+            ViewMode::DoubleColumn
+        };
+        let view_right = if self.persisted_settings.right_view.as_str() == "one" {
+            ViewMode::SingleColumn
+        } else {
+            ViewMode::DoubleColumn
+        };
+        let left_show = self.persisted_settings.left_show_hidden;
+        let right_show = self.persisted_settings.right_show_hidden;
+        self.left_panel_mut().set_view_mode(view_left);
+        self.right_panel_mut().set_view_mode(view_right);
+        self.left_panel_mut().set_show_hidden(left_show);
+        self.right_panel_mut().set_show_hidden(right_show);
+        let _ = self.left_panel_mut().refresh_files();
+        let _ = self.right_panel_mut().refresh_files();
+        self.show_hidden_files = self.active_panel_ref().get_show_hidden();
+    }
+
+    /// If autosave is on, write current panel dirs and active panel to persisted_settings and save to file.
+    pub fn maybe_persist_panel_dirs(&mut self) {
+        if !self.persisted_settings.autosave {
+            return;
+        }
+        let loc_left = self.left_panel.current_location();
+        let loc_right = self.right_panel.current_location();
+        self.persisted_settings.left_cwd = loc_left.as_fs_path().map(|p| p.to_string_lossy().to_string());
+        self.persisted_settings.right_cwd = loc_right.as_fs_path().map(|p| p.to_string_lossy().to_string());
+        self.persisted_settings.active_panel = if self.active_panel == 0 { 0 } else { 1 };
+        let _ = crate::settings::save(&self.persisted_settings);
     }
 
     /// Set the active panel by index (0 = left, 1 = right).

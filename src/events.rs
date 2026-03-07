@@ -62,6 +62,22 @@ pub enum AppAction {
     SettingsClose,
     /// Ctrl+H: toggle hidden files visibility.
     ToggleShowHidden,
+    /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
+    PanelNavigated,
+    /// A specific setting was toggled/changed in the F1 dialog. Main applies to persisted_settings, saves, applies to panels.
+    SettingChange(SettingChange),
+    /// Ctrl+T toggled view mode; persist to file.
+    ViewModeToggled,
+}
+
+/// Single source of truth: each variant updates one field in PersistedSettings. Applied in main.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingChange {
+    AutosaveToggle,
+    LeftViewCycle,
+    LeftShowHiddenToggle,
+    RightViewCycle,
+    RightShowHiddenToggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +358,7 @@ impl EventHandler {
                         }
                         panel.enter_directory()?;
                         app.sync_process_cwd_to_active_panel();
+                        return Ok(Some(AppAction::PanelNavigated));
                     }
                     KeyCode::Char(' ') => {
                         // Space = toggle mark on the current file, then move selection down.
@@ -539,7 +556,7 @@ impl EventHandler {
             }
             't' => {
                 app.toggle_view_mode();
-                AppAction::Continue
+                AppAction::ViewModeToggled
             }
             'h' => AppAction::ToggleShowHidden,
             'r' => {
@@ -734,6 +751,7 @@ impl EventHandler {
                                 if file.is_dir || is_zip {
                                     panel.enter_directory()?;
                                     app.sync_process_cwd_to_active_panel();
+                                    return Ok(Some(AppAction::PanelNavigated));
                                 } else if !file.is_parent_dir() && file.is_executable {
                                     let cmd = format!("./{}", file.name);
                                     return Ok(Some(AppAction::RunCommand(cmd)));

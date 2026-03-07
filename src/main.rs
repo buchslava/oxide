@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use crossterm::{
@@ -18,6 +19,7 @@ mod mkdir_dialog;
 mod panel;
 mod panel_backend;
 mod rename_attr;
+mod settings;
 mod settings_dialog;
 mod size_info_dialog;
 mod styles;
@@ -27,10 +29,10 @@ mod viewer;
 
 use app_state::{AppState, CopyInProgress, CopyProgress, Focus, Operation, RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress};
 use editor::{apply_confirm_choice, close, open_editor, save};
-use events::{EventHandler, AppAction, CopyErrorChoice, DeleteConfirmChoice};
+use events::{EventHandler, AppAction, CopyErrorChoice, DeleteConfirmChoice, SettingChange};
 use viewer::{close_viewer, open_viewer, poll_viewer_loading};
 use file_ops::FileOperations;
-use panel::PanelOperations;
+use panel::{PanelOperations, ViewMode};
 use ui::Renderer;
 
 fn reset_terminal_character_set_and_modes<W: Write>(out: &mut W) -> io::Result<()> {
@@ -341,7 +343,20 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = AppState::new()?;
+    let app_settings = settings::load();
+    let _ = settings::ensure_config_dir();
+    let _ = settings::save(&app_settings);
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home_str = home.to_string_lossy().to_string();
+    let left_cwd = app_settings
+        .left_cwd
+        .clone()
+        .unwrap_or_else(|| home_str.clone());
+    let right_cwd = app_settings
+        .right_cwd
+        .clone()
+        .unwrap_or_else(|| home_str.clone());
+    let mut app = AppState::new_with_initial(left_cwd, right_cwd, &home_str, app_settings)?;
     let mut subshell: Option<subshell::Subshell> = None;
 
     // Process any events from EnterAlternateScreen (never discard keys).
@@ -481,7 +496,10 @@ fn main() -> Result<(), io::Error> {
         }
 
         match EventHandler::handle_events(&mut app)? {
-            AppAction::Quit => break,
+            AppAction::Quit => {
+                app.maybe_persist_panel_dirs();
+                break;
+            }
             AppAction::CopyOverwriteChoice(n) => {
                 if n == 5 {
                     app.copy_in_progress = None;
@@ -654,24 +672,84 @@ fn main() -> Result<(), io::Error> {
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
             AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
             AppAction::SettingsClose => settings_dialog::close(&mut app),
+            AppAction::PanelNavigated => app.maybe_persist_panel_dirs(),
+            AppAction::SettingChange(change) => {
+                match change {
+                    SettingChange::AutosaveToggle => {
+                        app.persisted_settings.autosave = !app.persisted_settings.autosave;
+                    }
+                    SettingChange::LeftViewCycle => {
+                        let v = &mut app.persisted_settings.left_view;
+                        *v = if v.as_str() == "one" {
+                            "two".to_string()
+                        } else {
+                            "one".to_string()
+                        };
+                    }
+                    SettingChange::LeftShowHiddenToggle => {
+                        app.persisted_settings.left_show_hidden =
+                            !app.persisted_settings.left_show_hidden;
+                    }
+                    SettingChange::RightViewCycle => {
+                        let v = &mut app.persisted_settings.right_view;
+                        *v = if v.as_str() == "one" {
+                            "two".to_string()
+                        } else {
+                            "one".to_string()
+                        };
+                    }
+                    SettingChange::RightShowHiddenToggle => {
+                        app.persisted_settings.right_show_hidden =
+                            !app.persisted_settings.right_show_hidden;
+                    }
+                }
+                let _ = settings::save(&app.persisted_settings);
+                match change {
+                    SettingChange::AutosaveToggle => {}
+                    _ => app.sync_from_persisted_settings(),
+                }
+            }
+            AppAction::ViewModeToggled => {
+                let view = if app.active_panel_ref().get_view_mode() == ViewMode::SingleColumn {
+                    "one".to_string()
+                } else {
+                    "two".to_string()
+                };
+                if app.active_panel() == 0 {
+                    app.persisted_settings.left_view = view;
+                } else {
+                    app.persisted_settings.right_view = view;
+                }
+                let _ = settings::save(&app.persisted_settings);
+            }
             AppAction::ToggleShowHidden => {
-                let new_show = !app.show_hidden_files;
-                app.show_hidden_files = new_show;
+                // Toggle only the active panel's show_hidden (left and right are independent).
                 let panel_height = util::compute_panel_height();
-                let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
-                let right_name = app.right_panel().get_selected_file().map(|f| f.name.clone());
-                app.left_panel_mut().set_show_hidden(new_show);
-                app.right_panel_mut().set_show_hidden(new_show);
-                let _ = app.left_panel_mut().refresh_files_restore_selection(
-                    left_name.as_deref(),
-                    None,
-                    Some(panel_height),
-                );
-                let _ = app.right_panel_mut().refresh_files_restore_selection(
-                    right_name.as_deref(),
-                    None,
-                    Some(panel_height),
-                );
+                if app.active_panel() == 0 {
+                    let new_show = !app.left_panel().get_show_hidden();
+                    app.left_panel_mut().set_show_hidden(new_show);
+                    app.persisted_settings.left_show_hidden = new_show;
+                    app.show_hidden_files = new_show;
+                    let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
+                    let _ = settings::save(&app.persisted_settings);
+                    let _ = app.left_panel_mut().refresh_files_restore_selection(
+                        left_name.as_deref(),
+                        None,
+                        Some(panel_height),
+                    );
+                } else {
+                    let new_show = !app.right_panel().get_show_hidden();
+                    app.right_panel_mut().set_show_hidden(new_show);
+                    app.persisted_settings.right_show_hidden = new_show;
+                    app.show_hidden_files = new_show;
+                    let right_name = app.right_panel().get_selected_file().map(|f| f.name.clone());
+                    let _ = settings::save(&app.persisted_settings);
+                    let _ = app.right_panel_mut().refresh_files_restore_selection(
+                        right_name.as_deref(),
+                        None,
+                        Some(panel_height),
+                    );
+                }
             }
             AppAction::RenameAttrConfirm => {
                 if rename_attr::apply(&mut app) {

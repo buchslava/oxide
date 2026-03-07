@@ -116,11 +116,9 @@ fn filename_for_bottom_bar(file: Option<&FileInfo>) -> String {
     }
 }
 
-/// Size display: "UP--DIR" for ".." (parent), nothing for other dirs, human-readable for files.
+/// Size display: nothing for dirs (including ".."), human-readable for files.
 fn size_display(file: &FileInfo) -> String {
-    if file.is_parent_dir() {
-        "UP--DIR".to_string()
-    } else if file.is_dir {
+    if file.is_dir {
         String::new()
     } else {
         format_size(file.size)
@@ -867,47 +865,31 @@ impl Renderer {
     }
 
     fn draw_single_column_view(f: &mut Frame, panel: &mut Panel, area: Rect, is_active_panel: bool) {
-        const IN_W: u16 = 2;
+        // One-column view: no header row; data rows have name + size + mtime (like two-column: no redundant left padding).
+        // Mark: only "> " when marked (no leading spaces when unmarked, to match two-column).
         const SIZE_W: u16 = 12;
         const MTIME_W: u16 = 12;
         const GAP: u16 = 1;
-
-        let name_w = area.width.saturating_sub(IN_W + GAP + SIZE_W + GAP + MTIME_W).max(10);
-        let total_content_w = IN_W + GAP + name_w + GAP + SIZE_W + GAP + MTIME_W;
+        let name_w = area
+            .width
+            .saturating_sub(SIZE_W + GAP + MTIME_W)
+            .max(10) as usize;
 
         let panel_height = (area.height as usize).max(1);
-        let data_rows = panel_height.saturating_sub(1).max(0); // reserve 1 for header
-        panel.update_scroll_offset(data_rows);
+        panel.update_scroll_offset(panel_height);
 
         let files = panel.get_files();
         let scroll = panel.get_scroll_offset().min(files.len().saturating_sub(1).max(0));
 
         let base = Style::default().bg(MAIN_DARK_BG);
-        // Header row: "in", "Name", "Size", "Modify time"
-        let header = Line::from(vec![
-            Span::styled("in", base.fg(Color::DarkGray)),
-            Span::raw(" "),
-            Span::styled("Name", base.fg(Color::DarkGray)),
-            Span::raw(" ".repeat((name_w + 1 + SIZE_W + 1) as usize)),
-            Span::styled("Size", base.fg(Color::DarkGray)),
-            Span::raw(" "),
-            Span::styled("Modify time", base.fg(Color::DarkGray)),
-        ]);
-        let header_rect = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        };
-        f.render_widget(Paragraph::new(header), header_rect);
 
-        for (i, file) in files.iter().skip(scroll).take(data_rows).enumerate() {
+        for (i, file) in files.iter().skip(scroll).take(panel_height).enumerate() {
             let actual_index = i + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
 
-            let in_cell = if is_marked { "> " } else { "  " };
-            let name_display = truncate_for_width(file, name_w as usize);
+            let mark_cell = if is_marked { "> " } else { "" };
+            let name_display = truncate_for_width(file, name_w);
             let size_str = size_display(file);
             let mtime_str = file
                 .mtime
@@ -917,7 +899,7 @@ impl Renderer {
             let size_pad = format!("{:>1$}", size_str, SIZE_W as usize);
             let mtime_pad = format!("{:>12}", mtime_str);
 
-            let (name_style, in_style) = if is_selected {
+            let (name_style, mark_style) = if is_selected {
                 let sel = Style::default().fg(Color::White).bg(Color::Blue);
                 (sel, sel)
             } else if file.is_dir {
@@ -933,26 +915,31 @@ impl Renderer {
                 (base.fg(Color::White), base)
             };
 
-            let pad_after_name = " ".repeat(
-                (name_w as usize)
-                    .saturating_sub(name_display.chars().count())
-                    .saturating_add(GAP as usize),
-            );
+            let pad_len = (name_w + GAP as usize)
+                .saturating_sub(name_display.chars().count())
+                .saturating_sub(mark_cell.len());
+            let pad_after_name = " ".repeat(pad_len);
 
             let spans = vec![
-                Span::styled(in_cell, if is_selected { in_style } else { base }),
+                Span::styled(mark_cell, if is_selected { mark_style } else { base }),
                 Span::styled(name_display, name_style),
-                Span::styled(pad_after_name, if is_selected { in_style } else { base }),
-                Span::styled(size_pad.as_str(), if is_selected { in_style } else { base.fg(Color::White) }),
+                Span::styled(pad_after_name, if is_selected { mark_style } else { base }),
+                Span::styled(
+                    size_pad.as_str(),
+                    if is_selected { mark_style } else { base.fg(Color::White) },
+                ),
                 Span::raw(" "),
-                Span::styled(mtime_pad.as_str(), if is_selected { in_style } else { base.fg(Color::White) }),
+                Span::styled(
+                    mtime_pad.as_str(),
+                    if is_selected { mark_style } else { base.fg(Color::White) },
+                ),
             ];
 
             let row = Line::from(spans);
             let row_rect = Rect {
                 x: area.x,
-                y: area.y + 1 + i as u16,
-                width: area.width.min(total_content_w),
+                y: area.y + i as u16,
+                width: area.width,
                 height: 1,
             };
             f.render_widget(Paragraph::new(row), row_rect);
