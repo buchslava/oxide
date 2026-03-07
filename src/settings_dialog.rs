@@ -158,6 +158,22 @@ pub fn handle_key(
     Some(AppAction::Continue)
 }
 
+/// Info text for the Info section: app description, license, link.
+fn info_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from("OXIDE"),
+        Line::from("A New File Manager"),
+        Line::from("in the Spirit of the Classics"),
+        Line::from(""),
+        Line::from("Efficient, fast, and robust"),
+        Line::from(""),
+        Line::from("MIT License"),
+        Line::from("Copyright (c) 2026 Vyacheslav Chub (vyacheslav.chub@gmail.com)"),
+        Line::from(""),
+        Line::from("https://github.com/buchslava/oxide"),
+    ]
+}
+
 /// Help text lines for the Help section.
 fn help_lines() -> Vec<Line<'static>> {
     let cyan = Color::Cyan;
@@ -269,7 +285,9 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
         1 => draw_panel_section(f, right_inner, right_fill_style, left_view_index, p.left_show_hidden, state.content_focus),
         2 => draw_panel_section(f, right_inner, right_fill_style, right_view_index, p.right_show_hidden, state.content_focus),
         3 => {
-            let para = Paragraph::new("(empty)").style(right_fill_style.fg(Color::DarkGray));
+            let para = Paragraph::new(info_lines())
+                .style(right_fill_style)
+                .wrap(Wrap { trim: true });
             f.render_widget(para, right_inner);
         }
         4 => {
