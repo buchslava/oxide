@@ -5,15 +5,17 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-use crate::file_ops::{FileInfo, FileOperations};
+use crate::file_ops::{apply_sort_mode, FileInfo, FileOperations};
 use crate::location::PanelLocation;
 use crate::copy_ops;
 
 /// List contents of a location (directory or zip virtual directory).
-pub fn list(loc: &PanelLocation, show_hidden: bool) -> io::Result<Vec<FileInfo>> {
+/// sort_mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
+/// dirs_first: when true, directories appear before files.
+pub fn list(loc: &PanelLocation, show_hidden: bool, sort_mode: &str, dirs_first: bool) -> io::Result<Vec<FileInfo>> {
     match loc {
-        PanelLocation::Fs(p) => FileOperations::read_directory(p, show_hidden),
-        PanelLocation::Zip { archive, path_inside } => zip_list(archive, path_inside, show_hidden),
+        PanelLocation::Fs(p) => FileOperations::read_directory(p, show_hidden, sort_mode, dirs_first),
+        PanelLocation::Zip { archive, path_inside } => zip_list(archive, path_inside, show_hidden, sort_mode, dirs_first),
     }
 }
 
@@ -106,7 +108,7 @@ pub fn join_path_display(loc: &PanelLocation, name: &str) -> String {
 
 // --- Zip implementation ---
 
-fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool) -> io::Result<Vec<FileInfo>> {
+fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool, sort_mode: &str, dirs_first: bool) -> io::Result<Vec<FileInfo>> {
     let prefix = path_inside.trim_end_matches('/');
     let prefix_with_slash = if prefix.is_empty() {
         String::new()
@@ -184,19 +186,7 @@ fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool) -> io::Re
     if !prefix.is_empty() || archive_path.parent().is_some() {
         files.push(FileInfo::new("..".to_string(), true, false));
     }
-    files.sort_by(|a, b| {
-        if a.is_parent_dir() && !b.is_parent_dir() {
-            return std::cmp::Ordering::Less;
-        }
-        if !a.is_parent_dir() && b.is_parent_dir() {
-            return std::cmp::Ordering::Greater;
-        }
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.trim_end_matches('/').cmp(b.name.trim_end_matches('/')),
-        }
-    });
+    apply_sort_mode(&mut files, sort_mode, dirs_first);
     Ok(files)
 }
 

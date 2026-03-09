@@ -76,8 +76,14 @@ pub enum SettingChange {
     AutosaveToggle,
     LeftViewCycle,
     LeftShowHiddenToggle,
+    LeftSortCycle,
+    LeftSortCyclePrev,
+    LeftDirsFirstToggle,
     RightViewCycle,
     RightShowHiddenToggle,
+    RightSortCycle,
+    RightSortCyclePrev,
+    RightDirsFirstToggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

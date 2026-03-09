@@ -702,6 +702,46 @@ fn main() -> Result<(), io::Error> {
                         app.persisted_settings.right_show_hidden =
                             !app.persisted_settings.right_show_hidden;
                     }
+                    SettingChange::LeftSortCycle => {
+                        let idx = crate::file_ops::SORT_MODES
+                            .iter()
+                            .position(|s| *s == app.persisted_settings.left_sort)
+                            .unwrap_or(0);
+                        let next = (idx + 1) % crate::file_ops::SORT_MODES.len();
+                        app.persisted_settings.left_sort = crate::file_ops::SORT_MODES[next].to_string();
+                    }
+                    SettingChange::RightSortCycle => {
+                        let idx = crate::file_ops::SORT_MODES
+                            .iter()
+                            .position(|s| *s == app.persisted_settings.right_sort)
+                            .unwrap_or(0);
+                        let next = (idx + 1) % crate::file_ops::SORT_MODES.len();
+                        app.persisted_settings.right_sort = crate::file_ops::SORT_MODES[next].to_string();
+                    }
+                    SettingChange::LeftSortCyclePrev => {
+                        let idx = crate::file_ops::SORT_MODES
+                            .iter()
+                            .position(|s| *s == app.persisted_settings.left_sort)
+                            .unwrap_or(0);
+                        let len = crate::file_ops::SORT_MODES.len();
+                        let prev = (idx + len - 1) % len;
+                        app.persisted_settings.left_sort = crate::file_ops::SORT_MODES[prev].to_string();
+                    }
+                    SettingChange::RightSortCyclePrev => {
+                        let idx = crate::file_ops::SORT_MODES
+                            .iter()
+                            .position(|s| *s == app.persisted_settings.right_sort)
+                            .unwrap_or(0);
+                        let len = crate::file_ops::SORT_MODES.len();
+                        let prev = (idx + len - 1) % len;
+                        app.persisted_settings.right_sort = crate::file_ops::SORT_MODES[prev].to_string();
+                    }
+                    SettingChange::LeftDirsFirstToggle => {
+                        app.persisted_settings.left_dirs_first = !app.persisted_settings.left_dirs_first;
+                    }
+                    SettingChange::RightDirsFirstToggle => {
+                        app.persisted_settings.right_dirs_first = !app.persisted_settings.right_dirs_first;
+                    }
                 }
                 let _ = settings::save(&app.persisted_settings);
                 match change {

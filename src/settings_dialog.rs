@@ -11,8 +11,19 @@ use ratatui::{
 
 use crate::app_state::{AppState, SettingsDialogState, SETTINGS_SECTIONS};
 use crate::events::{AppAction, SettingChange};
+use crate::file_ops::SORT_MODES;
 
 const VIEW_OPTS: [&str; 2] = ["Two columns", "One column"];
+
+/// Display labels for sort modes (same order as SORT_MODES).
+const SORT_OPTIONS: [&str; 6] = [
+    "Name asc",
+    "Name desc",
+    "Size asc",
+    "Size desc",
+    "Modification date asc",
+    "Modification date desc",
+];
 
 /// Open the Settings dialog. UI state only; displayed values come from app.persisted_settings.
 pub fn open(app: &mut AppState) {
@@ -60,8 +71,8 @@ pub fn handle_key(
             if state.focus_left {
                 state.focus_left = false;
             } else if state.selected_section == 1 || state.selected_section == 2 {
-                // Cycle between widgets inside column 2 (listbox <-> checkbox)
-                state.content_focus = (state.content_focus + 1) % 2;
+                // Cycle between widgets: View (0), Sort (1), Folders first (2), Show hidden (3)
+                state.content_focus = (state.content_focus + 1) % 4;
             }
             return Some(AppAction::Continue);
         }
@@ -78,18 +89,24 @@ pub fn handle_key(
                 state.selected_section = (state.selected_section + n - 1) % n;
                 return Some(AppAction::Continue);
             }
-            // Right column: Up = listbox navigation only (previous item or move to listbox from checkbox)
+            // Right column: Up = previous item or move focus up
             match state.selected_section {
                 1 => {
                     if state.content_focus == 1 {
-                        state.content_focus = 0;
+                        return Some(AppAction::SettingChange(SettingChange::LeftSortCyclePrev));
+                    }
+                    if state.content_focus >= 2 {
+                        state.content_focus -= 1;
                     } else {
                         return Some(AppAction::SettingChange(SettingChange::LeftViewCycle));
                     }
                 }
                 2 => {
                     if state.content_focus == 1 {
-                        state.content_focus = 0;
+                        return Some(AppAction::SettingChange(SettingChange::RightSortCyclePrev));
+                    }
+                    if state.content_focus >= 2 {
+                        state.content_focus -= 1;
                     } else {
                         return Some(AppAction::SettingChange(SettingChange::RightViewCycle));
                     }
@@ -104,7 +121,7 @@ pub fn handle_key(
                 state.selected_section = (state.selected_section + 1) % n;
                 return Some(AppAction::Continue);
             }
-            // Right column: Down = listbox navigation only (next item or move to checkbox from listbox)
+            // Right column: Down = next item or move focus down
             match state.selected_section {
                 1 => {
                     if state.content_focus == 0 {
@@ -112,6 +129,12 @@ pub fn handle_key(
                             return Some(AppAction::SettingChange(SettingChange::LeftViewCycle));
                         }
                         state.content_focus = 1;
+                    } else if state.content_focus == 1 {
+                        return Some(AppAction::SettingChange(SettingChange::LeftSortCycle));
+                    } else if state.content_focus < 3 {
+                        state.content_focus += 1;
+                    } else {
+                        state.content_focus = 0;
                     }
                 }
                 2 => {
@@ -120,6 +143,12 @@ pub fn handle_key(
                             return Some(AppAction::SettingChange(SettingChange::RightViewCycle));
                         }
                         state.content_focus = 1;
+                    } else if state.content_focus == 1 {
+                        return Some(AppAction::SettingChange(SettingChange::RightSortCycle));
+                    } else if state.content_focus < 3 {
+                        state.content_focus += 1;
+                    } else {
+                        state.content_focus = 0;
                     }
                 }
                 _ => {}
@@ -133,20 +162,18 @@ pub fn handle_key(
             }
             let action = match state.selected_section {
                 0 => Some(AppAction::SettingChange(SettingChange::AutosaveToggle)),
-                1 => {
-                    if state.content_focus == 0 {
-                        Some(AppAction::SettingChange(SettingChange::LeftViewCycle))
-                    } else {
-                        Some(AppAction::SettingChange(SettingChange::LeftShowHiddenToggle))
-                    }
-                }
-                2 => {
-                    if state.content_focus == 0 {
-                        Some(AppAction::SettingChange(SettingChange::RightViewCycle))
-                    } else {
-                        Some(AppAction::SettingChange(SettingChange::RightShowHiddenToggle))
-                    }
-                }
+                1 => match state.content_focus {
+                    0 => Some(AppAction::SettingChange(SettingChange::LeftViewCycle)),
+                    1 => Some(AppAction::SettingChange(SettingChange::LeftSortCycle)),
+                    2 => Some(AppAction::SettingChange(SettingChange::LeftDirsFirstToggle)),
+                    _ => Some(AppAction::SettingChange(SettingChange::LeftShowHiddenToggle)),
+                },
+                2 => match state.content_focus {
+                    0 => Some(AppAction::SettingChange(SettingChange::RightViewCycle)),
+                    1 => Some(AppAction::SettingChange(SettingChange::RightSortCycle)),
+                    2 => Some(AppAction::SettingChange(SettingChange::RightDirsFirstToggle)),
+                    _ => Some(AppAction::SettingChange(SettingChange::RightShowHiddenToggle)),
+                },
                 _ => None,
             };
             if let Some(a) = action {
@@ -272,6 +299,8 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let p = &app.persisted_settings;
     let left_view_index = if p.left_view.as_str() == "one" { 1 } else { 0 };
     let right_view_index = if p.right_view.as_str() == "one" { 1 } else { 0 };
+    let left_sort_index = SORT_MODES.iter().position(|s| *s == p.left_sort.as_str()).unwrap_or(0);
+    let right_sort_index = SORT_MODES.iter().position(|s| *s == p.right_sort.as_str()).unwrap_or(0);
     match state.selected_section {
         0 => {
             let checkbox = if p.autosave { "[x]" } else { "[ ]" };
@@ -282,8 +311,8 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
             let para = Paragraph::new(line).style(right_fill_style);
             f.render_widget(para, right_inner);
         }
-        1 => draw_panel_section(f, right_inner, right_fill_style, left_view_index, p.left_show_hidden, state.content_focus),
-        2 => draw_panel_section(f, right_inner, right_fill_style, right_view_index, p.right_show_hidden, state.content_focus),
+        1 => draw_panel_section(f, right_inner, right_fill_style, left_view_index, left_sort_index, p.left_dirs_first, p.left_show_hidden, state.content_focus),
+        2 => draw_panel_section(f, right_inner, right_fill_style, right_view_index, right_sort_index, p.right_dirs_first, p.right_show_hidden, state.content_focus),
         3 => {
             let para = Paragraph::new(info_lines())
                 .style(right_fill_style)
@@ -318,6 +347,8 @@ fn draw_panel_section(
     area: Rect,
     fill_style: Style,
     view_index: usize,
+    sort_index: usize,
+    dirs_first: bool,
     show_hidden: bool,
     content_focus: usize,
 ) {
@@ -343,8 +374,33 @@ fn draw_panel_section(
 
     y += 1;
 
+    // Sort: listbox
+    let sort_label = Line::from(Span::raw("Sort:"));
+    f.render_widget(Paragraph::new(sort_label).style(fill_style), Rect { x: area.x, y, width: area.width, height: line_h });
+    y += line_h;
+
+    for (i, opt) in SORT_OPTIONS.iter().enumerate() {
+        let (sym, style) = if i == sort_index {
+            ("◉ ", if content_focus == 1 { view_highlight } else { fill_style })
+        } else {
+            ("○ ", fill_style)
+        };
+        let line = Line::from(vec![Span::raw(sym), Span::raw(*opt)]);
+        f.render_widget(Paragraph::new(line).style(style), Rect { x: area.x, y, width: area.width, height: line_h });
+        y += line_h;
+    }
+
+    y += 1;
+
+    // Folders first (directories listed before files)
+    let dirs_first_chk = if dirs_first { "[x]" } else { "[ ]" };
+    let dirs_first_style = if content_focus == 2 { view_highlight } else { fill_style };
+    let dirs_first_line = Line::from(vec![Span::raw(dirs_first_chk), Span::raw(" Folders first")]);
+    f.render_widget(Paragraph::new(dirs_first_line).style(dirs_first_style), Rect { x: area.x, y, width: area.width, height: line_h });
+    y += line_h;
+
     let checkbox = if show_hidden { "[x]" } else { "[ ]" };
-    let chk_style = if content_focus == 1 { view_highlight } else { fill_style };
+    let chk_style = if content_focus == 3 { view_highlight } else { fill_style };
     let chk_line = Line::from(vec![Span::raw(checkbox), Span::raw(" Show hidden files")]);
     f.render_widget(Paragraph::new(chk_line).style(chk_style), Rect { x: area.x, y, width: area.width, height: line_h });
 }

@@ -163,7 +163,7 @@ pub struct SettingsDialogState {
     pub selected_section: usize,
     /// true = focus on left list, false = focus on right content.
     pub focus_left: bool,
-    /// When focus_left is false and section is Left/Right panel: 0 = listbox, 1 = checkbox.
+    /// When focus_left is false and section is Left/Right panel: 0 = View, 1 = Sort, 2 = Folders first, 3 = Show hidden.
     pub content_focus: usize,
 }
 
@@ -365,6 +365,14 @@ impl AppState {
         self.right_panel_mut().set_view_mode(view_right);
         self.left_panel_mut().set_show_hidden(left_show);
         self.right_panel_mut().set_show_hidden(right_show);
+        let left_sort = self.persisted_settings.left_sort.clone();
+        let right_sort = self.persisted_settings.right_sort.clone();
+        let left_dirs_first = self.persisted_settings.left_dirs_first;
+        let right_dirs_first = self.persisted_settings.right_dirs_first;
+        self.left_panel_mut().set_sort_mode(&left_sort);
+        self.right_panel_mut().set_sort_mode(&right_sort);
+        self.left_panel_mut().set_dirs_first(left_dirs_first);
+        self.right_panel_mut().set_dirs_first(right_dirs_first);
         let _ = self.left_panel_mut().refresh_files();
         let _ = self.right_panel_mut().refresh_files();
         self.show_hidden_files = self.active_panel_ref().get_show_hidden();

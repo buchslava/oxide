@@ -137,11 +137,64 @@ impl FileInfo {
     }
 }
 
+/// Sort mode strings used in settings.
+pub const SORT_MODES: [&str; 6] = [
+    "name_asc",
+    "name_desc",
+    "size_asc",
+    "size_desc",
+    "mtime_asc",
+    "mtime_desc",
+];
+
+/// Compare two entries by sort_mode (no special ".." handling). Used for ordering within dirs or files.
+fn cmp_by_sort_mode(a: &FileInfo, b: &FileInfo, sort_mode: &str) -> std::cmp::Ordering {
+    match sort_mode {
+        "name_asc" => a.name.trim_end_matches('/').cmp(b.name.trim_end_matches('/')),
+        "name_desc" => b.name.trim_end_matches('/').cmp(a.name.trim_end_matches('/')),
+        "size_asc" => a.size.cmp(&b.size).then_with(|| a.name.cmp(&b.name)),
+        "size_desc" => b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)),
+        "mtime_asc" => {
+            let ta = a.mtime.unwrap_or(std::time::UNIX_EPOCH);
+            let tb = b.mtime.unwrap_or(std::time::UNIX_EPOCH);
+            ta.cmp(&tb).then_with(|| a.name.cmp(&b.name))
+        }
+        "mtime_desc" => {
+            let ta = a.mtime.unwrap_or(std::time::UNIX_EPOCH);
+            let tb = b.mtime.unwrap_or(std::time::UNIX_EPOCH);
+            tb.cmp(&ta).then_with(|| a.name.cmp(&b.name))
+        }
+        _ => a.name.trim_end_matches('/').cmp(b.name.trim_end_matches('/')),
+    }
+}
+
+/// Sort file list: ".." always first. If dirs_first then directories next (sorted by sort_mode), then files (sorted by sort_mode); else unified by sort_mode.
+pub fn apply_sort_mode(files: &mut [FileInfo], sort_mode: &str, dirs_first: bool) {
+    files.sort_by(|a, b| {
+        if a.is_parent_dir() && !b.is_parent_dir() {
+            return std::cmp::Ordering::Less;
+        }
+        if !a.is_parent_dir() && b.is_parent_dir() {
+            return std::cmp::Ordering::Greater;
+        }
+        if dirs_first {
+            match (a.is_dir, b.is_dir) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+        }
+        cmp_by_sort_mode(a, b, sort_mode)
+    });
+}
+
 pub struct FileOperations;
 
 impl FileOperations {
     /// Read directory contents. When show_hidden is false, entries starting with "." are excluded.
-    pub fn read_directory<P: AsRef<Path>>(path: P, show_hidden: bool) -> io::Result<Vec<FileInfo>> {
+    /// sort_mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
+    /// dirs_first: when true, directories appear before files; when false, unified sort.
+    pub fn read_directory<P: AsRef<Path>>(path: P, show_hidden: bool, sort_mode: &str, dirs_first: bool) -> io::Result<Vec<FileInfo>> {
         let mut files = Vec::new();
         let path_ref = path.as_ref();
 
@@ -198,20 +251,7 @@ impl FileOperations {
             ));
         }
 
-        // Sort files: ".." always first, then directories, then files alphabetically
-        files.sort_by(|a, b| {
-            if a.is_parent_dir() && !b.is_parent_dir() {
-                return std::cmp::Ordering::Less;
-            }
-            if !a.is_parent_dir() && b.is_parent_dir() {
-                return std::cmp::Ordering::Greater;
-            }
-            match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.cmp(&b.name),
-            }
-        });
+        apply_sort_mode(&mut files, sort_mode, dirs_first);
 
         Ok(files)
     }

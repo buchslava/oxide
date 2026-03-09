@@ -52,6 +52,10 @@ pub struct Panel {
     marked_indices: HashSet<usize>,
     /// When true, show hidden files (names starting with "."). Toggled by Ctrl+H.
     show_hidden: bool,
+    /// Sort mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
+    sort_mode: String,
+    /// When true (default), directories appear before files; when false, unified sort.
+    dirs_first: bool,
 }
 
 impl Panel {
@@ -68,6 +72,8 @@ impl Panel {
             navigation_history: Vec::new(),
             marked_indices: HashSet::new(),
             show_hidden: true,
+            sort_mode: "name_asc".to_string(),
+            dirs_first: true,
         };
         panel.refresh_files()?;
         Ok(panel)
@@ -318,7 +324,7 @@ impl PanelOperations for Panel {
 
     fn refresh_files(&mut self) -> io::Result<()> {
         self.marked_indices.clear();
-        self.files = panel_backend::list(&self.current_location, self.show_hidden)?;
+        self.files = panel_backend::list(&self.current_location, self.show_hidden, &self.sort_mode, self.dirs_first)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
@@ -507,6 +513,16 @@ impl Panel {
         self.show_hidden = show;
     }
 
+    /// Set sort mode for file list.
+    pub fn set_sort_mode(&mut self, mode: &str) {
+        self.sort_mode = mode.to_string();
+    }
+
+    /// Set whether directories appear before files (true) or unified sort (false).
+    pub fn set_dirs_first(&mut self, dirs_first: bool) {
+        self.dirs_first = dirs_first;
+    }
+
     /// Set the current selection to the given index and update scroll so it is visible.
     pub fn set_selection(&mut self, index: usize, panel_height: usize) {
         let len = self.files.len();
@@ -538,7 +554,7 @@ impl Panel {
             .map(|f| f.name.trim_end_matches('/').to_string());
 
         self.marked_indices.clear();
-        self.files = panel_backend::list(&self.current_location, self.show_hidden)?;
+        self.files = panel_backend::list(&self.current_location, self.show_hidden, &self.sort_mode, self.dirs_first)?;
         self.selected_index = 0;
         self.scroll_offset = 0;
 

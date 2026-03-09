@@ -31,6 +31,16 @@ pub struct PersistedSettings {
     pub left_show_hidden: bool,
     #[serde(default = "default_true")]
     pub right_show_hidden: bool,
+    /// File/folder sort mode per panel: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
+    #[serde(default = "default_sort")]
+    pub left_sort: String,
+    #[serde(default = "default_sort")]
+    pub right_sort: String,
+    /// When true (default), directories appear before files; when false, unified sort by the chosen key.
+    #[serde(default = "default_true")]
+    pub left_dirs_first: bool,
+    #[serde(default = "default_true")]
+    pub right_dirs_first: bool,
     /// Active panel index when autosave last ran: 0 = left, 1 = right. Restored on start if autosave was on.
     #[serde(default)]
     pub active_panel: u8,
@@ -44,6 +54,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_sort() -> String {
+    "name_asc".to_string()
+}
+
 impl Default for PersistedSettings {
     fn default() -> Self {
         Self {
@@ -54,6 +68,10 @@ impl Default for PersistedSettings {
             right_view: "two".to_string(),
             left_show_hidden: true,
             right_show_hidden: true,
+            left_sort: "name_asc".to_string(),
+            right_sort: "name_asc".to_string(),
+            left_dirs_first: true,
+            right_dirs_first: true,
             active_panel: 0,
         }
     }
@@ -110,5 +128,16 @@ mod tests {
         let s = PersistedSettings::default();
         let json = serde_json::to_string(&s).unwrap();
         let _: PersistedSettings = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn panel_settings_persisted_in_json() {
+        let s = PersistedSettings::default();
+        let json = serde_json::to_string(&s).unwrap();
+        // Ensure all panel-related settings are written to settings.json
+        assert!(json.contains("\"left_sort\""));
+        assert!(json.contains("\"right_sort\""));
+        assert!(json.contains("\"left_dirs_first\""));
+        assert!(json.contains("\"right_dirs_first\""));
     }
 }
