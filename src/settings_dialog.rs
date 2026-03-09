@@ -212,6 +212,7 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         Line::from(vec![Span::styled("F-keys", cyan), Span::raw(": F1 Settings  F2 Rename  F3 View  F4 Edit")]),
         Line::from(vec![Span::raw("  F5 Copy  F6 Move  F7 New dir  F8 Delete  F10 Quit")]),
+        Line::from(vec![Span::raw("  Ctrl+Q  Left panel settings   Ctrl+W  Right panel settings")]),
         Line::from(""),
         Line::from(vec![Span::styled("Shortcuts", cyan), Span::raw(": Ctrl+O  Shell   Ctrl+H  Hidden   Ctrl+G  Size   Ctrl+R  Refresh   Ctrl+T  View")]),
         Line::from(vec![Span::raw("  Type char → command line   Tab/Esc → panel")]),
@@ -342,7 +343,8 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     );
 }
 
-fn draw_panel_section(
+/// Draw panel options (View, Sort, Folders first, Show hidden). Used by F1 Settings and by panel overlay.
+pub(crate) fn draw_panel_section(
     f: &mut Frame,
     area: Rect,
     fill_style: Style,

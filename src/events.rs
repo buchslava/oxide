@@ -60,6 +60,14 @@ pub enum AppAction {
     OpenSettingsDialog,
     /// ESC or mouse click in Settings dialog: close.
     SettingsClose,
+    /// Ctrl+Q: open Left panel settings overlay over the left panel.
+    OpenLeftPanelSettings,
+    /// Ctrl+W: open Right panel settings overlay over the right panel.
+    OpenRightPanelSettings,
+    /// Close Left panel settings overlay.
+    CloseLeftPanelSettings,
+    /// Close Right panel settings overlay.
+    CloseRightPanelSettings,
     /// Ctrl+H: toggle hidden files visibility.
     ToggleShowHidden,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
@@ -308,6 +316,14 @@ impl EventHandler {
                         return Ok(Some(action));
                     }
                 }
+                // Panel settings overlay (Ctrl+Q left, Ctrl+W right).
+                if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
+                    if let Some(action) =
+                        crate::panel_overlay::handle_key(app, key.code, key.modifiers)
+                    {
+                        return Ok(Some(action));
+                    }
+                }
                 // F1 Settings dialog: Esc closes.
                 if app.settings_dialog.is_some() {
                     if let Some(action) =
@@ -495,6 +511,12 @@ impl EventHandler {
         match code {
             KeyCode::Char(c) => {
                 if modifiers.contains(KeyModifiers::CONTROL) {
+                    if c == 'q' {
+                        return AppAction::OpenLeftPanelSettings;
+                    }
+                    if c == 'w' {
+                        return AppAction::OpenRightPanelSettings;
+                    }
                     if c == 'o' {
                         return AppAction::Suspend;
                     }
@@ -555,6 +577,8 @@ impl EventHandler {
 
     fn handle_ctrl_key(app: &mut AppState, c: char) -> AppAction {
         match c {
+            'q' => AppAction::OpenLeftPanelSettings,
+            'w' => AppAction::OpenRightPanelSettings,
             'o' => AppAction::Suspend,
             'g' => {
                 let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();

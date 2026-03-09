@@ -185,6 +185,9 @@ impl Renderer {
         if app.settings_dialog.is_some() {
             crate::settings_dialog::draw(f, app);
         }
+        if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
+            crate::panel_overlay::draw(f, app);
+        }
     }
 
     /// Operation confirmation dialog (Copy/Move/Delete): operation alert, Yes/No buttons.
@@ -745,6 +748,8 @@ impl Renderer {
             width: right_w,
             height: panel_content_height,
         };
+        app.left_panel_rect = Some(left_panel);
+        app.right_panel_rect = Some(right_panel);
         let bottom_file_rect = Rect {
             x: inner.x,
             y: inner.y + 1 + panel_content_height,

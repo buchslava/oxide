@@ -18,6 +18,7 @@ mod location;
 mod mkdir_dialog;
 mod panel;
 mod panel_backend;
+mod panel_overlay;
 mod rename_attr;
 mod settings;
 mod settings_dialog;
@@ -672,6 +673,10 @@ fn main() -> Result<(), io::Error> {
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
             AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
             AppAction::SettingsClose => settings_dialog::close(&mut app),
+            AppAction::OpenLeftPanelSettings => panel_overlay::open_left(&mut app),
+            AppAction::OpenRightPanelSettings => panel_overlay::open_right(&mut app),
+            AppAction::CloseLeftPanelSettings => panel_overlay::close_left(&mut app),
+            AppAction::CloseRightPanelSettings => panel_overlay::close_right(&mut app),
             AppAction::PanelNavigated => app.maybe_persist_panel_dirs(),
             AppAction::SettingChange(change) => {
                 match change {

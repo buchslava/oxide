@@ -106,6 +106,14 @@ pub struct AppState {
     pub size_info_dialog: Option<SizeInfoDialogState>,
     /// When Some, F1 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
+    /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
+    pub left_panel_settings_overlay: Option<PanelSettingsOverlayState>,
+    /// When Some, Ctrl+W "Right panel settings" overlay is open over the right panel.
+    pub right_panel_settings_overlay: Option<PanelSettingsOverlayState>,
+    /// Last frame's left panel area (set by UI renderer); used to position left panel overlay.
+    pub left_panel_rect: Option<Rect>,
+    /// Last frame's right panel area; used to position right panel overlay.
+    pub right_panel_rect: Option<Rect>,
     /// Receiver for background size calculation; polled in main loop.
     pub size_info_pending_rx: Option<mpsc::Receiver<SizeInfoProgress>>,
     /// Last left-click (instant, panel_index, file_index) for double-click detection.
@@ -174,6 +182,18 @@ impl Default for SettingsDialogState {
             focus_left: true,
             content_focus: 0,
         }
+    }
+}
+
+/// State for panel settings overlay. content_focus: 0 = View, 1 = Sort, 2 = Folders first, 3 = Show hidden.
+#[derive(Debug, Clone)]
+pub struct PanelSettingsOverlayState {
+    pub content_focus: usize,
+}
+
+impl Default for PanelSettingsOverlayState {
+    fn default() -> Self {
+        Self { content_focus: 0 }
     }
 }
 
@@ -336,6 +356,10 @@ impl AppState {
             rename_attr_error: None,
             size_info_dialog: None,
             settings_dialog: None,
+            left_panel_settings_overlay: None,
+            right_panel_settings_overlay: None,
+            left_panel_rect: None,
+            right_panel_rect: None,
             size_info_pending_rx: None,
             last_mouse_click: None,
             last_mouse_position: None,
