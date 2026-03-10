@@ -508,7 +508,8 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
             focus: _,
             ..
         } => {
-            let name_style = if focus == RenameAttrField::Name { fill_style.bg(Color::Blue).fg(Color::White) } else { fill_style };
+            let name_input_bg = if focus == RenameAttrField::Name { Color::Rgb(28, 34, 46) } else { Color::Rgb(38, 44, 56) };
+            let name_style = fill_style.bg(name_input_bg).fg(Color::White);
             f.render_widget(Paragraph::new(name.as_str()).style(name_style), Rect { x: name_inner.x, y: name_inner.y, width: name_inner.width, height: 1 });
             if focus == RenameAttrField::Name {
                 let cx = name_inner.x + (name.chars().take(*name_cursor).count() as u16).min(name_inner.width.saturating_sub(1));

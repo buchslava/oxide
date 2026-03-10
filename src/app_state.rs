@@ -7,11 +7,13 @@ use crate::location::PanelLocation;
 use crate::panel::{Panel, PanelOperations, ViewMode};
 use crate::settings::PersistedSettings;
 
-/// Single source of truth for input target: panel (navigation) or command line (typing).
+/// Single source of truth for input target: panel (navigation), command line (typing), or a modal dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Panel,
     CommandLine,
+    /// Find file dialog (Ctrl+F) has focus; panel and command line do not receive keys.
+    FindDialog,
 }
 
 /// Copy, Move, or Delete operation (F5 / F6 / F8). Shared flow for progress, overwrite, and error dialogs.
@@ -104,6 +106,8 @@ pub struct AppState {
     pub rename_attr_error: Option<String>,
     /// When Some, F9 "Size info" dialog is open (total size of selected items).
     pub size_info_dialog: Option<SizeInfoDialogState>,
+    /// When Some, Ctrl+F "Find file" dialog is open.
+    pub find_dialog: Option<FindDialogState>,
     /// When Some, F1 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
     /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
@@ -116,6 +120,8 @@ pub struct AppState {
     pub right_panel_rect: Option<Rect>,
     /// Receiver for background size calculation; polled in main loop.
     pub size_info_pending_rx: Option<mpsc::Receiver<SizeInfoProgress>>,
+    /// Receiver for find file search thread; polled when find_dialog is open.
+    pub find_search_rx: Option<mpsc::Receiver<FindMessage>>,
     /// Last left-click (instant, panel_index, file_index) for double-click detection.
     pub last_mouse_click: Option<(std::time::Instant, usize, usize)>,
     /// Last mouse (column, row) from any mouse event (scroll, move, click).
@@ -191,6 +197,59 @@ pub struct PanelSettingsOverlayState {
     pub content_focus: usize,
 }
 
+/// One result from Find file: path and optional line number (when content search matched).
+#[derive(Debug, Clone)]
+pub struct FindResult {
+    pub path: PathBuf,
+    pub line: Option<u64>,
+}
+
+/// Message from the find search background thread.
+#[derive(Debug)]
+pub enum FindMessage {
+    Match(PathBuf, Option<u64>),
+    /// Current directory being traversed (empty when search is done).
+    CurrentDir(String),
+    Done,
+}
+
+/// Phase of the Find file dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindDialogPhase {
+    /// Parameter form: start dir, pattern, content, options.
+    Parameter,
+    /// Search running; results accumulating.
+    Searching,
+    /// Search done; showing results list.
+    Results,
+}
+
+/// State for Ctrl+F Find file dialog.
+#[derive(Debug, Clone)]
+pub struct FindDialogState {
+    pub phase: FindDialogPhase,
+    pub start_dir: String,
+    pub start_dir_cursor: usize,
+    pub file_pattern: String,
+    pub file_pattern_cursor: usize,
+    pub content_pattern: String,
+    pub content_pattern_cursor: usize,
+    pub recursive: bool,
+    pub file_case_sens: bool,
+    pub content_case_sens: bool,
+    pub skip_hidden: bool,
+    pub results: Vec<FindResult>,
+    pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub status_message: String,
+    /// Current directory being searched (shown during search; cleared when done).
+    pub search_current_dir: String,
+    /// Visible list rows (set from dialog inner height in draw). Used for scroll math.
+    pub visible_list_rows: usize,
+    /// Focus in parameter form: 0=start_dir, 1=file_pattern, 2=content, 3=recursive, 4=file_case, 5=content_case, 6=skip_hidden, 7=Find, 8=Cancel.
+    pub focus: usize,
+}
+
 impl Default for PanelSettingsOverlayState {
     fn default() -> Self {
         Self { content_focus: 0 }
@@ -264,6 +323,8 @@ pub enum ViewerState {
     Loading {
         file_path: String,
         rx: mpsc::Receiver<io::Result<Vec<u8>>>,
+        /// When set (e.g. from Find file content search), scroll to this 1-based line when ready.
+        initial_line: Option<u64>,
     },
     /// Content loaded; normal view.
     Ready(ViewerScreenState),
@@ -355,12 +416,14 @@ impl AppState {
             rename_attr_dialog: None,
             rename_attr_error: None,
             size_info_dialog: None,
+            find_dialog: None,
             settings_dialog: None,
             left_panel_settings_overlay: None,
             right_panel_settings_overlay: None,
             left_panel_rect: None,
             right_panel_rect: None,
             size_info_pending_rx: None,
+            find_search_rx: None,
             last_mouse_click: None,
             last_mouse_position: None,
             show_hidden_files: true,
@@ -475,6 +538,39 @@ impl AppState {
 
     pub fn close_mkdir_dialog(&mut self) {
         self.mkdir_dialog = None;
+    }
+
+    /// Open Ctrl+F Find file dialog with start dir from active panel.
+    pub fn open_find_dialog(&mut self) {
+        let start_dir = self.active_panel_ref().get_current_dir();
+        self.find_dialog = Some(FindDialogState {
+            phase: FindDialogPhase::Parameter,
+            start_dir: start_dir.to_string(),
+            start_dir_cursor: start_dir.len(),
+            file_pattern: String::new(),
+            file_pattern_cursor: 0,
+            content_pattern: String::new(),
+            content_pattern_cursor: 0,
+            recursive: true,
+            file_case_sens: false,
+            content_case_sens: false,
+            skip_hidden: true,
+            results: Vec::new(),
+            selected_index: 0,
+            scroll_offset: 0,
+            status_message: String::new(),
+            search_current_dir: String::new(),
+            visible_list_rows: 18,
+            focus: 0,
+        });
+        self.find_search_rx = None;
+        self.focus = Focus::FindDialog;
+    }
+
+    pub fn close_find_dialog(&mut self) {
+        self.find_dialog = None;
+        self.find_search_rx = None;
+        self.focus = Focus::Panel;
     }
 
     pub fn active_panel_mut(&mut self) -> &mut Panel {

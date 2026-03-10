@@ -68,6 +68,18 @@ pub enum AppAction {
     CloseLeftPanelSettings,
     /// Close Right panel settings overlay.
     CloseRightPanelSettings,
+    /// Ctrl+F: open Find file dialog.
+    OpenFindDialog,
+    /// Close Find file dialog (ESC / Cancel).
+    FindClose,
+    /// In Find results: Chdir to selected result's directory.
+    FindChdir,
+    /// In Find results: View selected file (F3). Find dialog stays open.
+    FindView,
+    /// In Find results: Edit selected file (F4). Find dialog stays open.
+    FindEdit,
+    /// Start Find file search (from Find button in parameter form).
+    FindStartSearch,
     /// Ctrl+H: toggle hidden files visibility.
     ToggleShowHidden,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
@@ -162,7 +174,7 @@ impl EventHandler {
     ) -> io::Result<Option<AppAction>> {
         match ev {
             Event::Key(key) => {
-                // When viewer is open, delegate to viewer module (ESC closes).
+                // When viewer is open, it gets keys first (e.g. opened from Find F3; Find stays open behind).
                 if let Some(action) = handle_viewer_key(app, key) {
                     return Ok(Some(action));
                 }
@@ -203,6 +215,12 @@ impl EventHandler {
                 }
                 // When embedded editor is open, delegate to editor module.
                 if let Some(action) = handle_editor_key(app, key) {
+                    return Ok(Some(action));
+                }
+                // When Find file dialog is open it has focus (unless viewer/editor is on top). Keys go to Find, not panel.
+                if app.find_dialog.is_some() {
+                    let action = crate::find_dialog::handle_key(app, key.code, key.modifiers)
+                        .unwrap_or(AppAction::Continue);
                     return Ok(Some(action));
                 }
                 // When overwrite dialog is open: 1–5 direct, Tab/↑↓ cycle, Enter confirms, Esc=Cancel. Keys differ from Yes/No.
@@ -591,6 +609,13 @@ impl EventHandler {
             't' => {
                 app.toggle_view_mode();
                 AppAction::ViewModeToggled
+            }
+            'f' => {
+                if app.find_dialog.is_none() {
+                    AppAction::OpenFindDialog
+                } else {
+                    AppAction::Continue
+                }
             }
             'h' => AppAction::ToggleShowHidden,
             'r' => {

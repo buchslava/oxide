@@ -185,6 +185,9 @@ impl Renderer {
         if app.settings_dialog.is_some() {
             crate::settings_dialog::draw(f, app);
         }
+        if app.find_dialog.is_some() {
+            crate::find_dialog::draw(f, app);
+        }
         if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
             crate::panel_overlay::draw(f, app);
         }
@@ -626,6 +629,10 @@ impl Renderer {
     }
 
     fn is_menu_action_available(app: &AppState, key: u16) -> bool {
+        // While Find file dialog is open, no menu actions are available.
+        if app.find_dialog.is_some() {
+            return false;
+        }
         // In command prompt mode only F10 (Quit) is available.
         if app.focus == Focus::CommandLine {
             return key == 10;

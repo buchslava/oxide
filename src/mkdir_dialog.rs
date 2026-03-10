@@ -152,9 +152,9 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     };
     let input_focused = d.focus == 0;
     let input_bg = if input_focused {
-        Color::Rgb(45, 55, 65)
+        Color::Rgb(28, 34, 46)
     } else {
-        Color::Rgb(50, 50, 55)
+        Color::Rgb(38, 44, 56)
     };
     let input_style = Style::default().bg(input_bg).fg(Color::White);
     let input_padded = format!("{:<width$}", d.name, width = content.width as usize);

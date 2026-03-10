@@ -53,11 +53,28 @@ pub fn open_viewer(app: &mut AppState) -> bool {
             app.viewer_screen = Some(ViewerState::Loading {
                 file_path: file_path_str,
                 rx,
+                initial_line: None,
             });
             return true;
         }
     }
     false
+}
+
+/// Open a file by path in the viewer (e.g. from Find file results). Optionally scroll to 1-based line.
+pub fn open_viewer_path(app: &mut AppState, path: std::path::PathBuf, line: Option<u64>) -> bool {
+    let path_clone = path.clone();
+    let file_path_str = path.display().to_string();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(std::fs::read(&path_clone));
+    });
+    app.viewer_screen = Some(ViewerState::Loading {
+        file_path: file_path_str,
+        rx,
+        initial_line: line,
+    });
+    true
 }
 
 /// Poll the viewer loading channel; when the background read completes, replace Loading with Ready (or close on error).
@@ -70,15 +87,22 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
     };
     match rx.try_recv() {
         Ok(Ok(content)) => {
-            let file_path = match std::mem::take(&mut app.viewer_screen) {
-                Some(ViewerState::Loading { file_path, .. }) => file_path,
+            let (file_path, initial_line) = match std::mem::take(&mut app.viewer_screen) {
+                Some(ViewerState::Loading {
+                    file_path,
+                    initial_line,
+                    ..
+                }) => (file_path, initial_line),
                 _ => return false,
             };
+            let scroll = initial_line
+                .map(|l| (l as usize).saturating_sub(1))
+                .unwrap_or(0);
             app.viewer_screen = Some(ViewerState::Ready(ViewerScreenState {
                 file_path,
                 content,
                 view_mode: ViewerMode::Text,
-                scroll: 0,
+                scroll,
                 hex_cursor: 0,
                 area: Rect::default(),
                 text_line_starts: None,

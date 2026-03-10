@@ -79,6 +79,28 @@ pub fn open_editor(app: &mut AppState) -> bool {
     false
 }
 
+/// Open a file by path in the editor (e.g. from Find file results). Returns true if opened.
+pub fn open_editor_path(app: &mut AppState, path: std::path::PathBuf) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let file_path_str = path.display().to_string();
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    let lang = get_lang_from_path(&file_path_str);
+    let theme = vesper();
+    let editor = Editor::new(lang, &content, theme);
+    app.editor_screen = Some(EditorScreenState {
+        file_path: file_path_str,
+        initial_content: content,
+        editor,
+        area: Rect::default(),
+        search_query: None,
+        selection_extend_mode: false,
+    });
+    app.editor_confirm_pending = false;
+    true
+}
+
 /// Find next occurrence of query in the **opened file only** (editor buffer).
 /// Search from current cursor, wrap from start if not found.
 fn find_next(ed: &mut EditorScreenState, query: &str) {
@@ -434,6 +456,9 @@ fn refresh_panels_after_editor_close(app: &mut AppState) {
 pub fn close(app: &mut AppState) {
     app.editor_screen = None;
     app.editor_confirm_pending = false;
+    if app.find_dialog.is_some() {
+        app.focus = crate::app_state::Focus::FindDialog;
+    }
     refresh_panels_after_editor_close(app);
 }
 
@@ -448,10 +473,16 @@ pub fn apply_confirm_choice(app: &mut AppState, choice: EditorConfirmChoice) {
                 ed.initial_content = content;
             }
             app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = crate::app_state::Focus::FindDialog;
+            }
             refresh_panels_after_editor_close(app);
         }
         EditorConfirmChoice::Discard => {
             app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = crate::app_state::Focus::FindDialog;
+            }
             refresh_panels_after_editor_close(app);
         }
         EditorConfirmChoice::Cancel => {}

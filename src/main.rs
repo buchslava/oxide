@@ -14,6 +14,7 @@ mod copy_ops;
 mod editor;
 mod events;
 mod file_ops;
+mod find_dialog;
 mod location;
 mod mkdir_dialog;
 mod panel;
@@ -387,31 +388,39 @@ fn main() -> Result<(), io::Error> {
     loop {
         terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
 
+        let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
+            use crate::app_state::FindDialogPhase;
+            d.phase == FindDialogPhase::Parameter && d.focus <= 2
+        });
+        let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
+        let rename_name_focused = matches!(
+            app.rename_attr_dialog.as_ref(),
+            Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
+        );
+        let input_cursor_blink = find_input_focused || mkdir_input_focused || rename_name_focused;
         let show_cursor = app.editor_screen.is_some()
-            || app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0)
-            || matches!(
-                app.rename_attr_dialog.as_ref(),
-                Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
-            )
-            || (app.focus == Focus::CommandLine);
+            || mkdir_input_focused
+            || rename_name_focused
+            || (app.focus == Focus::CommandLine)
+            || find_input_focused;
         let command_line_cursor_active = app.focus == Focus::CommandLine
             && app.editor_screen.is_none()
             && app.mkdir_dialog.is_none()
             && app.rename_attr_dialog.is_none();
 
-        if command_line_cursor_active {
+        if command_line_cursor_active || input_cursor_blink {
             if cmd_cursor_blink_last_toggle.elapsed() >= std::time::Duration::from_millis(500) {
                 cmd_cursor_blink_visible = !cmd_cursor_blink_visible;
                 cmd_cursor_blink_last_toggle = std::time::Instant::now();
             }
         } else {
-            // Reset blink state when leaving command line so it appears immediately on next focus.
+            // Reset blink state when leaving so cursor appears immediately on next focus.
             cmd_cursor_blink_visible = true;
             cmd_cursor_blink_last_toggle = std::time::Instant::now();
         }
 
         if show_cursor {
-            if command_line_cursor_active {
+            if command_line_cursor_active || input_cursor_blink {
                 if cmd_cursor_blink_visible {
                     let _ = terminal.show_cursor();
                 } else {
@@ -650,13 +659,21 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::ViewerClose => {
                 close_viewer(&mut app);
+                if app.find_dialog.is_some() {
+                    app.focus = crate::app_state::Focus::FindDialog;
+                }
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
             }
             AppAction::OpenEditor => {
                 open_editor(&mut app);
             }
             AppAction::EditorSave => save(&mut app),
-            AppAction::EditorClose => close(&mut app),
+            AppAction::EditorClose => {
+                close(&mut app);
+                if app.find_dialog.is_some() {
+                    app.focus = crate::app_state::Focus::FindDialog;
+                }
+            }
             AppAction::EditorConfirmChoice(choice) => apply_confirm_choice(&mut app, choice),
             AppAction::OpenMkdirDialog => mkdir_dialog::open(&mut app),
             AppAction::MkdirConfirm => {
@@ -677,6 +694,56 @@ fn main() -> Result<(), io::Error> {
             AppAction::OpenRightPanelSettings => panel_overlay::open_right(&mut app),
             AppAction::CloseLeftPanelSettings => panel_overlay::close_left(&mut app),
             AppAction::CloseRightPanelSettings => panel_overlay::close_right(&mut app),
+            AppAction::OpenFindDialog => app.open_find_dialog(),
+            AppAction::FindClose => app.close_find_dialog(),
+            AppAction::FindStartSearch => find_dialog::start_search(&mut app),
+            AppAction::FindChdir => {
+                if let Some(ref mut d) = app.find_dialog {
+                    if d.selected_index < d.results.len()
+                    {
+                        let result = d.results[d.selected_index].path.clone();
+                        if let (Some(parent), Some(name)) = (
+                            result.parent(),
+                            result.file_name().map(|n| n.to_string_lossy().to_string()),
+                        ) {
+                            let loc = crate::location::PanelLocation::fs(parent);
+                            let panel_height = util::compute_panel_height();
+                            if app.active_panel_mut().navigate_to_location(loc).is_ok() {
+                                let _ = app.active_panel_mut()
+                                    .refresh_files_restore_selection(
+                                        Some(name.as_str()),
+                                        None,
+                                        Some(panel_height),
+                                    );
+                            }
+                        }
+                    }
+                }
+                app.close_find_dialog();
+            }
+            AppAction::FindView => {
+                if let Some(ref d) = app.find_dialog {
+                    if d.selected_index < d.results.len() {
+                        let result = d.results[d.selected_index].path.clone();
+                        let line = d.results[d.selected_index].line;
+                        if result.is_file() {
+                            viewer::open_viewer_path(&mut app, result, line);
+                        }
+                    }
+                }
+                // Do not close Find dialog: user returns to it after closing viewer.
+            }
+            AppAction::FindEdit => {
+                if let Some(ref d) = app.find_dialog {
+                    if d.selected_index < d.results.len() {
+                        let result = d.results[d.selected_index].path.clone();
+                        if result.is_file() {
+                            editor::open_editor_path(&mut app, result);
+                        }
+                    }
+                }
+                // Do not close Find dialog: user returns to it after closing editor.
+            }
             AppAction::PanelNavigated => app.maybe_persist_panel_dirs(),
             AppAction::SettingChange(change) => {
                 match change {

@@ -79,7 +79,8 @@ impl Panel {
         Ok(panel)
     }
 
-    fn navigate_to_location(&mut self, new_location: PanelLocation) -> io::Result<()> {
+    /// Navigate to a new location (e.g. from Find file "Chdir"). Public for use from main.
+    pub fn navigate_to_location(&mut self, new_location: PanelLocation) -> io::Result<()> {
         self.marked_indices.clear();
         self.navigation_history
             .push((self.current_location.clone(), self.selected_index));
