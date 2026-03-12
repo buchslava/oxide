@@ -9,6 +9,7 @@ use crossterm::{
 };
 
 mod app_state;
+mod archive_dialog;
 mod util;
 mod copy_ops;
 mod editor;
@@ -393,19 +394,22 @@ fn main() -> Result<(), io::Error> {
             d.phase == FindDialogPhase::Parameter && d.focus <= 2
         });
         let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
+        let archive_input_focused = app.archive_dialog.as_ref().map_or(false, |d| d.focus == 0);
         let rename_name_focused = matches!(
             app.rename_attr_dialog.as_ref(),
             Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
         );
-        let input_cursor_blink = find_input_focused || mkdir_input_focused || rename_name_focused;
+        let input_cursor_blink = find_input_focused || mkdir_input_focused || archive_input_focused || rename_name_focused;
         let show_cursor = app.editor_screen.is_some()
             || mkdir_input_focused
+            || archive_input_focused
             || rename_name_focused
             || (app.focus == Focus::CommandLine)
             || find_input_focused;
         let command_line_cursor_active = app.focus == Focus::CommandLine
             && app.editor_screen.is_none()
             && app.mkdir_dialog.is_none()
+            && app.archive_dialog.is_none()
             && app.rename_attr_dialog.is_none();
 
         if command_line_cursor_active || input_cursor_blink {
@@ -685,6 +689,17 @@ fn main() -> Result<(), io::Error> {
                 }
             }
             AppAction::MkdirCancel => mkdir_dialog::cancel(&mut app),
+            AppAction::OpenArchiveDialog => archive_dialog::open(&mut app),
+            AppAction::ArchiveConfirm => {
+                let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
+                if let Some(name) = archive_dialog::confirm(&mut app) {
+                    let name = name.trim();
+                    if !name.is_empty() && !items.is_empty() {
+                        archive_dialog::create_and_refresh(&mut app, name, &items);
+                    }
+                }
+            }
+            AppAction::ArchiveCancel => archive_dialog::cancel(&mut app),
             AppAction::OpenRenameAttrDialog => rename_attr::open(&mut app),
             AppAction::OpenSizeInfoDialog => size_info_dialog::open(&mut app),
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),

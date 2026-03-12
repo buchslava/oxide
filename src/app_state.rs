@@ -100,6 +100,8 @@ pub struct AppState {
     pub viewer_screen: Option<ViewerState>,
     /// When Some, F7 "Create directory" dialog is open (text field for new folder name).
     pub mkdir_dialog: Option<MkdirDialogState>,
+    /// When Some, Ctrl+A "Archive" dialog is open (text field for archive file name).
+    pub archive_dialog: Option<ArchiveDialogState>,
     /// When Some, F2 "Rename / Attributes" dialog is open (single file: name + attrs; group: attrs only).
     pub rename_attr_dialog: Option<RenameAttrDialogState>,
     /// When Some, an error alert is shown on top of the F2 dialog (message to display).
@@ -274,6 +276,15 @@ pub struct MkdirDialogState {
     pub focus: usize,
 }
 
+/// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
+/// focus: 0 = textarea, 1 = Create, 2 = Cancel.
+#[derive(Debug, Clone)]
+pub struct ArchiveDialogState {
+    pub name: String,
+    pub cursor: usize,
+    pub focus: usize,
+}
+
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenameAttrField {
@@ -413,6 +424,7 @@ impl AppState {
             editor_confirm_focus: 0,
             viewer_screen: None,
             mkdir_dialog: None,
+            archive_dialog: None,
             rename_attr_dialog: None,
             rename_attr_error: None,
             size_info_dialog: None,

@@ -48,6 +48,62 @@ pub fn mkdir(loc: &PanelLocation, name: &str) -> io::Result<()> {
     }
 }
 
+/// Create a zip archive containing the given items at the current location. Only valid for Fs.
+/// Originals are not modified. archive_name is the file name (e.g. "archive.zip").
+pub fn create_archive(
+    loc: &PanelLocation,
+    items: &[(String, bool)],
+    archive_name: &str,
+) -> io::Result<()> {
+    let base_dir = match loc {
+        PanelLocation::Fs(p) => p.as_path(),
+        PanelLocation::Zip { .. } => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Cannot create archive inside ZIP",
+            ));
+        }
+    };
+    let archive_path = FileOperations::join_path(base_dir, archive_name);
+    let file = fs::File::create(&archive_path)?;
+    let mut writer = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for (name, is_dir) in items {
+        let full_path = FileOperations::join_path(base_dir, name);
+        let name_clean = name.trim_end_matches('/');
+        if *is_dir {
+            for entry in walkdir::WalkDir::new(&full_path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                let relative = path
+                    .strip_prefix(&full_path)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "strip_prefix"))?;
+                let name_in_zip: String = format!(
+                    "{}/{}",
+                    name_clean.replace('\\', "/"),
+                    relative.to_string_lossy().replace('\\', "/")
+                );
+                if path.is_dir() {
+                    writer.add_directory(&name_in_zip, opts)?;
+                } else {
+                    writer.start_file(&name_in_zip, opts)?;
+                    io::copy(&mut fs::File::open(path)?, &mut writer)?;
+                }
+            }
+        } else {
+            writer.start_file(name_clean, opts)?;
+            io::copy(&mut fs::File::open(&full_path)?, &mut writer)?;
+        }
+    }
+
+    writer.finish()?;
+    Ok(())
+}
+
 /// Copy items from source location to a filesystem target dir (F5). Handles both Fs->Fs and Zip->Fs.
 pub fn copy_items_to_fs(
     source: &PanelLocation,

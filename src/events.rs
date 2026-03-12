@@ -46,6 +46,12 @@ pub enum AppAction {
     MkdirConfirm,
     /// ESC in mkdir dialog: cancel and close.
     MkdirCancel,
+    /// Ctrl+A: open "Archive" dialog (create zip of selected items; originals kept).
+    OpenArchiveDialog,
+    /// Enter in archive dialog: create archive and close.
+    ArchiveConfirm,
+    /// ESC in archive dialog: cancel and close.
+    ArchiveCancel,
     /// F2: open "Rename / Attributes" dialog (single file or group).
     OpenRenameAttrDialog,
     /// Enter in F2 dialog: apply rename + chmod and close.
@@ -334,6 +340,14 @@ impl EventHandler {
                         return Ok(Some(action));
                     }
                 }
+                // Ctrl+A "Archive" dialog: handle text input and Enter/ESC.
+                if app.archive_dialog.is_some() {
+                    if let Some(action) =
+                        crate::archive_dialog::handle_key(app, key.code, key.modifiers)
+                    {
+                        return Ok(Some(action));
+                    }
+                }
                 // Panel settings overlay (Ctrl+Q left, Ctrl+W right).
                 if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
                     if let Some(action) =
@@ -618,6 +632,16 @@ impl EventHandler {
                 }
             }
             'h' => AppAction::ToggleShowHidden,
+            'a' => {
+                let loc = app.get_current_location();
+                if loc.is_fs() {
+                    let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
+                    if !items.is_empty() {
+                        return AppAction::OpenArchiveDialog;
+                    }
+                }
+                AppAction::Continue
+            }
             'r' => {
                 let _ = app.active_panel_mut().refresh_files();
                 AppAction::Continue
@@ -695,6 +719,29 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
+        // Archive dialog: handle clicks on Create and Cancel buttons.
+        if app.archive_dialog.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                if let Some((create_rect, cancel_rect)) = crate::archive_dialog::archive_button_rects(area) {
+                    let (col, row) = (mouse_event.column, mouse_event.row);
+                    if col >= create_rect.x
+                        && col < create_rect.x + create_rect.width
+                        && row >= create_rect.y
+                        && row < create_rect.y + create_rect.height
+                    {
+                        return Ok(Some(AppAction::ArchiveConfirm));
+                    }
+                    if col >= cancel_rect.x
+                        && col < cancel_rect.x + cancel_rect.width
+                        && row >= cancel_rect.y
+                        && row < cancel_rect.y + cancel_rect.height
+                    {
+                        return Ok(Some(AppAction::ArchiveCancel));
+                    }
+                }
+            }
+            return Ok(Some(AppAction::Continue));
+        }
         // Editor "Save changes?" dialog: handle clicks on option rows (1=Save, 2=Discard, 3=Cancel).
         if app.editor_confirm_pending {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
@@ -760,6 +807,7 @@ impl EventHandler {
             && app.copy_error_dialog.is_none()
             && app.operation_confirm_pending.is_none()
             && app.mkdir_dialog.is_none()
+            && app.archive_dialog.is_none()
             && app.rename_attr_dialog.is_none()
             && app.size_info_dialog.is_none()
             && app.settings_dialog.is_none();

@@ -179,6 +179,9 @@ impl Renderer {
         if app.mkdir_dialog.is_some() {
             crate::mkdir_dialog::draw(f, app);
         }
+        if app.archive_dialog.is_some() {
+            crate::archive_dialog::draw(f, app);
+        }
         if app.rename_attr_dialog.is_some() {
             crate::rename_attr::draw(f, app);
         }
