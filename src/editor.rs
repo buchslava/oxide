@@ -16,7 +16,6 @@ use ratatui_code_editor::theme::vesper;
 
 use crate::app_state::{AppState, EditorScreenState};
 use crate::events::AppAction;
-use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
 
 /// User choice in the "Save changes?" dialog when exiting editor with unsaved changes.
@@ -54,16 +53,23 @@ fn get_lang_from_path(path: &str) -> &'static str {
 }
 
 /// Open the currently selected file in the embedded editor. Returns true if opened.
+/// Supports both filesystem and files inside ZIP archives.
 pub fn open_editor(app: &mut AppState) -> bool {
-    let cwd = app.get_current_dir().to_string();
+    let loc = app.get_current_location();
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
-            let path = FileOperations::join_path(&cwd, &file.name);
-            let file_path_str = path.to_string_lossy().to_string();
-            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let content = match crate::panel_backend::read_file(&loc, &file.name) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(_) => return false,
+            };
+            let file_path_str = crate::panel_backend::join_path_display(&loc, &file.name);
             let lang = get_lang_from_path(&file_path_str);
             let theme = vesper();
             let editor = Editor::new(lang, &content, theme);
+            let (edit_location, edit_name) = match &loc {
+                crate::location::PanelLocation::Zip { .. } => (Some(loc), Some(file.name.clone())),
+                crate::location::PanelLocation::Fs(_) => (None, None),
+            };
             app.editor_screen = Some(EditorScreenState {
                 file_path: file_path_str,
                 initial_content: content,
@@ -71,6 +77,8 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 area: Rect::default(),
                 search_query: None,
                 selection_extend_mode: false,
+                edit_location,
+                edit_name,
             });
             app.editor_confirm_pending = false;
             return true;
@@ -96,6 +104,8 @@ pub fn open_editor_path(app: &mut AppState, path: std::path::PathBuf) -> bool {
         area: Rect::default(),
         search_query: None,
         selection_extend_mode: false,
+        edit_location: None,
+        edit_name: None,
     });
     app.editor_confirm_pending = false;
     true
@@ -422,11 +432,15 @@ pub fn handle_editor_mouse(app: &mut AppState, mouse_event: crossterm::event::Mo
     false
 }
 
-/// F2 save: write content to file and update initial_content.
+/// F2 save: write content to file and update initial_content. Works for FS and files inside ZIP.
 pub fn save(app: &mut AppState) {
     if let Some(ref mut ed) = app.editor_screen {
         let content = ed.editor.get_content();
-        if let Err(e) = std::fs::write(&ed.file_path, &content) {
+        let result = match (&ed.edit_location, &ed.edit_name) {
+            (Some(loc), Some(name)) => crate::panel_backend::write_file(loc, name, content.as_bytes()),
+            _ => std::fs::write(&ed.file_path, &content),
+        };
+        if let Err(e) = result {
             eprintln!("Save failed: {}", e);
         } else {
             ed.initial_content = content;
@@ -469,7 +483,10 @@ pub fn apply_confirm_choice(app: &mut AppState, choice: EditorConfirmChoice) {
         EditorConfirmChoice::Save => {
             if let Some(ref mut ed) = app.editor_screen {
                 let content = ed.editor.get_content();
-                let _ = std::fs::write(&ed.file_path, &content);
+                let _ = match (&ed.edit_location, &ed.edit_name) {
+                    (Some(loc), Some(name)) => crate::panel_backend::write_file(loc, name, content.as_bytes()),
+                    _ => std::fs::write(&ed.file_path, &content),
+                };
                 ed.initial_content = content;
             }
             app.editor_screen = None;

@@ -164,6 +164,33 @@ fn run_copy_step_backend(
     }
 }
 
+/// One step of copy/move when target is inside a ZIP. No overwrite dialog; existing entries are overwritten.
+fn run_copy_step_into_archive(
+    source_loc: &crate::location::PanelLocation,
+    name: &str,
+    is_dir: bool,
+    current_path: &str,
+    archive_path: &std::path::Path,
+    path_inside: &str,
+    operation: Operation,
+    ignore_all_errors: bool,
+) -> (bool, Option<String>, Option<String>) {
+    let items = &[(name.to_string(), is_dir)];
+    let result = if operation == Operation::Move {
+        panel_backend::move_items_into_archive(source_loc, items, archive_path, path_inside)
+    } else {
+        panel_backend::copy_items_into_archive(source_loc, items, archive_path, path_inside)
+    };
+    match result {
+        Ok(()) => (true, None, None),
+        Err(e) => (
+            ignore_all_errors,
+            None,
+            Some(format!("{} -> (archive): {}", current_path, e)),
+        ),
+    }
+}
+
 /// Advance the in-progress copy/move by one item. If target exists and no overwrite_all/skip_all, shows overwrite dialog.
 fn run_copy_step(app: &mut AppState) {
     let Some(ref mut c) = app.copy_in_progress else { return };
@@ -190,19 +217,48 @@ fn run_copy_step(app: &mut AppState) {
     });
 
     if let Some(ref source_loc) = c.params.source_location {
-        let target_dir = c.params.target_fs_path.as_deref()
-            .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
-        let (advance, overwrite_name, error_msg) = run_copy_step_backend(
-            source_loc,
-            name,
-            *is_dir,
-            &current_path,
-            target_dir,
-            c.operation,
-            c.overwrite_all,
-            c.skip_all,
-            c.ignore_all_errors,
-        );
+        let (advance, overwrite_name, error_msg) = if let Some(ref target_loc) = c.params.target_location {
+            if let crate::location::PanelLocation::Zip { archive, path_inside } = target_loc {
+                run_copy_step_into_archive(
+                    source_loc,
+                    name,
+                    *is_dir,
+                    &current_path,
+                    archive,
+                    path_inside,
+                    c.operation,
+                    c.ignore_all_errors,
+                )
+            } else {
+                let target_dir = c.params.target_fs_path.as_deref()
+                    .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
+                run_copy_step_backend(
+                    source_loc,
+                    name,
+                    *is_dir,
+                    &current_path,
+                    target_dir,
+                    c.operation,
+                    c.overwrite_all,
+                    c.skip_all,
+                    c.ignore_all_errors,
+                )
+            }
+        } else {
+            let target_dir = c.params.target_fs_path.as_deref()
+                .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
+            run_copy_step_backend(
+                source_loc,
+                name,
+                *is_dir,
+                &current_path,
+                target_dir,
+                c.operation,
+                c.overwrite_all,
+                c.skip_all,
+                c.ignore_all_errors,
+            )
+        };
         if let Some(n) = overwrite_name {
             app.copy_overwrite_dialog = Some(n);
             app.copy_overwrite_focus = 0;
@@ -528,13 +584,24 @@ fn main() -> Result<(), io::Error> {
                         let mut advance = false;
                         let do_op = || -> io::Result<()> {
                             if let Some(ref loc) = c.params.source_location {
-                                let target = c.params.target_fs_path.as_deref()
-                                    .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
                                 let items = &[(name.clone(), is_dir)];
-                                if c.operation == Operation::Move {
-                                    panel_backend::move_items_to_fs(loc, items, target)
-                                } else {
-                                    panel_backend::copy_items_to_fs(loc, items, target)
+                                match c.params.target_location.as_ref() {
+                                    Some(crate::location::PanelLocation::Zip { archive, path_inside }) => {
+                                        if c.operation == Operation::Move {
+                                            panel_backend::move_items_into_archive(loc, items, archive, path_inside)
+                                        } else {
+                                            panel_backend::copy_items_into_archive(loc, items, archive, path_inside)
+                                        }
+                                    }
+                                    _ => {
+                                        let target = c.params.target_fs_path.as_deref()
+                                            .unwrap_or_else(|| std::path::Path::new(&c.params.target_dir));
+                                        if c.operation == Operation::Move {
+                                            panel_backend::move_items_to_fs(loc, items, target)
+                                        } else {
+                                            panel_backend::copy_items_to_fs(loc, items, target)
+                                        }
+                                    }
                                 }
                             } else if c.operation == Operation::Move {
                                 copy_ops::move_item(

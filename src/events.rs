@@ -437,11 +437,17 @@ impl EventHandler {
                             let (items, restore_after, restore_before) =
                                 app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
                             if !items.is_empty() {
+                                let opposite = app.get_opposite_panel_location();
+                                let (target_location, target_fs_path) = match &opposite {
+                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
+                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+                                };
                                 return Ok(Some(AppAction::Copy(CopyParams {
                                     source_dir: source,
                                     target_dir: target,
                                     source_location: Some(app.get_current_location()),
-                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
+                                    target_location,
+                                    target_fs_path,
                                     items,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -456,11 +462,17 @@ impl EventHandler {
                             let (items, restore_after, restore_before) =
                                 app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
                             if !items.is_empty() {
+                                let opposite = app.get_opposite_panel_location();
+                                let (target_location, target_fs_path) = match &opposite {
+                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
+                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+                                };
                                 return Ok(Some(AppAction::Move(CopyParams {
                                     source_dir: source,
                                     target_dir: target,
                                     source_location: Some(app.get_current_location()),
-                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
+                                    target_location,
+                                    target_fs_path,
                                     items,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -502,6 +514,7 @@ impl EventHandler {
                                     source_dir: app.get_current_dir().to_string(),
                                     target_dir: String::new(),
                                     source_location: Some(app.get_current_location()),
+                                    target_location: None,
                                     target_fs_path: None,
                                     items,
                                     restore_selection_after: restore_after,
@@ -915,11 +928,17 @@ impl EventHandler {
                             let (names, restore_after, restore_before) =
                                 app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
                             if !names.is_empty() {
+                                let opposite = app.get_opposite_panel_location();
+                                let (target_location, target_fs_path) = match &opposite {
+                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
+                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+                                };
                                 let params = CopyParams {
                                     source_dir: source,
                                     target_dir: target,
                                     source_location: Some(app.get_current_location()),
-                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
+                                    target_location,
+                                    target_fs_path,
                                     items: names,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -941,11 +960,17 @@ impl EventHandler {
                             let (names, restore_after, restore_before) =
                                 app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
                             if !names.is_empty() {
+                                let opposite = app.get_opposite_panel_location();
+                                let (target_location, target_fs_path) = match &opposite {
+                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
+                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+                                };
                                 let params = CopyParams {
                                     source_dir: source,
                                     target_dir: target,
                                     source_location: Some(app.get_current_location()),
-                                    target_fs_path: Some(app.get_opposite_panel_target_fs_path()),
+                                    target_location,
+                                    target_fs_path,
                                     items: names,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
@@ -979,6 +1004,7 @@ impl EventHandler {
                                     source_dir: app.get_current_dir().to_string(),
                                     target_dir: String::new(),
                                     source_location: Some(app.get_current_location()),
+                                    target_location: None,
                                     target_fs_path: None,
                                     items: names,
                                     restore_selection_after: restore_after,

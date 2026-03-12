@@ -36,6 +36,7 @@ pub struct CopyProgress {
 
 /// Parameters for a copy operation: source dir, target dir, list of (name, is_dir).
 /// source_location: when Some, use panel_backend (handles Zip and Fs); when None, use legacy copy_ops with source_dir.
+/// target_location: when Some(Zip), copy/move into that archive at its path_inside; when None, use target_fs_path.
 /// restore_selection_after/before: after delete/move, try to select this file (after first, else before).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyParams {
@@ -43,7 +44,9 @@ pub struct CopyParams {
     pub target_dir: String,
     /// When Some, use panel_backend for copy/move/delete (supports Zip).
     pub source_location: Option<PanelLocation>,
-    /// When Some, use this as target path for panel_backend copy/move (e.g. when opposite panel is Zip, this is archive's parent).
+    /// When Some(Zip), copy/move into that archive. When None, target is filesystem and target_fs_path is used.
+    pub target_location: Option<PanelLocation>,
+    /// When Some, use this as target path for panel_backend copy/move to FS (when opposite panel is Fs).
     pub target_fs_path: Option<PathBuf>,
     pub items: Vec<(String, bool)>,
     pub restore_selection_after: Option<String>,
@@ -370,6 +373,7 @@ pub enum ViewerMode {
 
 /// State when the embedded code editor is open (F4).
 pub struct EditorScreenState {
+    /// Display path (for title/lang). When editing inside Zip, this is the virtual path.
     pub file_path: String,
     /// Content when file was opened; used to detect unsaved changes.
     pub initial_content: String,
@@ -380,6 +384,9 @@ pub struct EditorScreenState {
     pub search_query: Option<String>,
     /// F3 selection mode (MC-style): when true, arrows extend selection.
     pub selection_extend_mode: bool,
+    /// When editing a file inside a Zip, these are set; otherwise None (save uses file_path to fs).
+    pub edit_location: Option<PanelLocation>,
+    pub edit_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -647,14 +654,19 @@ impl AppState {
         }
     }
 
-    /// Filesystem path to use as copy/move target (for panel_backend). When opposite is Fs, that path; when Zip, the directory containing the archive.
+    /// Location of the panel opposite to the active one (target for F5 Copy / F6 Move).
+    pub fn get_opposite_panel_location(&self) -> PanelLocation {
+        match self.active_panel {
+            0 => self.right_panel.current_location().clone(),
+            1 => self.left_panel.current_location().clone(),
+            _ => self.right_panel.current_location().clone(),
+        }
+    }
+
+    /// Filesystem path to use as copy/move target when opposite is Fs. When opposite is Zip, use target_location and copy into archive instead.
     pub fn get_opposite_panel_target_fs_path(&self) -> PathBuf {
-        let loc = match self.active_panel {
-            0 => self.right_panel.current_location(),
-            1 => self.left_panel.current_location(),
-            _ => self.right_panel.current_location(),
-        };
-        match loc {
+        let loc = self.get_opposite_panel_location();
+        match &loc {
             PanelLocation::Fs(p) => p.clone(),
             PanelLocation::Zip { archive, .. } => archive
                 .parent()

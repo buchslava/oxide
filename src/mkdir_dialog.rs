@@ -30,7 +30,7 @@ pub fn confirm(app: &mut AppState) -> Option<String> {
 }
 
 /// Create the directory in the active panel's current location and refresh the panel.
-/// Call only when name is non-empty (after trim). Only supported on filesystem (F7 unavailable in ZIP).
+/// Call only when name is non-empty (after trim). Supported on filesystem and inside ZIP archives.
 pub fn create_and_refresh(app: &mut AppState, name: &str) {
     let loc = app.get_current_location();
     if let Err(e) = panel_backend::mkdir(&loc, name) {
