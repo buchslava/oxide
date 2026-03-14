@@ -10,8 +10,9 @@ use crossterm::{
 
 mod app_state;
 mod archive_dialog;
-mod util;
 mod copy_ops;
+mod copy_state;
+mod util;
 mod editor;
 mod events;
 mod file_ops;
@@ -22,6 +23,7 @@ mod panel;
 mod panel_backend;
 mod help_dialog;
 mod panel_overlay;
+mod panel_overlay_state;
 mod rename_attr;
 mod settings;
 mod settings_dialog;
@@ -38,6 +40,13 @@ use viewer::{close_viewer, open_viewer, poll_viewer_loading};
 use file_ops::FileOperations;
 use panel::{PanelOperations, ViewMode};
 use ui::Renderer;
+
+/// Log to stderr if the result is an error; otherwise ignore. Use for non-fatal I/O (e.g. save settings, refresh).
+fn log_if_err(context: &str, res: io::Result<()>) {
+    if let Err(e) = res {
+        eprintln!("{}: {}", context, e);
+    }
+}
 
 fn reset_terminal_character_set_and_modes<W: Write>(out: &mut W) -> io::Result<()> {
     // Defensive terminal reset after shell relay/commands:
@@ -58,19 +67,31 @@ fn restore_source_panel_and_refresh(
     let panel_height = util::compute_panel_height();
     let is_left_source = app.left_panel().get_current_dir() == source_dir;
     if is_left_source {
-        let _ = app.left_panel_mut().refresh_files_restore_selection(
-            restore_after,
-            restore_before,
-            Some(panel_height),
+        log_if_err(
+            "Refresh left panel",
+            app.left_panel_mut().refresh_files_restore_selection(
+                restore_after,
+                restore_before,
+                Some(panel_height),
+            ),
         );
-        let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height));
+        log_if_err(
+            "Refresh right panel",
+            app.right_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height)),
+        );
     } else {
-        let _ = app.right_panel_mut().refresh_files_restore_selection(
-            restore_after,
-            restore_before,
-            Some(panel_height),
+        log_if_err(
+            "Refresh right panel",
+            app.right_panel_mut().refresh_files_restore_selection(
+                restore_after,
+                restore_before,
+                Some(panel_height),
+            ),
         );
-        let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height));
+        log_if_err(
+            "Refresh left panel",
+            app.left_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height)),
+        );
     }
 }
 
@@ -112,7 +133,7 @@ fn get_or_create_subshell<'a>(
     if subshell.is_none() {
         *subshell = Some(subshell::Subshell::spawn(cwd)?);
     }
-    Ok(subshell.as_ref().unwrap())
+    Ok(subshell.as_ref().expect("subshell initialized above"))
 }
 
 /// One step of copy/move/delete when source is PanelLocation (Fs or Zip). Returns (advance, overwrite_name, error_message).
@@ -267,10 +288,7 @@ fn run_copy_step(app: &mut AppState) {
         }
         if let Some(msg) = error_msg {
             if !advance {
-                app.copy_error_dialog = Some(app_state::CopyErrorState {
-                    operation: c.operation,
-                    message: msg,
-                });
+                app.copy_error_dialog = Some(app_state::CopyErrorState::new(c.operation, msg));
                 app.copy_error_focus = 0;
             }
         }
@@ -294,10 +312,10 @@ fn run_copy_step(app: &mut AppState) {
                     if c.ignore_all_errors {
                         c.current_index += 1;
                     } else {
-                        app.copy_error_dialog = Some(app_state::CopyErrorState {
-                            operation: c.operation,
-                            message: format!("{}: {}", current_path, e),
-                        });
+                        app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                            c.operation,
+                            format!("{}: {}", current_path, e),
+                        ));
                         app.copy_error_focus = 0;
                     }
                     return;
@@ -309,10 +327,10 @@ fn run_copy_step(app: &mut AppState) {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     // thread panicked or dropped; treat as error
                     if !c.ignore_all_errors {
-                        app.copy_error_dialog = Some(app_state::CopyErrorState {
-                            operation: c.operation,
-                            message: format!("{}: delete failed", current_path),
-                        });
+                        app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                            c.operation,
+                            format!("{}: delete failed", current_path),
+                        ));
                         app.copy_error_focus = 0;
                     } else {
                         c.current_index += 1;
@@ -335,10 +353,10 @@ fn run_copy_step(app: &mut AppState) {
             if c.ignore_all_errors {
                 c.current_index += 1;
             } else {
-                app.copy_error_dialog = Some(app_state::CopyErrorState {
-                    operation: c.operation,
-                    message: format!("{}: {}", current_path, e),
-                });
+                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                    c.operation,
+                    format!("{}: {}", current_path, e),
+                ));
                 app.copy_error_focus = 0;
             }
             return;
@@ -368,10 +386,10 @@ fn run_copy_step(app: &mut AppState) {
             if c.ignore_all_errors {
                 c.current_index += 1;
             } else {
-                app.copy_error_dialog = Some(app_state::CopyErrorState {
-                    operation: c.operation,
-                    message: format!("{} -> {}: {}", c.params.source_dir, name, e),
-                });
+                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                    c.operation,
+                    format!("{} -> {}: {}", c.params.source_dir, name, e),
+                ));
                 app.copy_error_focus = 0;
             }
             return;
@@ -384,10 +402,10 @@ fn run_copy_step(app: &mut AppState) {
             if c.ignore_all_errors {
                 c.current_index += 1;
             } else {
-                app.copy_error_dialog = Some(app_state::CopyErrorState {
-                    operation: c.operation,
-                    message: format!("{} -> {}: {}", c.params.source_dir, name, e),
-                });
+                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                    c.operation,
+                    format!("{} -> {}: {}", c.params.source_dir, name, e),
+                ));
                 app.copy_error_focus = 0;
             }
             return;
@@ -405,7 +423,7 @@ fn main() -> Result<(), io::Error> {
 
     let app_settings = settings::load();
     let _ = settings::ensure_config_dir();
-    let _ = settings::save(&app_settings);
+    log_if_err("Save settings (startup)", settings::save(&app_settings));
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let home_str = home.to_string_lossy().to_string();
     let left_cwd = app_settings
@@ -576,8 +594,14 @@ fn main() -> Result<(), io::Error> {
                     app.copy_in_progress = None;
                     app.copy_progress = None;
                     app.delete_pending_rx = None;
-                    let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, None);
-                    let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, None);
+                    log_if_err(
+                        "Refresh panels",
+                        app.left_panel_mut().refresh_files_restore_selection(None, None, None),
+                    );
+                    log_if_err(
+                        "Refresh panels",
+                        app.right_panel_mut().refresh_files_restore_selection(None, None, None),
+                    );
                 } else if let Some(ref mut c) = app.copy_in_progress {
                     let idx = c.current_index;
                     if idx < c.params.items.len() {
@@ -629,10 +653,10 @@ fn main() -> Result<(), io::Error> {
                                     if c.ignore_all_errors {
                                         advance = true;
                                     } else {
-                                        app.copy_error_dialog = Some(app_state::CopyErrorState {
-                                            operation: c.operation,
-                                            message: format!("{} -> {}: {}", c.params.source_dir, name, e),
-                                        });
+                                        app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                                            c.operation,
+                                            format!("{} -> {}: {}", c.params.source_dir, name, e),
+                                        ));
                                         app.copy_error_focus = 0;
                                     }
                                 }
@@ -646,10 +670,10 @@ fn main() -> Result<(), io::Error> {
                                     if c.ignore_all_errors {
                                         advance = true;
                                     } else {
-                                        app.copy_error_dialog = Some(app_state::CopyErrorState {
-                                            operation: c.operation,
-                                            message: format!("{} -> {}: {}", c.params.source_dir, name, e),
-                                        });
+                                        app.copy_error_dialog = Some(app_state::CopyErrorState::new(
+                                            c.operation,
+                                            format!("{} -> {}: {}", c.params.source_dir, name, e),
+                                        ));
                                         app.copy_error_focus = 0;
                                     }
                                 }
@@ -702,8 +726,14 @@ fn main() -> Result<(), io::Error> {
                         app.copy_in_progress = None;
                         app.copy_progress = None;
                         app.delete_pending_rx = None;
-                        let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, None);
-                        let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, None);
+                        log_if_err(
+                            "Refresh panels",
+                            app.left_panel_mut().refresh_files_restore_selection(None, None, None),
+                        );
+                        log_if_err(
+                            "Refresh panels",
+                            app.right_panel_mut().refresh_files_restore_selection(None, None, None),
+                        );
                     }
                 }
             }
@@ -713,8 +743,14 @@ fn main() -> Result<(), io::Error> {
                 app.copy_overwrite_dialog = None;
                 app.copy_error_dialog = None;
                 app.delete_pending_rx = None;
-                let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, None);
-                let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, None);
+                log_if_err(
+                    "Refresh panels",
+                    app.left_panel_mut().refresh_files_restore_selection(None, None, None),
+                );
+                log_if_err(
+                    "Refresh panels",
+                    app.right_panel_mut().refresh_files_restore_selection(None, None, None),
+                );
             }
             AppAction::DeleteConfirmChoice(choice) => {
                 let pending = app.operation_confirm_pending.take();
@@ -779,8 +815,8 @@ fn main() -> Result<(), io::Error> {
             AppAction::OpenRightPanelSettings => panel_overlay::open_right(&mut app),
             AppAction::CloseLeftPanelSettings => panel_overlay::close_left(&mut app),
             AppAction::CloseRightPanelSettings => panel_overlay::close_right(&mut app),
-            AppAction::OpenFindDialog => app.open_find_dialog(),
-            AppAction::FindClose => app.close_find_dialog(),
+            AppAction::OpenFindDialog => find_dialog::open(&mut app),
+            AppAction::FindClose => find_dialog::close(&mut app),
             AppAction::FindStartSearch => find_dialog::start_search(&mut app),
             AppAction::FindChdir => {
                 if let Some(ref d) = app.find_dialog {
@@ -799,19 +835,22 @@ fn main() -> Result<(), io::Error> {
                                     let loc = crate::location::PanelLocation::fs(parent);
                                     let panel_height = util::compute_panel_height();
                                     if app.active_panel_mut().navigate_to_location(loc).is_ok() {
-                                        let _ = app.active_panel_mut()
-                                            .refresh_files_restore_selection(
-                                                Some(name.as_str()),
-                                                None,
-                                                Some(panel_height),
-                                            );
+                                        log_if_err(
+                                            "Refresh panel",
+                                            app.active_panel_mut()
+                                                .refresh_files_restore_selection(
+                                                    Some(name.as_str()),
+                                                    None,
+                                                    Some(panel_height),
+                                                ),
+                                        );
                                     }
                                 }
                             }
                         }
                     }
                 }
-                app.close_find_dialog();
+                find_dialog::close(&mut app);
             }
             AppAction::FindView => {
                 if let Some(ref d) = app.find_dialog {
@@ -906,7 +945,7 @@ fn main() -> Result<(), io::Error> {
                         app.persisted_settings.right_dirs_first = !app.persisted_settings.right_dirs_first;
                     }
                 }
-                let _ = settings::save(&app.persisted_settings);
+                log_if_err("Save settings", settings::save(&app.persisted_settings));
                 match change {
                     SettingChange::AutosaveToggle => {}
                     _ => app.sync_from_persisted_settings(),
@@ -923,7 +962,7 @@ fn main() -> Result<(), io::Error> {
                 } else {
                     app.persisted_settings.right_view = view;
                 }
-                let _ = settings::save(&app.persisted_settings);
+                log_if_err("Save settings", settings::save(&app.persisted_settings));
             }
             AppAction::ToggleShowHidden => {
                 // Toggle only the active panel's show_hidden (left and right are independent).
@@ -934,11 +973,14 @@ fn main() -> Result<(), io::Error> {
                     app.persisted_settings.left_show_hidden = new_show;
                     app.show_hidden_files = new_show;
                     let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
-                    let _ = settings::save(&app.persisted_settings);
-                    let _ = app.left_panel_mut().refresh_files_restore_selection(
-                        left_name.as_deref(),
-                        None,
-                        Some(panel_height),
+                    log_if_err("Save settings", settings::save(&app.persisted_settings));
+                    log_if_err(
+                        "Refresh panel",
+                        app.left_panel_mut().refresh_files_restore_selection(
+                            left_name.as_deref(),
+                            None,
+                            Some(panel_height),
+                        ),
                     );
                 } else {
                     let new_show = !app.right_panel().get_show_hidden();
@@ -946,11 +988,14 @@ fn main() -> Result<(), io::Error> {
                     app.persisted_settings.right_show_hidden = new_show;
                     app.show_hidden_files = new_show;
                     let right_name = app.right_panel().get_selected_file().map(|f| f.name.clone());
-                    let _ = settings::save(&app.persisted_settings);
-                    let _ = app.right_panel_mut().refresh_files_restore_selection(
-                        right_name.as_deref(),
-                        None,
-                        Some(panel_height),
+                    log_if_err("Save settings", settings::save(&app.persisted_settings));
+                    log_if_err(
+                        "Refresh panel",
+                        app.right_panel_mut().refresh_files_restore_selection(
+                            right_name.as_deref(),
+                            None,
+                            Some(panel_height),
+                        ),
                     );
                 }
             }
@@ -1030,8 +1075,14 @@ fn main() -> Result<(), io::Error> {
                 }
                 app.focus_panel();
                 terminal.clear()?;
-                let _ = app.left_panel_mut().refresh_files_restore_selection(left_selected.as_deref(), None, None);
-                let _ = app.right_panel_mut().refresh_files_restore_selection(right_selected.as_deref(), None, None);
+                log_if_err(
+                    "Refresh panels",
+                    app.left_panel_mut().refresh_files_restore_selection(left_selected.as_deref(), None, None),
+                );
+                log_if_err(
+                    "Refresh panels",
+                    app.right_panel_mut().refresh_files_restore_selection(right_selected.as_deref(), None, None),
+                );
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
                     break;

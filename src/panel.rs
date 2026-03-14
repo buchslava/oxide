@@ -462,8 +462,9 @@ impl PanelOperations for Panel {
                 return (Vec::new(), None, None);
             }
         } else {
-            let first_index = *self.marked_indices.iter().min().unwrap();
-            let last_index = *self.marked_indices.iter().max().unwrap();
+            let mut it = self.marked_indices.iter().copied();
+            let first = it.next().expect("marked_indices non-empty in get_names_to_copy");
+            let (first_index, last_index) = it.fold((first, first), |(min, max), i| (min.min(i), max.max(i)));
             let mut items = Vec::new();
             for &idx in &self.marked_indices {
                 if let Some(f) = files.get(idx) {

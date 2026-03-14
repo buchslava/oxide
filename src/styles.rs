@@ -7,7 +7,7 @@ fn mark_prefix_span() -> Span<'static> {
 }
 
 /// Create a file line from a pre-formatted display string (e.g. truncated). Use for narrow columns.
-pub fn create_file_line_from_display(
+pub(crate) fn create_file_line_from_display(
     display: &str,
     is_dir: bool,
     is_symlink: bool,

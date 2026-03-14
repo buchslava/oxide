@@ -9,9 +9,38 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::{AppState, SettingsDialogState, SETTINGS_SECTIONS};
+use crate::app_state::AppState;
 use crate::events::{AppAction, SettingChange};
 use crate::file_ops::SORT_MODES;
+
+/// State for F9 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
+#[derive(Debug, Clone)]
+pub struct SettingsDialogState {
+    /// Selected section index: 0 General, 1 Left panel, 2 Right panel, 3 Info.
+    pub selected_section: usize,
+    /// true = focus on left list, false = focus on right content.
+    pub focus_left: bool,
+    /// When focus_left is false and section is Left/Right panel: 0 = View, 1 = Sort, 2 = Folders first, 3 = Show hidden.
+    pub content_focus: usize,
+}
+
+impl Default for SettingsDialogState {
+    fn default() -> Self {
+        Self {
+            selected_section: 0,
+            focus_left: true,
+            content_focus: 0,
+        }
+    }
+}
+
+/// Section indices for the Settings dialog sidebar (Help is in F1 dialog).
+pub const SETTINGS_SECTIONS: [&str; 4] = [
+    "General settings",
+    "Left panel",
+    "Right panel",
+    "Info",
+];
 
 const VIEW_OPTS: [&str; 2] = ["Two columns", "One column"];
 

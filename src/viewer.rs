@@ -1,5 +1,8 @@
 //! File viewer (F3): view file as text or hex dump. ESC to close.
 
+use std::io;
+use std::sync::mpsc;
+
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
@@ -8,9 +11,47 @@ use ratatui::{
     Frame,
 };
 
-use std::sync::mpsc;
+use crate::app_state::AppState;
 
-use crate::app_state::{AppState, ViewerMode, ViewerScreenState, ViewerState};
+/// Viewer is either loading file in background (Esc still closes) or ready with content.
+pub enum ViewerState {
+    /// File is being read on a background thread; Esc closes without waiting.
+    Loading {
+        file_path: String,
+        rx: mpsc::Receiver<io::Result<Vec<u8>>>,
+        /// When set (e.g. from Find file content search), scroll to this 1-based line when ready.
+        initial_line: Option<u64>,
+    },
+    /// Content loaded; normal view.
+    Ready(ViewerScreenState),
+}
+
+/// State when the file viewer content is ready (F3). Text and hex modes.
+pub struct ViewerScreenState {
+    pub file_path: String,
+    /// Raw file bytes (for hex mode; text mode uses same buffer decoded).
+    pub content: Vec<u8>,
+    /// Display mode: text (lines) or hex dump.
+    pub view_mode: ViewerMode,
+    /// First visible line index (scroll offset).
+    pub scroll: usize,
+    /// Hex mode: byte offset of the current character (highlighted in hex and ASCII columns).
+    pub hex_cursor: usize,
+    /// Last draw area (for consistent layout).
+    pub area: Rect,
+    /// Text mode: byte offset of start of each logical line (len = num_lines+1). Used for fast paging (MC-style).
+    pub text_line_starts: Option<Vec<usize>>,
+    /// Text mode: cumulative display line count after each logical line. cumulative[i] = total display lines for logical lines 0..=i.
+    pub text_display_cumulative: Option<Vec<usize>>,
+    /// Text mode: content width (chars) this cache was built for; 0 = invalid.
+    pub text_cache_width: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewerMode {
+    Text,
+    Hex,
+}
 use crate::events::AppAction;
 use crate::panel::PanelOperations;
 use crate::panel_backend;

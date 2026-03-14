@@ -11,10 +11,53 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::{AppState, RenameAttrDialogState, RenameAttrField};
+use crate::app_state::AppState;
 use crate::events::AppAction;
 use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
+
+/// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameAttrField {
+    Name,
+    Permissions,
+    User,
+    Group,
+}
+
+/// State for F2 "Rename / Attributes" dialog. Permissions as 12 checkboxes; owner/group as list selection.
+#[derive(Debug, Clone)]
+pub enum RenameAttrDialogState {
+    Single {
+        name: String,
+        name_cursor: usize,
+        /// Unix mode (0o7777: suid, sgid, sticky + rwx).
+        mode: u32,
+        /// Index into the 12 permission checkboxes (0..12).
+        perm_focus: usize,
+        owner: String,
+        group: String,
+        user_list: Vec<String>,
+        group_list: Vec<String>,
+        user_index: usize,
+        group_index: usize,
+        old_name: String,
+        focus: RenameAttrField,
+    },
+    Group {
+        count: usize,
+        mode: u32,
+        perm_focus: usize,
+        owner: String,
+        group: String,
+        user_list: Vec<String>,
+        group_list: Vec<String>,
+        user_index: usize,
+        group_index: usize,
+        items: Vec<(String, bool)>,
+        focus: RenameAttrField,
+    },
+}
 
 /// Permission bit masks (0o4000 .. 0o1) and labels for the 12 checkboxes.
 const PERM_BITS: [u32; 12] = [
@@ -113,8 +156,14 @@ pub fn open(app: &mut AppState) {
 }
 
 /// Close the dialog without applying.
+pub fn close_dialog(app: &mut AppState) {
+    app.rename_attr_dialog = None;
+    app.rename_attr_error = None;
+}
+
+/// Close the dialog without applying (alias for close_dialog for cancel flow).
 pub fn cancel(app: &mut AppState) {
-    app.close_rename_attr_dialog();
+    close_dialog(app);
 }
 
 /// Apply rename (if single and name changed), chmod, and chown; close dialog on success.

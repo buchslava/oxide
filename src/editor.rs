@@ -14,9 +14,30 @@ use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::selection::Selection;
 use ratatui_code_editor::theme::vesper;
 
-use crate::app_state::{AppState, EditorScreenState};
+use crate::app_state::AppState;
 use crate::events::AppAction;
+use crate::location::PanelLocation;
 use crate::panel::PanelOperations;
+
+/// State when the embedded code editor is open (F4).
+pub struct EditorScreenState {
+    /// Display path (for title/lang). When editing inside Zip, this is the virtual path.
+    pub file_path: String,
+    /// Content when file was opened; used to detect unsaved changes.
+    pub initial_content: String,
+    pub editor: Editor,
+    /// Last draw area for the editor (used for input/mouse). When search is open, height is reduced by 1.
+    pub area: Rect,
+    /// When Some, search bar is open and the string is the current query (Ctrl+F).
+    pub search_query: Option<String>,
+    /// Cursor position in the search query (0..=len). Only used when search_query is Some.
+    pub search_query_cursor: usize,
+    /// F3 selection mode (MC-style): when true, arrows extend selection.
+    pub selection_extend_mode: bool,
+    /// When editing a file inside a Zip, these are set; otherwise None (save uses file_path to fs).
+    pub edit_location: Option<PanelLocation>,
+    pub edit_name: Option<String>,
+}
 
 /// User choice in the "Save changes?" dialog when exiting editor with unsaved changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

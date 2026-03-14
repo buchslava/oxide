@@ -156,8 +156,8 @@ impl EventHandler {
                 last_action = Some(action);
             }
         }
-        if last_action.is_some() {
-            return Ok(last_action.unwrap());
+        if let Some(action) = last_action {
+            return Ok(action);
         }
         // Queue empty: block for one event.
         if !event::poll(std::time::Duration::from_millis(100))? {

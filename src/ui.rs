@@ -41,25 +41,12 @@ pub struct Renderer;
 
 /// Truncate string to max_width chars with trailing ellipsis. Returns full string if it fits.
 pub fn truncate_str_ellipsis(s: &str, max_width: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max_width || max_width < 2 {
-        return s.to_string();
-    }
-    format!("{}…", chars.iter().take(max_width.saturating_sub(1)).collect::<String>())
+    crate::util::truncate_str(s, max_width, crate::util::TruncateMode::PrefixEllipsis)
 }
 
 /// Shorten path to max_width chars like MC: "first_half~last_half" (one ~ in the middle).
 fn compact_path(path: &str, max_width: usize) -> String {
-    let chars: Vec<char> = path.chars().collect();
-    let n = chars.len();
-    if n <= max_width || max_width < 2 {
-        return path.to_string();
-    }
-    let half = (max_width - 1) / 2;
-    let suffix_len = (max_width - 1).saturating_sub(half);
-    let start: String = chars.iter().take(half).collect();
-    let end: String = chars.iter().rev().take(suffix_len).collect::<Vec<_>>().into_iter().rev().collect();
-    format!("{}~{}", start, end)
+    crate::util::truncate_str(path, max_width, crate::util::TruncateMode::CompactMiddle)
 }
 
 /// Format byte count with fixed-width unit so "B" aligns under "B" in "KB".

@@ -17,9 +17,97 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::{
-    AppState, FindDialogPhase, FindDialogState, FindMessage, FindResult,
-};
+use crate::app_state::AppState;
+use crate::panel::PanelOperations;
+
+/// One result from Find file: path and optional line number (when content search matched).
+#[derive(Debug, Clone)]
+pub struct FindResult {
+    pub path: PathBuf,
+    pub line: Option<u64>,
+}
+
+/// Message from the find search background thread.
+#[derive(Debug)]
+pub enum FindMessage {
+    Match(PathBuf, Option<u64>),
+    /// Current directory being traversed (empty when search is done).
+    CurrentDir(String),
+    Done,
+}
+
+/// Phase of the Find file dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindDialogPhase {
+    /// Parameter form: start dir, pattern, content, options.
+    Parameter,
+    /// Search running; results accumulating.
+    Searching,
+    /// Search done; showing results list.
+    Results,
+}
+
+/// State for Ctrl+F Find file dialog.
+#[derive(Debug, Clone)]
+pub struct FindDialogState {
+    pub phase: FindDialogPhase,
+    pub start_dir: String,
+    pub start_dir_cursor: usize,
+    pub file_pattern: String,
+    pub file_pattern_cursor: usize,
+    pub content_pattern: String,
+    pub content_pattern_cursor: usize,
+    pub recursive: bool,
+    pub file_case_sens: bool,
+    pub content_case_sens: bool,
+    pub skip_hidden: bool,
+    pub results: Vec<FindResult>,
+    pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub status_message: String,
+    /// Current directory being searched (shown during search; cleared when done).
+    pub search_current_dir: String,
+    /// Visible list rows (set from dialog inner height in draw). Used for scroll math.
+    pub visible_list_rows: usize,
+    /// Focus in parameter form: 0=start_dir, 1=file_pattern, 2=content, 3=recursive, 4=file_case, 5=content_case, 6=skip_hidden, 7=Find, 8=Cancel.
+    pub focus: usize,
+}
+
+/// Open Ctrl+F Find file dialog with start dir from active panel.
+pub fn open(app: &mut AppState) {
+    use crate::app_state::Focus;
+    let start_dir = app.active_panel_ref().get_current_dir();
+    app.find_dialog = Some(FindDialogState {
+        phase: FindDialogPhase::Parameter,
+        start_dir: start_dir.to_string(),
+        start_dir_cursor: start_dir.len(),
+        file_pattern: String::new(),
+        file_pattern_cursor: 0,
+        content_pattern: String::new(),
+        content_pattern_cursor: 0,
+        recursive: true,
+        file_case_sens: false,
+        content_case_sens: false,
+        skip_hidden: true,
+        results: Vec::new(),
+        selected_index: 0,
+        scroll_offset: 0,
+        status_message: String::new(),
+        search_current_dir: String::new(),
+        visible_list_rows: 18,
+        focus: 0,
+    });
+    app.find_search_rx = None;
+    app.focus = Focus::FindDialog;
+}
+
+/// Close the Find file dialog and return focus to panel.
+pub fn close(app: &mut AppState) {
+    use crate::app_state::Focus;
+    app.find_dialog = None;
+    app.find_search_rx = None;
+    app.focus = Focus::Panel;
+}
 
 /// One row in the grouped find results list: either a folder (header) or a file.
 #[derive(Debug, Clone)]
@@ -41,7 +129,9 @@ pub fn build_display_rows(results: &[FindResult]) -> Vec<FindDisplayRow> {
         if groups.last().map(|(p, _)| p != &parent).unwrap_or(true) {
             groups.push((parent, Vec::new()));
         }
-        groups.last_mut().unwrap().1.push(r.clone());
+        if let Some((_, files)) = groups.last_mut() {
+            files.push(r.clone());
+        }
     }
     let mut rows = Vec::new();
     for (dir, files) in groups {
@@ -296,7 +386,7 @@ fn handle_key_parameter(
     use crate::events::AppAction;
     let d = app.find_dialog.as_mut()?;
     if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
-        app.close_find_dialog();
+        close(app);
         return Some(AppAction::FindClose);
     }
     match code {
@@ -765,13 +855,7 @@ fn draw_status_and_list(
 }
 
 fn truncate_path(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else {
-        let skip = chars.len() - max.saturating_sub(3);
-        format!("...{}", chars.iter().skip(skip).collect::<String>())
-    }
+    crate::util::truncate_str(s, max, crate::util::TruncateMode::SuffixEllipsis)
 }
 
 #[cfg(test)]

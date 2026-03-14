@@ -5,7 +5,45 @@ use std::sync::mpsc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::app_state::{AppState, SizeInfoDialogState, SizeInfoProgress};
+use crate::app_state::AppState;
+
+/// Message from background size-calculation thread.
+#[derive(Debug, Clone)]
+pub enum SizeInfoProgress {
+    /// One more item processed.
+    Progress {
+        current: usize,
+        total: usize,
+        total_bytes: u64,
+        file_count: usize,
+        dir_count: usize,
+    },
+    /// Calculation complete.
+    Done {
+        total_bytes: u64,
+        file_count: usize,
+        dir_count: usize,
+    },
+}
+
+/// State for Ctrl+G "Size info" dialog. Shows progress during calculation, then final result.
+#[derive(Debug, Clone)]
+pub enum SizeInfoDialogState {
+    /// Calculation in progress; show progress bar.
+    Calculating {
+        current: usize,
+        total: usize,
+        total_bytes: u64,
+        file_count: usize,
+        dir_count: usize,
+    },
+    /// Calculation complete; show final size.
+    Done {
+        total_bytes: u64,
+        file_count: usize,
+        dir_count: usize,
+    },
+}
 use crate::events::AppAction;
 use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;

@@ -14,19 +14,71 @@ use crate::app_state::AppState;
 use crate::events::AppAction;
 use crate::panel_backend;
 
+/// State for F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name.
+/// focus: 0 = textarea, 1 = Create, 2 = Cancel.
+#[derive(Debug, Clone)]
+pub struct MkdirDialogState {
+    pub name: String,
+    pub cursor: usize,
+    pub focus: usize,
+}
+
 /// Open the dialog with an empty folder name.
 pub fn open(app: &mut AppState) {
-    app.open_mkdir_dialog(String::new());
+    open_with_name(app, String::new());
+}
+
+/// Open the dialog with an optional default name (e.g. from selected file).
+pub fn open_with_name(app: &mut AppState, default_name: String) {
+    let cursor = default_name.len();
+    app.mkdir_dialog = Some(MkdirDialogState {
+        name: default_name,
+        cursor,
+        focus: 0,
+    });
 }
 
 /// Close the dialog without creating. Called on Esc or Ctrl+C.
 pub fn cancel(app: &mut AppState) {
-    app.close_mkdir_dialog();
+    app.mkdir_dialog = None;
 }
 
 /// Take the entered name and close the dialog. Returns the name (may be empty).
 pub fn confirm(app: &mut AppState) -> Option<String> {
-    app.take_mkdir_dialog()
+    app.mkdir_dialog.take().map(|d| d.name)
+}
+
+fn insert_char(app: &mut AppState, c: char) {
+    if let Some(ref mut d) = app.mkdir_dialog {
+        let at = d.cursor.min(d.name.len());
+        d.name.insert(at, c);
+        d.cursor = at + 1;
+    }
+}
+
+fn backspace(app: &mut AppState) {
+    if let Some(ref mut d) = app.mkdir_dialog {
+        if d.cursor > 0 && d.cursor <= d.name.len() {
+            d.name.remove(d.cursor - 1);
+            d.cursor -= 1;
+        }
+    }
+}
+
+fn move_left(app: &mut AppState) {
+    if let Some(ref mut d) = app.mkdir_dialog {
+        if d.cursor > 0 {
+            d.cursor -= 1;
+        }
+    }
+}
+
+fn move_right(app: &mut AppState) {
+    if let Some(ref mut d) = app.mkdir_dialog {
+        if d.cursor < d.name.len() {
+            d.cursor += 1;
+        }
+    }
 }
 
 /// Create the directory in the active panel's current location and refresh the panel.
@@ -59,7 +111,10 @@ pub fn handle_key(
         KeyCode::Char('\t') => KeyCode::Tab,
         other => other,
     };
-    let d = app.mkdir_dialog.as_mut().unwrap();
+    let d = app
+        .mkdir_dialog
+        .as_mut()
+        .expect("mkdir_dialog open when handle_key called");
     match code {
         KeyCode::Tab | KeyCode::Char('\t') => {
             d.focus = (d.focus + 1) % 3;
@@ -96,12 +151,12 @@ pub fn handle_key(
                 }
             }
             if d.focus == 0 && c.is_ascii() && !c.is_control() {
-                app.mkdir_dialog_insert(c);
+                insert_char(app, c);
             }
         }
-        KeyCode::Backspace if d.focus == 0 => app.mkdir_dialog_backspace(),
-        KeyCode::Left if d.focus == 0 => app.mkdir_dialog_move_left(),
-        KeyCode::Right if d.focus == 0 => app.mkdir_dialog_move_right(),
+        KeyCode::Backspace if d.focus == 0 => backspace(app),
+        KeyCode::Left if d.focus == 0 => move_left(app),
+        KeyCode::Right if d.focus == 0 => move_right(app),
         _ => {}
     }
     Some(AppAction::Continue)

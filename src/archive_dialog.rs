@@ -13,11 +13,20 @@ use ratatui::{
 use crate::app_state::AppState;
 use crate::events::AppAction;
 
+/// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
+/// focus: 0 = textarea, 1 = Create, 2 = Cancel.
+#[derive(Debug, Clone)]
+pub struct ArchiveDialogState {
+    pub name: String,
+    pub cursor: usize,
+    pub focus: usize,
+}
+
 /// Open the dialog with an empty archive name. Call only when at least one item is selected and location is Fs.
 pub fn open(app: &mut AppState) {
     let default_name = String::new();
     let cursor = default_name.len();
-    app.archive_dialog = Some(crate::app_state::ArchiveDialogState {
+    app.archive_dialog = Some(ArchiveDialogState {
         name: default_name,
         cursor,
         focus: 0,
@@ -68,7 +77,10 @@ pub fn handle_key(
         KeyCode::Char('\t') => KeyCode::Tab,
         other => other,
     };
-    let d = app.archive_dialog.as_mut().unwrap();
+    let d = app
+        .archive_dialog
+        .as_mut()
+        .expect("archive_dialog open when handle_key called");
     match code {
         KeyCode::Tab | KeyCode::Char('\t') => {
             d.focus = (d.focus + 1) % 3;
