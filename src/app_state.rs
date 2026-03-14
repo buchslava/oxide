@@ -109,12 +109,14 @@ pub struct AppState {
     pub rename_attr_dialog: Option<RenameAttrDialogState>,
     /// When Some, an error alert is shown on top of the F2 dialog (message to display).
     pub rename_attr_error: Option<String>,
-    /// When Some, F9 "Size info" dialog is open (total size of selected items).
+    /// When Some, Ctrl+G "Size info" dialog is open (total size of selected items).
     pub size_info_dialog: Option<SizeInfoDialogState>,
     /// When Some, Ctrl+F "Find file" dialog is open.
     pub find_dialog: Option<FindDialogState>,
-    /// When Some, F1 Settings dialog is open (two-column: sections list + content).
+    /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
+    /// When true, F1 Help dialog is open.
+    pub help_dialog: bool,
     /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
     pub left_panel_settings_overlay: Option<PanelSettingsOverlayState>,
     /// When Some, Ctrl+W "Right panel settings" overlay is open over the right panel.
@@ -156,7 +158,7 @@ pub enum SizeInfoProgress {
     },
 }
 
-/// State for F9 "Size info" dialog. Shows progress during calculation, then final result.
+/// State for Ctrl+G "Size info" dialog. Shows progress during calculation, then final result.
 #[derive(Debug, Clone)]
 pub enum SizeInfoDialogState {
     /// Calculation in progress; show progress bar.
@@ -175,10 +177,10 @@ pub enum SizeInfoDialogState {
     },
 }
 
-/// State for F1 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
+/// State for F9 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
 #[derive(Debug, Clone)]
 pub struct SettingsDialogState {
-    /// Selected section index: 0 General, 1 Left panel, 2 Right panel, 3 Info, 4 Help.
+    /// Selected section index: 0 General, 1 Left panel, 2 Right panel, 3 Info.
     pub selected_section: usize,
     /// true = focus on left list, false = focus on right content.
     pub focus_left: bool,
@@ -261,13 +263,12 @@ impl Default for PanelSettingsOverlayState {
     }
 }
 
-/// Section indices for the Settings dialog sidebar.
-pub const SETTINGS_SECTIONS: [&str; 5] = [
+/// Section indices for the Settings dialog sidebar (Help is in F1 dialog).
+pub const SETTINGS_SECTIONS: [&str; 4] = [
     "General settings",
     "Left panel",
     "Right panel",
     "Info",
-    "Help",
 ];
 
 /// State for F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name.
@@ -439,6 +440,7 @@ impl AppState {
             size_info_dialog: None,
             find_dialog: None,
             settings_dialog: None,
+            help_dialog: false,
             left_panel_settings_overlay: None,
             right_panel_settings_overlay: None,
             left_panel_rect: None,

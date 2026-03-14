@@ -58,11 +58,15 @@ pub enum AppAction {
     RenameAttrConfirm,
     /// ESC in F2 dialog: cancel and close.
     RenameAttrCancel,
-    /// F9: open "Size info" dialog (total size of selected files and folders).
+    /// Ctrl+G: open "Size info" dialog (total size of selected files and folders).
     OpenSizeInfoDialog,
     /// ESC in size info dialog: close.
     SizeInfoClose,
-    /// F1: open Settings dialog.
+    /// F1: open Help dialog.
+    OpenHelpDialog,
+    /// ESC or mouse click in Help dialog: close.
+    HelpClose,
+    /// F9: open Settings dialog.
     OpenSettingsDialog,
     /// ESC or mouse click in Settings dialog: close.
     SettingsClose,
@@ -90,7 +94,7 @@ pub enum AppAction {
     ToggleShowHidden,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
     PanelNavigated,
-    /// A specific setting was toggled/changed in the F1 dialog. Main applies to persisted_settings, saves, applies to panels.
+    /// A specific setting was toggled/changed in the F9 Settings dialog. Main applies to persisted_settings, saves, applies to panels.
     SettingChange(SettingChange),
     /// Ctrl+T toggled view mode; persist to file.
     ViewModeToggled,
@@ -356,7 +360,15 @@ impl EventHandler {
                         return Ok(Some(action));
                     }
                 }
-                // F1 Settings dialog: Esc closes.
+                // F1 Help dialog: Esc closes.
+                if app.help_dialog {
+                    if let Some(action) =
+                        crate::help_dialog::handle_key(key.code, key.modifiers)
+                    {
+                        return Ok(Some(action));
+                    }
+                }
+                // F9 Settings dialog: Esc closes.
                 if app.settings_dialog.is_some() {
                     if let Some(action) =
                         crate::settings_dialog::handle_key(app, key.code, key.modifiers)
@@ -488,7 +500,8 @@ impl EventHandler {
                             }
                         }
                     }
-                    KeyCode::F(1) => return Ok(Some(AppAction::OpenSettingsDialog)),
+                    KeyCode::F(1) => return Ok(Some(AppAction::OpenHelpDialog)),
+                    KeyCode::F(9) => return Ok(Some(AppAction::OpenSettingsDialog)),
                     KeyCode::F(7) => {
                         if crate::panel_backend::supports_mkdir(&app.get_current_location()) {
                             return Ok(Some(AppAction::OpenMkdirDialog));
@@ -773,6 +786,13 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
+        // Help dialog: any mouse click closes.
+        if app.help_dialog {
+            if matches!(mouse_event.kind, MouseEventKind::Down(_)) {
+                return Ok(Some(AppAction::HelpClose));
+            }
+            return Ok(Some(AppAction::Continue));
+        }
         // Settings dialog: any mouse click closes.
         if app.settings_dialog.is_some() {
             if matches!(mouse_event.kind, MouseEventKind::Down(_)) {
@@ -823,7 +843,8 @@ impl EventHandler {
             && app.archive_dialog.is_none()
             && app.rename_attr_dialog.is_none()
             && app.size_info_dialog.is_none()
-            && app.settings_dialog.is_none();
+            && app.settings_dialog.is_none()
+            && !app.help_dialog;
 
         match mouse_event.kind {
             MouseEventKind::ScrollUp => app.active_panel_mut().move_up(panel_height),
@@ -903,7 +924,7 @@ impl EventHandler {
             return None;
         }
         match key {
-                    1 => Some(AppAction::OpenSettingsDialog),
+                    1 => Some(AppAction::OpenHelpDialog),
                     2 => Some(AppAction::OpenRenameAttrDialog),
                     3 => {
                         if app.active_panel_ref().get_selected_file().map_or(false, |f| !f.is_dir && !f.is_parent_dir()) {
@@ -1017,6 +1038,7 @@ impl EventHandler {
                             None
                         }
                     }
+                    9 => Some(AppAction::OpenSettingsDialog),
                     10 => Some(AppAction::Quit),
                     _ => None,
                 }

@@ -101,11 +101,13 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Format mtime as "Feb 13 20:05" (month name, day, time).
+/// Format mtime as "Feb 13 2024 20:05" (month, day, year, time with zero-padded minutes).
 fn format_mtime(t: &std::time::SystemTime) -> String {
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, Timelike, Utc};
     let datetime: DateTime<Utc> = (*t).into();
-    datetime.format("%b %e %H:%M").to_string()
+    let date = datetime.format("%b %e %Y").to_string();
+    let time = format!("{:02}:{:02}", datetime.hour(), datetime.minute());
+    format!("{} {}", date, time)
 }
 
 /// Filename only for bottom bar display (no path).
@@ -184,6 +186,9 @@ impl Renderer {
         }
         if app.rename_attr_dialog.is_some() {
             crate::rename_attr::draw(f, app);
+        }
+        if app.help_dialog {
+            crate::help_dialog::draw(f, app);
         }
         if app.settings_dialog.is_some() {
             crate::settings_dialog::draw(f, app);
@@ -619,7 +624,7 @@ impl Renderer {
     /// Menu bar items (label, F-key number). Used for drawing and hit test. Bottom row.
     pub fn menu_bar_items() -> Vec<(&'static str, u16)> {
         vec![
-            ("1 Settings", 1),
+            ("1 Help", 1),
             ("2 File", 2),
             ("3 View", 3),
             ("4 Edit", 4),
@@ -627,6 +632,7 @@ impl Renderer {
             ("6 Move", 6),
             ("7 Folder", 7),
             ("8 Delete", 8),
+            ("9 Settings", 9),
             ("10 Quit", 10),
         ]
     }
@@ -887,11 +893,12 @@ impl Renderer {
         // One-column view: no header row; data rows have name + size + mtime (like two-column: no redundant left padding).
         // Mark: only "> " when marked (no leading spaces when unmarked, to match two-column).
         const SIZE_W: u16 = 12;
-        const MTIME_W: u16 = 12;
+        const MTIME_W: u16 = 17; // "Feb 13 2024 20:05"
         const GAP: u16 = 1;
+        const SPACE_BETWEEN_SIZE_MTIME: u16 = 1;
         let name_w = area
             .width
-            .saturating_sub(SIZE_W + GAP + MTIME_W)
+            .saturating_sub(SIZE_W + GAP + MTIME_W + SPACE_BETWEEN_SIZE_MTIME)
             .max(10) as usize;
 
         let panel_height = (area.height as usize).max(1);
@@ -916,7 +923,7 @@ impl Renderer {
                 .map(format_mtime)
                 .unwrap_or_else(String::new);
             let size_pad = format!("{:>1$}", size_str, SIZE_W as usize);
-            let mtime_pad = format!("{:>12}", mtime_str);
+            let mtime_pad = format!("{:>17}", mtime_str); // "Feb 13 2024 20:05" = 17 chars
 
             let (name_style, mark_style) = if is_selected {
                 let sel = Style::default().fg(Color::White).bg(Color::Blue);

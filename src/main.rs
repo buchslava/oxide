@@ -20,6 +20,7 @@ mod location;
 mod mkdir_dialog;
 mod panel;
 mod panel_backend;
+mod help_dialog;
 mod panel_overlay;
 mod rename_attr;
 mod settings;
@@ -770,6 +771,8 @@ fn main() -> Result<(), io::Error> {
             AppAction::OpenRenameAttrDialog => rename_attr::open(&mut app),
             AppAction::OpenSizeInfoDialog => size_info_dialog::open(&mut app),
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
+            AppAction::OpenHelpDialog => help_dialog::open(&mut app),
+            AppAction::HelpClose => help_dialog::close(&mut app),
             AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
             AppAction::SettingsClose => settings_dialog::close(&mut app),
             AppAction::OpenLeftPanelSettings => panel_overlay::open_left(&mut app),

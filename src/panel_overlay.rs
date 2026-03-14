@@ -1,5 +1,5 @@
-//! Ctrl+Q / Ctrl+W panel settings overlay. Same options as F1 Settings → Left panel / Right panel.
-//! in the F1 Settings dialog, positioned over the respective panel.
+//! Ctrl+Q / Ctrl+W panel settings overlay. Same options as F9 Settings → Left panel / Right panel.
+//! in the F9 Settings dialog, positioned over the respective panel.
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
