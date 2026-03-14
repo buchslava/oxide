@@ -382,6 +382,8 @@ pub struct EditorScreenState {
     pub area: Rect,
     /// When Some, search bar is open and the string is the current query (Ctrl+F).
     pub search_query: Option<String>,
+    /// Cursor position in the search query (0..=len). Only used when search_query is Some.
+    pub search_query_cursor: usize,
     /// F3 selection mode (MC-style): when true, arrows extend selection.
     pub selection_extend_mode: bool,
     /// When editing a file inside a Zip, these are set; otherwise None (save uses file_path to fs).

@@ -76,6 +76,7 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 editor,
                 area: Rect::default(),
                 search_query: None,
+                search_query_cursor: 0,
                 selection_extend_mode: false,
                 edit_location,
                 edit_name,
@@ -103,6 +104,7 @@ pub fn open_editor_path(app: &mut AppState, path: std::path::PathBuf) -> bool {
         editor,
         area: Rect::default(),
         search_query: None,
+        search_query_cursor: 0,
         selection_extend_mode: false,
         edit_location: None,
         edit_name: None,
@@ -131,6 +133,8 @@ fn find_next(ed: &mut EditorScreenState, query: &str) {
     while pos + qlen <= len {
         if content_chars[pos..pos + qlen] == query_chars[..] {
             ed.editor.set_cursor(pos);
+            ed.editor.set_selection(Some(Selection::new(pos, pos + qlen)));
+            ed.editor.reset_highlight_cache();
             ed.editor.focus(&ed.area);
             return;
         }
@@ -141,6 +145,8 @@ fn find_next(ed: &mut EditorScreenState, query: &str) {
     while pos + qlen <= len && pos <= cursor {
         if content_chars[pos..pos + qlen] == query_chars[..] {
             ed.editor.set_cursor(pos);
+            ed.editor.set_selection(Some(Selection::new(pos, pos + qlen)));
+            ed.editor.reset_highlight_cache();
             ed.editor.focus(&ed.area);
             return;
         }
@@ -155,8 +161,14 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
 
     // When search bar is open, handle search-specific keys first
     if let Some(ref mut query) = ed.search_query {
+        let cursor = &mut ed.search_query_cursor;
+        let len_chars = query.chars().count();
+        if *cursor > len_chars {
+            *cursor = len_chars;
+        }
         match key.code {
             KeyCode::Esc => {
+                ed.editor.clear_selection();
                 ed.search_query = None;
                 return Some(AppAction::Continue);
             }
@@ -165,19 +177,38 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
                 find_next(ed, &q);
                 return Some(AppAction::Continue);
             }
+            KeyCode::Left => {
+                *cursor = cursor.saturating_sub(1);
+                return Some(AppAction::Continue);
+            }
+            KeyCode::Right => {
+                *cursor = (*cursor + 1).min(len_chars);
+                return Some(AppAction::Continue);
+            }
             KeyCode::Backspace => {
-                query.pop();
+                if *cursor > 0 {
+                    let mut chars: Vec<char> = query.chars().collect();
+                    chars.remove(*cursor - 1);
+                    *query = chars.into_iter().collect();
+                    *cursor -= 1;
+                }
                 return Some(AppAction::Continue);
             }
             KeyCode::Char(c) if !ctrl => {
-                query.push(c);
+                let mut chars: Vec<char> = query.chars().collect();
+                let pos = (*cursor).min(chars.len());
+                chars.insert(pos, c);
+                *query = chars.into_iter().collect();
+                *cursor = pos + 1;
                 return Some(AppAction::Continue);
             }
             KeyCode::Char('f') if ctrl => {
+                ed.editor.clear_selection();
                 ed.search_query = None;
                 return Some(AppAction::Continue);
             }
             KeyCode::F(3) => {
+                ed.editor.clear_selection();
                 ed.search_query = None;
                 return Some(AppAction::Continue);
             }
@@ -188,6 +219,7 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
     // Ctrl+F: open search
     if key.code == KeyCode::Char('f') && ctrl {
         ed.search_query = Some(String::new());
+        ed.search_query_cursor = 0;
         return Some(AppAction::Continue);
     }
 
@@ -534,7 +566,8 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
             );
         }
         if let Some(ref query) = ed.search_query {
-            draw_search_bar(f, area, query);
+            let cursor = ed.search_query_cursor.min(query.chars().count());
+            draw_search_bar(f, area, query, cursor);
         }
         if app.editor_confirm_pending {
             draw_confirm_dialog(f, app);
@@ -543,17 +576,18 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
 }
 
 /// TUI search window (bordered box). Searches only in the opened file buffer; not the terminal/OS.
-fn draw_search_bar(f: &mut Frame, area: Rect, query: &str) {
+fn draw_search_bar(f: &mut Frame, area: Rect, query: &str, cursor_pos: usize) {
     let title = " Find (in file) ";
-    let hint = " Enter: next  Esc: close ";
+    let hint = " Enter: next  ←→: move  Esc: close ";
     let inner_w = 52u16;
     let w = inner_w.min(area.width.saturating_sub(4));
     let h = 5u16;
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
-    let dark_bg = Color::Rgb(28, 28, 28);
-    let style = Style::default().bg(dark_bg).fg(Color::White);
+    // Same dialog background as F7 / F2 — distinct from editor panel.
+    let dialog_bg = Color::Rgb(60, 60, 60);
+    let style = Style::default().bg(dialog_bg).fg(Color::White);
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -566,7 +600,7 @@ fn draw_search_bar(f: &mut Frame, area: Rect, query: &str) {
     f.render_widget(Paragraph::new(text.as_str()).style(style), line0);
     let hint_row = Rect { x: inner.x, y: inner.y + 2, width: inner.width, height: 1 };
     f.render_widget(Paragraph::new(hint).style(style.fg(Color::DarkGray)), hint_row);
-    let cursor_col = (2 + query.chars().count()).min(inner.width as usize);
+    let cursor_col = (2 + cursor_pos).min(inner.width as usize);
     f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
 }
 

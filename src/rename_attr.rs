@@ -475,8 +475,9 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
-    let dark_bg = Color::Rgb(28, 28, 28);
-    let fill_style = Style::default().bg(dark_bg).fg(Color::White);
+    // Same dialog background as F7 "Create a new Directory" — distinct from panels.
+    let dialog_bg = Color::Rgb(60, 60, 60);
+    let fill_style = Style::default().bg(dialog_bg).fg(Color::White);
     let cyan = Style::default().fg(Color::Cyan);
     let focus_border = Style::default().fg(Color::Yellow);
     f.render_widget(Clear, rect);
@@ -588,8 +589,8 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
         let ax = area.x + (area.width.saturating_sub(aw)) / 2;
         let ay = area.y + (area.height.saturating_sub(ah)) / 2;
         let alert_rect = Rect { x: ax, y: ay, width: aw, height: ah };
-        let dark_bg = Color::Rgb(28, 28, 28);
-        let err_style = Style::default().bg(dark_bg).fg(Color::White);
+        let err_bg = Color::Rgb(60, 60, 60);
+        let err_style = Style::default().bg(err_bg).fg(Color::White);
         let red = Style::default().fg(Color::Red);
         f.render_widget(Clear, alert_rect);
         f.render_widget(
