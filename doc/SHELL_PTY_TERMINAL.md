@@ -135,6 +135,45 @@ In the child after `fork()`:
 
 ---
 
+## Subshell teardown on app exit
+
+### Theory
+
+When the user closes the app, the `Subshell` value is dropped. If we only closed the PTY master and waited for the shell:
+
+- Closing the master would make the slave see EOF; the shell and any process reading from the terminal would typically exit.
+- When the **session leader** (the shell) exits, the kernel sends **SIGHUP** to the whole session.
+- Processes that **ignore SIGHUP** (e.g. `nohup`, or programs that set `SIG_IGN` for SIGHUP) would survive as **orphans** (reparented to init).
+
+To avoid leaving any subshell process running after the app quits, we explicitly kill the entire session before closing the PTY and waiting for the shell.
+
+### In Oxide
+
+On `Drop` for `Subshell`, `kill_subshell_session(session_leader_pid)` runs first:
+
+1. **Enumerate** all processes in the subshell’s session (session ID = shell PID, since the child did `setsid()`).
+2. **SIGTERM** every process in that set (except the current process).
+3. **Wait** ~200 ms.
+4. **Re-enumerate** (to catch races or new processes).
+5. **SIGKILL** every process still in the session.
+6. Then **close** the PTY master and **waitpid** the shell.
+
+Platform behavior:
+
+| Platform   | How processes in the session are found | Result |
+|-----------|----------------------------------------|--------|
+| **Linux** | Read numeric dirs in `/proc`, then `getsid(pid)` for each; keep PIDs whose session ID equals the shell’s PID. | Full session kill; no orphans (including `nohup`). |
+| **macOS** | `libc::proc_listallpids()` to get all PIDs, then `getsid(pid)` for each; same session filter. | Full session kill; no orphans. |
+| **Other Unix** | No process enumeration (no `/proc` or equivalent). Send SIGTERM then SIGKILL to the **process group** `-session_leader_pid` (shell’s group). | Shell and its process group are killed; SIGHUP still goes to the session when the shell exits. Processes that ignore SIGHUP in other process groups may survive. |
+
+So on Linux and macOS, no process started in the subshell (including `nohup mycommand &`) outlives the app. On other Unixes, best-effort process-group kill applies.
+
+### Related code
+
+- `subshell.rs`: `kill_subshell_session()`, `Drop for Subshell`.
+
+---
+
 ## I/O Multiplexing with poll()
 
 ### Theory

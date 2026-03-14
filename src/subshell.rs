@@ -514,9 +514,115 @@ impl Subshell {
     }
 }
 
+/// Kill the entire subshell session so no process (e.g. nohup) outlives the app.
+/// On Linux: enumerate all processes in the session via /proc + getsid, send SIGTERM, then SIGKILL.
+/// On macOS: enumerate via libc::proc_listallpids + getsid, then SIGTERM / SIGKILL.
+/// On other Unix: send SIGTERM then SIGKILL to the shell's process group (best effort).
+#[cfg(unix)]
+fn kill_subshell_session(session_leader_pid: i32) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    let session_leader = Pid::from_raw(session_leader_pid);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let self_pid = nix::unistd::getpid();
+
+    #[cfg(target_os = "linux")]
+    fn pids_in_session_linux(session_leader: Pid, exclude_pid: Pid) -> Vec<Pid> {
+        use nix::unistd::getsid;
+        use std::fs;
+
+        let mut pids = Vec::new();
+        let Ok(entries) = fs::read_dir("/proc") else { return pids };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Ok(pid) = name.to_string_lossy().parse::<i32>() else { continue };
+            if pid <= 0 || Pid::from_raw(pid) == exclude_pid {
+                continue;
+            }
+            let pid = Pid::from_raw(pid);
+            if let Ok(sid) = getsid(Some(pid)) {
+                if sid == session_leader {
+                    pids.push(pid);
+                }
+            }
+        }
+        pids
+    }
+
+    #[cfg(target_os = "macos")]
+    fn pids_in_session_macos(session_leader: Pid, exclude_pid: Pid) -> Vec<Pid> {
+        use nix::unistd::getsid;
+
+        const MAX_PIDS: usize = 8192;
+        let mut buf = [0i32; MAX_PIDS];
+        let size_bytes = (MAX_PIDS * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
+        let n_bytes = unsafe {
+            libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, size_bytes)
+        };
+        if n_bytes <= 0 {
+            return Vec::new();
+        }
+        let n_pids = (n_bytes as usize) / std::mem::size_of::<libc::pid_t>();
+        let n_pids = n_pids.min(MAX_PIDS);
+
+        let mut pids = Vec::new();
+        for i in 0..n_pids {
+            let pid = buf[i];
+            if pid <= 0 || Pid::from_raw(pid) == exclude_pid {
+                continue;
+            }
+            let pid = Pid::from_raw(pid);
+            if let Ok(sid) = getsid(Some(pid)) {
+                if sid == session_leader {
+                    pids.push(pid);
+                }
+            }
+        }
+        pids
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let pids = pids_in_session_linux(session_leader, self_pid);
+        for &pid in &pids {
+            let _ = kill(pid, Signal::SIGTERM);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let pids2 = pids_in_session_linux(session_leader, self_pid);
+        for &pid in &pids2 {
+            let _ = kill(pid, Signal::SIGKILL);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let pids = pids_in_session_macos(session_leader, self_pid);
+        for &pid in &pids {
+            let _ = kill(pid, Signal::SIGTERM);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let pids2 = pids_in_session_macos(session_leader, self_pid);
+        for &pid in &pids2 {
+            let _ = kill(pid, Signal::SIGKILL);
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        // Process-group kill: shell's PID is the process group leader (setsid in child).
+        let _ = kill(Pid::from_raw(-session_leader_pid), Signal::SIGTERM);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = kill(Pid::from_raw(-session_leader_pid), Signal::SIGKILL);
+    }
+
+    let _ = kill(session_leader, Signal::SIGKILL);
+}
+
 #[cfg(unix)]
 impl Drop for Subshell {
     fn drop(&mut self) {
+        kill_subshell_session(self.child_pid);
         let _ = nix::unistd::close(self.master_fd);
         let _ = nix::sys::wait::waitpid(
             nix::unistd::Pid::from_raw(self.child_pid),
