@@ -21,6 +21,38 @@ use crate::app_state::{
     AppState, FindDialogPhase, FindDialogState, FindMessage, FindResult,
 };
 
+/// One row in the grouped find results list: either a folder (header) or a file.
+#[derive(Debug, Clone)]
+pub enum FindDisplayRow {
+    Folder(PathBuf),
+    File(FindResult),
+}
+
+/// Build display list grouped by parent directory: for each directory (in order of first occurrence),
+/// one Folder row then one File row per match in that directory.
+pub fn build_display_rows(results: &[FindResult]) -> Vec<FindDisplayRow> {
+    let mut groups: Vec<(PathBuf, Vec<FindResult>)> = Vec::new();
+    for r in results {
+        let parent = r
+            .path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(PathBuf::new);
+        if groups.last().map(|(p, _)| p != &parent).unwrap_or(true) {
+            groups.push((parent, Vec::new()));
+        }
+        groups.last_mut().unwrap().1.push(r.clone());
+    }
+    let mut rows = Vec::new();
+    for (dir, files) in groups {
+        rows.push(FindDisplayRow::Folder(dir));
+        for r in files {
+            rows.push(FindDisplayRow::File(r));
+        }
+    }
+    rows
+}
+
 /// Shell-style glob match: * = any sequence, ? = one character. Empty pattern matches all.
 pub fn glob_match(pattern: &str, name: &str, case_sensitive: bool) -> bool {
     let (p, n) = if case_sensitive {
@@ -365,12 +397,28 @@ fn handle_key_results(
 ) -> Option<crate::events::AppAction> {
     use crate::events::AppAction;
     let d = app.find_dialog.as_mut()?;
-    let len = d.results.len();
+    let display_rows = build_display_rows(&d.results);
+    let len = display_rows.len();
+    if len > 0 && d.selected_index >= len {
+        d.selected_index = len - 1;
+    }
     match code {
         KeyCode::Esc => return Some(AppAction::FindClose),
         KeyCode::Enter => return Some(AppAction::FindChdir),
-        KeyCode::F(3) => return Some(AppAction::FindView),
-        KeyCode::F(4) => return Some(AppAction::FindEdit),
+        KeyCode::F(3) => {
+            if len > 0 {
+                if let Some(FindDisplayRow::File(_)) = display_rows.get(d.selected_index) {
+                    return Some(AppAction::FindView);
+                }
+            }
+        }
+        KeyCode::F(4) => {
+            if len > 0 {
+                if let Some(FindDisplayRow::File(_)) = display_rows.get(d.selected_index) {
+                    return Some(AppAction::FindEdit);
+                }
+            }
+        }
         KeyCode::Up => {
             if len > 0 {
                 d.selected_index = d.selected_index.saturating_sub(1);
@@ -607,8 +655,12 @@ fn draw_status_and_list(
         .max(1);
     d.visible_list_rows = list_height as usize;
     let v = d.visible_list_rows.max(1);
-    let len = d.results.len();
+    let display_rows = build_display_rows(&d.results);
+    let len = display_rows.len();
     if len > 0 {
+        if d.selected_index >= len {
+            d.selected_index = len - 1;
+        }
         if d.scroll_offset + v > len {
             d.scroll_offset = len.saturating_sub(v);
         }
@@ -661,25 +713,37 @@ fn draw_status_and_list(
         width: content_w,
         height: list_height,
     };
-    let visible: Vec<ListItem> = d
-        .results
+    let visible: Vec<ListItem> = display_rows
         .iter()
         .skip(d.scroll_offset)
         .take(d.visible_list_rows)
         .enumerate()
-        .map(|(i, r)| {
+        .map(|(i, row)| {
             let idx = d.scroll_offset + i;
-            let line_str = match &r.line {
-                Some(l) => format!("{}:{}", r.path.display(), l),
-                None => r.path.display().to_string(),
+            let (line_str, is_folder) = match row {
+                FindDisplayRow::Folder(path) => (path.display().to_string(), true),
+                FindDisplayRow::File(r) => {
+                    let name = r
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| r.path.display().to_string());
+                    let s = match &r.line {
+                        Some(l) => format!("{}:{}", name, l),
+                        None => name,
+                    };
+                    (s, false)
+                }
             };
             let style = if idx == d.selected_index {
                 Style::default().bg(Color::Cyan).fg(Color::Black)
             } else {
                 fill_style
             };
-            ListItem::new(Line::from(Span::raw(truncate_path(&line_str, content_w as usize))))
-                .style(style)
+            let prefix = if is_folder { "" } else { "  " };
+            let max_w = (content_w as usize).saturating_sub(prefix.len());
+            let display = format!("{}{}", prefix, truncate_path(&line_str, max_w));
+            ListItem::new(Line::from(Span::raw(display))).style(style)
         })
         .collect();
     let list = List::new(visible);

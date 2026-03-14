@@ -780,23 +780,30 @@ fn main() -> Result<(), io::Error> {
             AppAction::FindClose => app.close_find_dialog(),
             AppAction::FindStartSearch => find_dialog::start_search(&mut app),
             AppAction::FindChdir => {
-                if let Some(ref mut d) = app.find_dialog {
-                    if d.selected_index < d.results.len()
-                    {
-                        let result = d.results[d.selected_index].path.clone();
-                        if let (Some(parent), Some(name)) = (
-                            result.parent(),
-                            result.file_name().map(|n| n.to_string_lossy().to_string()),
-                        ) {
-                            let loc = crate::location::PanelLocation::fs(parent);
-                            let panel_height = util::compute_panel_height();
-                            if app.active_panel_mut().navigate_to_location(loc).is_ok() {
-                                let _ = app.active_panel_mut()
-                                    .refresh_files_restore_selection(
-                                        Some(name.as_str()),
-                                        None,
-                                        Some(panel_height),
-                                    );
+                if let Some(ref d) = app.find_dialog {
+                    let rows = find_dialog::build_display_rows(&d.results);
+                    if let Some(row) = rows.get(d.selected_index) {
+                        match row {
+                            find_dialog::FindDisplayRow::Folder(path) => {
+                                let loc = crate::location::PanelLocation::fs(path);
+                                if app.active_panel_mut().navigate_to_location(loc).is_ok() {}
+                            }
+                            find_dialog::FindDisplayRow::File(r) => {
+                                if let (Some(parent), Some(name)) = (
+                                    r.path.parent(),
+                                    r.path.file_name().map(|n| n.to_string_lossy().to_string()),
+                                ) {
+                                    let loc = crate::location::PanelLocation::fs(parent);
+                                    let panel_height = util::compute_panel_height();
+                                    if app.active_panel_mut().navigate_to_location(loc).is_ok() {
+                                        let _ = app.active_panel_mut()
+                                            .refresh_files_restore_selection(
+                                                Some(name.as_str()),
+                                                None,
+                                                Some(panel_height),
+                                            );
+                                    }
+                                }
                             }
                         }
                     }
@@ -805,11 +812,10 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::FindView => {
                 if let Some(ref d) = app.find_dialog {
-                    if d.selected_index < d.results.len() {
-                        let result = d.results[d.selected_index].path.clone();
-                        let line = d.results[d.selected_index].line;
-                        if result.is_file() {
-                            viewer::open_viewer_path(&mut app, result, line);
+                    let rows = find_dialog::build_display_rows(&d.results);
+                    if let Some(find_dialog::FindDisplayRow::File(r)) = rows.get(d.selected_index) {
+                        if r.path.is_file() {
+                            viewer::open_viewer_path(&mut app, r.path.clone(), r.line);
                         }
                     }
                 }
@@ -817,10 +823,10 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::FindEdit => {
                 if let Some(ref d) = app.find_dialog {
-                    if d.selected_index < d.results.len() {
-                        let result = d.results[d.selected_index].path.clone();
-                        if result.is_file() {
-                            editor::open_editor_path(&mut app, result);
+                    let rows = find_dialog::build_display_rows(&d.results);
+                    if let Some(find_dialog::FindDisplayRow::File(r)) = rows.get(d.selected_index) {
+                        if r.path.is_file() {
+                            editor::open_editor_path(&mut app, r.path.clone());
                         }
                     }
                 }
