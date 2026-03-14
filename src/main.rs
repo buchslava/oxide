@@ -33,9 +33,10 @@ mod subshell;
 mod ui;
 mod viewer;
 
-use app_state::{AppState, CopyInProgress, CopyProgress, Focus, Operation, RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress};
+use app_state::{AppState, ArchiveMessage, CopyInProgress, CopyProgress, Focus, Operation, RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress};
 use editor::{apply_confirm_choice, close, open_editor, save};
 use events::{EventHandler, AppAction, CopyErrorChoice, DeleteConfirmChoice, SettingChange};
+use std::sync::atomic::Ordering;
 use viewer::{close_viewer, open_viewer, poll_viewer_loading};
 use file_ops::FileOperations;
 use panel::{PanelOperations, ViewMode};
@@ -108,6 +109,13 @@ fn start_copy_operation(app: &mut AppState, operation: Operation, params: app_st
         }
     }).unwrap_or_default();
 
+    let target_path = match operation {
+        Operation::Copy | Operation::Move => params.target_location.as_ref()
+            .map(|loc| loc.display_string())
+            .unwrap_or_else(|| params.target_dir.trim_end_matches('/').to_string()),
+        Operation::Delete => String::new(),
+    };
+
     app.copy_in_progress = Some(CopyInProgress {
         operation,
         params,
@@ -119,6 +127,7 @@ fn start_copy_operation(app: &mut AppState, operation: Operation, params: app_st
     app.copy_progress = Some(CopyProgress {
         operation,
         current_path: initial_path,
+        target_path,
         current: 0,
         total,
     });
@@ -231,9 +240,16 @@ fn run_copy_step(app: &mut AppState) {
     let current_path = c.params.source_location.as_ref()
         .map(|loc| panel_backend::join_path_display(loc, name))
         .unwrap_or_else(|| FileOperations::join_path(&c.params.source_dir, name).to_string_lossy().to_string());
+    let target_path = match c.operation {
+        Operation::Copy | Operation::Move => c.params.target_location.as_ref()
+            .map(|loc| loc.display_string())
+            .unwrap_or_else(|| c.params.target_dir.trim_end_matches('/').to_string()),
+        Operation::Delete => String::new(),
+    };
     app.copy_progress = Some(CopyProgress {
         operation: c.operation,
         current_path: current_path.clone(),
+        target_path,
         current: c.current_index + 1,
         total,
     });
@@ -573,6 +589,40 @@ fn main() -> Result<(), io::Error> {
             }
         }
 
+        // Poll archive progress (background thread).
+        if let Some(rx) = app.archive_pending_rx.take() {
+            match rx.try_recv() {
+                Ok(ArchiveMessage::Progress(p)) => {
+                    app.archive_progress = Some(p);
+                    app.archive_pending_rx = Some(rx);
+                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                }
+                Ok(ArchiveMessage::Done(res, name_for_selection)) => {
+                    app.archive_progress = None;
+                    app.archive_cancel = None;
+                    if let Err(e) = res {
+                        if e.kind() != std::io::ErrorKind::Interrupted {
+                            eprintln!("Archive error: {}", e);
+                        }
+                    } else {
+                        let panel_height = util::compute_panel_height();
+                        let _ = app.active_panel_mut().refresh_files_restore_selection(
+                            name_for_selection.as_deref(),
+                            None,
+                            Some(panel_height),
+                        );
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    app.archive_pending_rx = Some(rx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.archive_progress = None;
+                    app.archive_cancel = None;
+                }
+            }
+        }
+
         // After copy/move/delete completes: restore source panel selection (file after, else file before) and scroll.
         if let Some((source_dir, restore_after, restore_before)) = app.source_panel_restore.take() {
             restore_source_panel_and_refresh(
@@ -752,6 +802,13 @@ fn main() -> Result<(), io::Error> {
                     app.right_panel_mut().refresh_files_restore_selection(None, None, None),
                 );
             }
+            AppAction::ArchiveProgressCancel => {
+                if let Some(c) = app.archive_cancel.take() {
+                    c.store(true, Ordering::Relaxed);
+                }
+                app.archive_progress = None;
+                app.archive_pending_rx = None;
+            }
             AppAction::DeleteConfirmChoice(choice) => {
                 let pending = app.operation_confirm_pending.take();
                 if let (DeleteConfirmChoice::Yes, Some((op, params))) = (choice, pending) {
@@ -799,7 +856,7 @@ fn main() -> Result<(), io::Error> {
                 if let Some(name) = archive_dialog::confirm(&mut app) {
                     let name = name.trim();
                     if !name.is_empty() && !items.is_empty() {
-                        archive_dialog::create_and_refresh(&mut app, name, &items);
+                        archive_dialog::start_archive_background(&mut app, name, &items);
                     }
                 }
             }

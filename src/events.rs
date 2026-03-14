@@ -52,6 +52,8 @@ pub enum AppAction {
     ArchiveConfirm,
     /// ESC in archive dialog: cancel and close.
     ArchiveCancel,
+    /// ESC during archive progress: stop archiving and close progress dialog (like CopyCancel).
+    ArchiveProgressCancel,
     /// F2: open "Rename / Attributes" dialog (single file or group).
     OpenRenameAttrDialog,
     /// Enter in F2 dialog: apply rename + chmod and close.
@@ -335,6 +337,13 @@ impl EventHandler {
                     if key.code == KeyCode::Esc {
                         return Ok(Some(AppAction::CopyCancel));
                     }
+                }
+                // When archive is in progress, Esc cancels (same as Copy/Move: stop and close dialog).
+                if app.archive_progress.is_some() {
+                    if key.code == KeyCode::Esc {
+                        return Ok(Some(AppAction::ArchiveProgressCancel));
+                    }
+                    return Ok(Some(AppAction::Continue));
                 }
                 // F7 "Create directory" dialog: handle text input and Enter/ESC.
                 if app.mkdir_dialog.is_some() {

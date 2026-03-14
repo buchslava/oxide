@@ -55,6 +55,8 @@ pub enum RenameAttrDialogState {
         user_index: usize,
         group_index: usize,
         items: Vec<(String, bool)>,
+        /// Current file name (cursor row when dialog opened); restore selection to it after apply.
+        current_name: String,
         focus: RenameAttrField,
     },
 }
@@ -139,6 +141,11 @@ pub fn open(app: &mut AppState) {
             focus: RenameAttrField::Name,
         });
     } else {
+        let current_name = app
+            .active_panel_ref()
+            .get_selected_file()
+            .map(|f| f.name.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| items[0].0.trim_end_matches('/').to_string());
         app.rename_attr_dialog = Some(RenameAttrDialogState::Group {
             count: items.len(),
             mode,
@@ -150,6 +157,7 @@ pub fn open(app: &mut AppState) {
             user_index,
             group_index,
             items,
+            current_name,
             focus: RenameAttrField::Permissions,
         });
     }
@@ -272,6 +280,7 @@ pub fn apply(app: &mut AppState) -> bool {
             user_index,
             group_index,
             items,
+            current_name,
             focus,
         } => {
             let u_g = user_list.get(user_index).zip(group_list.get(group_index));
@@ -286,9 +295,10 @@ pub fn apply(app: &mut AppState) -> bool {
                         group,
                         user_list,
                         group_list,
-            user_index,
-            group_index,
-            items: items.clone(),
+                        user_index,
+                        group_index,
+                        items: items.clone(),
+                        current_name: current_name.clone(),
                         focus,
                     });
                     app.rename_attr_error = Some(format!("Set permissions failed: {}: {}", name, e));
@@ -304,9 +314,10 @@ pub fn apply(app: &mut AppState) -> bool {
                             group,
                             user_list,
                             group_list,
-            user_index,
-            group_index,
-            items: items.clone(),
+                            user_index,
+                            group_index,
+                            items: items.clone(),
+                            current_name: current_name.clone(),
                             focus,
                         });
                         app.rename_attr_error = Some(format!("Chown failed: {}: {}", name, e));
@@ -314,7 +325,12 @@ pub fn apply(app: &mut AppState) -> bool {
                     }
                 }
             }
-            let _ = app.active_panel_mut().refresh_files();
+            let panel_height = crate::util::compute_panel_height();
+            let _ = app.active_panel_mut().refresh_files_restore_selection(
+                Some(current_name.as_str()),
+                None,
+                Some(panel_height),
+            );
             true
         }
     }

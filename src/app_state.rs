@@ -1,12 +1,22 @@
 use std::io;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
+use std::sync::Arc;
 use ratatui::layout::Rect;
 use crate::panel::{Panel, PanelOperations, ViewMode};
 use crate::settings::PersistedSettings;
 
 use std::path::PathBuf;
 use crate::location::PanelLocation;
-pub use crate::copy_state::{CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation};
+pub use crate::copy_state::{ArchiveProgress, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation};
+
+/// Message from the background archive thread: progress update or completion.
+#[derive(Debug)]
+pub enum ArchiveMessage {
+    Progress(ArchiveProgress),
+    /// On success, the Option is the archive file name (for panel refresh/selection).
+    Done(io::Result<()>, Option<String>),
+}
 
 /// Single source of truth for input target: panel (navigation), command line (typing), or a modal dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +67,12 @@ pub struct AppState {
     pub mkdir_dialog: Option<MkdirDialogState>,
     /// When Some, Ctrl+A "Archive" dialog is open (text field for archive file name).
     pub archive_dialog: Option<ArchiveDialogState>,
+    /// When Some, archiving is in progress; show progress overlay (like copy progress).
+    pub archive_progress: Option<ArchiveProgress>,
+    /// Receiver for background archive thread; polled in main loop.
+    pub archive_pending_rx: Option<mpsc::Receiver<ArchiveMessage>>,
+    /// When Some, the archive thread should stop; set on ESC during archive progress.
+    pub archive_cancel: Option<Arc<AtomicBool>>,
     /// When Some, F2 "Rename / Attributes" dialog is open (single file: name + attrs; group: attrs only).
     pub rename_attr_dialog: Option<RenameAttrDialogState>,
     /// When Some, an error alert is shown on top of the F2 dialog (message to display).
@@ -140,6 +156,9 @@ impl AppState {
             viewer_screen: None,
             mkdir_dialog: None,
             archive_dialog: None,
+            archive_progress: None,
+            archive_pending_rx: None,
+            archive_cancel: None,
             rename_attr_dialog: None,
             rename_attr_error: None,
             size_info_dialog: None,

@@ -156,6 +156,9 @@ impl Renderer {
         if let Some(ref progress) = app.copy_progress {
             Self::draw_copy_progress(f, progress);
         }
+        if let Some(ref progress) = app.archive_progress {
+            Self::draw_archive_progress(f, progress);
+        }
         if let Some(ref filename) = app.copy_overwrite_dialog {
             Self::draw_copy_overwrite_dialog(f, app, filename);
         }
@@ -519,7 +522,7 @@ impl Renderer {
         let inner_width = 76usize;
         const PAD_H: u16 = 2;
         let w = (inner_width as u16 + 2 + PAD_H * 2).min(area.width.saturating_sub(4));
-        let h = 10u16;
+        let h = if matches!(progress.operation, Operation::Copy | Operation::Move) { 12 } else { 10 };
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
         let rect = Rect { x, y, width: w, height: h };
@@ -580,6 +583,130 @@ impl Renderer {
             width: content.width,
             height: 1,
         });
+        row += 1;
+        if matches!(progress.operation, Operation::Copy | Operation::Move) {
+            let tgt_label = Paragraph::new("Target")
+                .style(fill_style.fg(Color::Yellow))
+                .alignment(Alignment::Center);
+            f.render_widget(tgt_label, Rect {
+                x: content.x,
+                y: content.y + row,
+                width: content.width,
+                height: 1,
+            });
+            row += 1;
+            let target_display = compact_path(&progress.target_path, max_path_width.max(10));
+            let target_para = Paragraph::new(target_display)
+                .style(fill_style.fg(Color::White))
+                .alignment(Alignment::Center);
+            f.render_widget(target_para, Rect {
+                x: content.x,
+                y: content.y + row,
+                width: content.width,
+                height: 1,
+            });
+            row += 1;
+        }
+        let ratio = if progress.total > 0 {
+            (progress.current as f64) / (progress.total as f64).max(1.0)
+        } else {
+            0.0
+        };
+        let gauge = Gauge::default()
+            .gauge_style(Style::default().fg(Color::Cyan))
+            .ratio(ratio)
+            .label(format!("{} / {}", progress.current, progress.total));
+        f.render_widget(gauge, Rect {
+            x: content.x,
+            y: content.y + row,
+            width: content.width,
+            height: 1,
+        });
+        row += 1;
+        let cancel_hint = Paragraph::new("ESC: Cancel")
+            .style(fill_style.fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+        f.render_widget(cancel_hint, Rect {
+            x: content.x,
+            y: content.y + row,
+            width: content.width,
+            height: 1,
+        });
+    }
+
+    /// Archive progress overlay (Ctrl+A): same style as copy progress — Source, Target, gauge. ESC: Cancel.
+    fn draw_archive_progress(f: &mut Frame, progress: &crate::app_state::ArchiveProgress) {
+        let area = f.area();
+        let inner_width = 76usize;
+        const PAD_H: u16 = 2;
+        let w = (inner_width as u16 + 2 + PAD_H * 2).min(area.width.saturating_sub(4));
+        let h = 12u16;
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+        let progress_bg = Color::Rgb(25, 40, 60);
+        let fill_style = Style::default().bg(progress_bg);
+
+        f.render_widget(Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Archive ")
+            .style(fill_style.fg(Color::Cyan));
+        f.render_widget(block, rect);
+        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let content = Rect {
+            x: inner.x + PAD_H,
+            y: inner.y,
+            width: inner.width.saturating_sub(PAD_H * 2),
+            height: inner.height,
+        };
+        let max_path_width = content.width as usize;
+
+        let space_line = " ".repeat(content.width as usize);
+        for r in 0..content.height {
+            f.render_widget(
+                Paragraph::new(space_line.as_str()).style(Style::default().bg(progress_bg)),
+                Rect {
+                    x: content.x,
+                    y: content.y + r,
+                    width: content.width,
+                    height: 1,
+                },
+            );
+        }
+
+        let mut row = 0u16;
+        let src_label = Paragraph::new("Source")
+            .style(fill_style.fg(Color::Yellow))
+            .alignment(Alignment::Center);
+        f.render_widget(src_label, Rect {
+            x: content.x,
+            y: content.y + row,
+            width: content.width,
+            height: 1,
+        });
+        row += 1;
+        let path_display = compact_path(&progress.current_path, max_path_width.max(10));
+        f.render_widget(
+            Paragraph::new(path_display).style(fill_style.fg(Color::White)).alignment(Alignment::Center),
+            Rect { x: content.x, y: content.y + row, width: content.width, height: 1 },
+        );
+        row += 1;
+        let tgt_label = Paragraph::new("Target")
+            .style(fill_style.fg(Color::Yellow))
+            .alignment(Alignment::Center);
+        f.render_widget(tgt_label, Rect {
+            x: content.x,
+            y: content.y + row,
+            width: content.width,
+            height: 1,
+        });
+        row += 1;
+        let target_display = compact_path(&progress.target_path, max_path_width.max(10));
+        f.render_widget(
+            Paragraph::new(target_display).style(fill_style.fg(Color::White)).alignment(Alignment::Center),
+            Rect { x: content.x, y: content.y + row, width: content.width, height: 1 },
+        );
         row += 1;
         let ratio = if progress.total > 0 {
             (progress.current as f64) / (progress.total as f64).max(1.0)

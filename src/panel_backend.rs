@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::Ordering;
 
 use crate::file_ops::{apply_sort_mode, FileInfo, FileOperations};
 use crate::location::PanelLocation;
@@ -55,10 +56,23 @@ pub fn write_file(loc: &PanelLocation, name: &str, content: &[u8]) -> io::Result
 
 /// Create a zip archive containing the given items at the current location. Only valid for Fs.
 /// Originals are not modified. archive_name is the file name (e.g. "archive.zip").
+#[allow(dead_code)]
 pub fn create_archive(
     loc: &PanelLocation,
     items: &[(String, bool)],
     archive_name: &str,
+) -> io::Result<()> {
+    create_archive_with_progress(loc, items, archive_name, &mut |_, _, _| {}, None)
+}
+
+/// Like create_archive but calls progress(current_1based, total, current_item_path) for each top-level item.
+/// If cancel is Some and load(Relaxed) becomes true, stops and returns Err.
+pub fn create_archive_with_progress(
+    loc: &PanelLocation,
+    items: &[(String, bool)],
+    archive_name: &str,
+    progress: &mut impl FnMut(usize, usize, &str),
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> io::Result<()> {
     let base_dir = match loc {
         PanelLocation::Fs(p) => p.as_path(),
@@ -75,7 +89,19 @@ pub fn create_archive(
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    for (name, is_dir) in items {
+    let total = items.len();
+    for (idx, (name, is_dir)) in items.iter().enumerate() {
+        if let Some(c) = cancel {
+            if c.load(Ordering::Relaxed) {
+                drop(writer);
+                let _ = fs::remove_file(&archive_path);
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Archive cancelled"));
+            }
+        }
+        let current_path = FileOperations::join_path(base_dir, name);
+        let path_display = current_path.to_string_lossy().to_string();
+        progress(idx + 1, total, &path_display);
+
         let full_path = FileOperations::join_path(base_dir, name);
         let name_clean = name.trim_end_matches('/');
         if *is_dir {
@@ -83,6 +109,13 @@ pub fn create_archive(
                 .into_iter()
                 .filter_map(|e| e.ok())
             {
+                if let Some(c) = cancel {
+                    if c.load(Ordering::Relaxed) {
+                        drop(writer);
+                        let _ = fs::remove_file(&archive_path);
+                        return Err(io::Error::new(io::ErrorKind::Interrupted, "Archive cancelled"));
+                    }
+                }
                 let path = entry.path();
                 let relative = path
                     .strip_prefix(&full_path)

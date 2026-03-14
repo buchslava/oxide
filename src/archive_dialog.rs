@@ -1,6 +1,10 @@
 //! Ctrl+A "Archive" dialog (MC-style). Single text field for the archive file name;
 //! selected items are zipped into it; originals are kept. Enter = create (if non-empty), Esc = cancel.
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::sync::mpsc;
+
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Margin, Rect},
@@ -10,8 +14,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
+use crate::app_state::{AppState, ArchiveMessage, ArchiveProgress};
 use crate::events::AppAction;
+use crate::file_ops::FileOperations;
+use crate::location::PanelLocation;
 
 /// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
@@ -43,8 +49,9 @@ pub fn confirm(app: &mut AppState) -> Option<String> {
     app.archive_dialog.take().map(|d| d.name)
 }
 
-/// Create the archive in the active panel's current location and refresh the panel.
-/// Call only when name is non-empty (after trim). Only supported on filesystem.
+/// Create the archive in the active panel's current location and refresh the panel (sync, no progress).
+/// Kept for compatibility; normal flow uses start_archive_background.
+#[allow(dead_code)]
 pub fn create_and_refresh(
     app: &mut AppState,
     name: &str,
@@ -61,6 +68,53 @@ pub fn create_and_refresh(
         None,
         Some(panel_height),
     );
+}
+
+/// Start creating the archive in a background thread; show progress overlay. Call after closing the dialog.
+pub fn start_archive_background(app: &mut AppState, name: &str, items: &[(String, bool)]) {
+    let loc = app.get_current_location();
+    let PanelLocation::Fs(base_dir) = &loc else {
+        eprintln!("Archive only supported on filesystem");
+        return;
+    };
+    let items: Vec<(String, bool)> = items.to_vec();
+    let name = name.to_string();
+    let target_path = FileOperations::join_path(base_dir, &name).to_string_lossy().to_string();
+
+    let (tx, rx) = mpsc::channel();
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    let total = items.len();
+    let first_path = items.first().map(|(n, _)| FileOperations::join_path(base_dir, n).to_string_lossy().to_string()).unwrap_or_default();
+    app.archive_progress = Some(ArchiveProgress {
+        current_path: first_path,
+        target_path: target_path.clone(),
+        current: 0,
+        total,
+    });
+    app.archive_pending_rx = Some(rx);
+    app.archive_cancel = Some(Arc::clone(&cancel));
+
+    let loc_clone = loc.clone();
+    let _ = std::thread::spawn(move || {
+        let mut progress = |current: usize, total: usize, current_path: &str| {
+            let _ = tx.send(ArchiveMessage::Progress(ArchiveProgress {
+                current_path: current_path.to_string(),
+                target_path: target_path.clone(),
+                current,
+                total,
+            }));
+        };
+        let result = crate::panel_backend::create_archive_with_progress(
+            &loc_clone,
+            &items,
+            &name,
+            &mut progress,
+            Some(&cancel),
+        );
+        let name_for_selection = result.as_ref().ok().map(|_| name.clone());
+        let _ = tx.send(ArchiveMessage::Done(result, name_for_selection));
+    });
 }
 
 /// Handle a key when the archive dialog is open. Returns the action to take (ArchiveConfirm,

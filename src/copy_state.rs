@@ -12,12 +12,14 @@ pub enum Operation {
     Delete,
 }
 
-/// Progress shown during Copy/Move. Full path of current file, position (e.g. "3 / 5").
+/// Progress shown during Copy/Move. Full path of current file, target dir, position (e.g. "3 / 5").
 #[derive(Debug, Clone)]
 pub struct CopyProgress {
     pub operation: Operation,
     /// Full path of the file/dir being copied/moved (source).
     pub current_path: String,
+    /// Destination path (directory or archive path) for display in the progress dialog.
+    pub target_path: String,
     pub current: usize,
     pub total: usize,
 }
@@ -51,6 +53,17 @@ pub struct CopyInProgress {
     pub skip_all: bool,
     /// When true, future copy/move errors are skipped without showing the error dialog.
     pub ignore_all_errors: bool,
+}
+
+/// Progress shown during Ctrl+A Archive. Same layout as CopyProgress for the overlay (Source, Target, gauge).
+#[derive(Debug, Clone)]
+pub struct ArchiveProgress {
+    /// Full path of the file/dir currently being added (source).
+    pub current_path: String,
+    /// Full path of the archive being created (target).
+    pub target_path: String,
+    pub current: usize,
+    pub total: usize,
 }
 
 /// State when a copy/move error occurred; user picks Skip, Cancel, or Ignore all.
