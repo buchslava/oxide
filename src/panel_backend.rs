@@ -38,6 +38,26 @@ pub fn supports_mkdir(_loc: &PanelLocation) -> bool {
     true
 }
 
+/// Whether creating a new file (Ctrl+N) is supported. True for Fs and Zip.
+pub fn supports_new_file(_loc: &PanelLocation) -> bool {
+    true
+}
+
+/// Check if a file or directory with the given name already exists at the location.
+pub fn entry_exists(loc: &PanelLocation, name: &str) -> io::Result<bool> {
+    let name_clean = name.trim_end_matches('/');
+    if name_clean.is_empty() || name_clean == ".." {
+        return Ok(false);
+    }
+    match loc {
+        PanelLocation::Fs(p) => Ok(FileOperations::join_path(p, name_clean).exists()),
+        PanelLocation::Zip { .. } => {
+            let files = list(loc, true, "name_asc", true)?;
+            Ok(files.iter().any(|f| f.name == name_clean))
+        }
+    }
+}
+
 /// Create directory. Only valid when supports_mkdir(loc). For Zip, adds a directory entry to the archive.
 pub fn mkdir(loc: &PanelLocation, name: &str) -> io::Result<()> {
     match loc {

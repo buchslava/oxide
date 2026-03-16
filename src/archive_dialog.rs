@@ -6,35 +6,26 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{
-    layout::{Margin, Rect},
-    style::{Color, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
-};
+use ratatui::layout::Rect;
 
 use crate::app_state::{AppState, ArchiveMessage, ArchiveProgress};
 use crate::events::AppAction;
 use crate::file_ops::FileOperations;
 use crate::location::PanelLocation;
+use crate::text_input::{self, TextInputState};
 
 /// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ArchiveDialogState {
-    pub name: String,
-    pub cursor: usize,
+    pub input: TextInputState,
     pub focus: usize,
 }
 
 /// Open the dialog with an empty archive name. Call only when at least one item is selected and location is Fs.
 pub fn open(app: &mut AppState) {
-    let default_name = String::new();
-    let cursor = default_name.len();
     app.archive_dialog = Some(ArchiveDialogState {
-        name: default_name,
-        cursor,
+        input: TextInputState::new(String::new()),
         focus: 0,
     });
 }
@@ -46,7 +37,7 @@ pub fn cancel(app: &mut AppState) {
 
 /// Take the entered name and close the dialog. Returns the name (may be empty).
 pub fn confirm(app: &mut AppState) -> Option<String> {
-    app.archive_dialog.take().map(|d| d.name)
+    app.archive_dialog.take().map(|d| d.input.text)
 }
 
 /// Create the archive in the active panel's current location and refresh the panel (sync, no progress).
@@ -89,7 +80,7 @@ pub fn start_archive_background(app: &mut AppState, name: &str, items: &[(String
     app.archive_progress = Some(ArchiveProgress {
         current_path: first_path,
         target_path: target_path.clone(),
-        current: 0,
+        current: 1,
         total,
     });
     app.archive_pending_rx = Some(rx);
@@ -117,213 +108,51 @@ pub fn start_archive_background(app: &mut AppState, name: &str, items: &[(String
     });
 }
 
-/// Handle a key when the archive dialog is open. Returns the action to take (ArchiveConfirm,
-/// ArchiveCancel, Suspend, or Continue after updating dialog state).
+impl ArchiveDialogState {
+    /// Pure key handler: returns updated state (None = close dialog) and action.
+    #[must_use]
+    pub fn handle_key(
+        self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> (Option<Self>, AppAction) {
+        let (input, focus, result) =
+            text_input::handle_single_input_key(self.input, self.focus, code, modifiers);
+        match result {
+            text_input::SingleInputKeyResult::Confirm => (None, AppAction::ArchiveConfirm),
+            text_input::SingleInputKeyResult::Cancel => (None, AppAction::ArchiveCancel),
+            text_input::SingleInputKeyResult::Suspend => (Some(Self { input, focus }), AppAction::Suspend),
+            text_input::SingleInputKeyResult::Continue => (Some(Self { input, focus }), AppAction::Continue),
+        }
+    }
+}
+
+/// Handle a key when the archive dialog is open. Updates app state by replacement; returns action.
 pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
-    if app.archive_dialog.is_none() {
-        return None;
-    }
-    let code = match code {
-        KeyCode::Char('\t') => KeyCode::Tab,
-        other => other,
-    };
-    let d = app
-        .archive_dialog
-        .as_mut()
-        .expect("archive_dialog open when handle_key called");
-    match code {
-        KeyCode::Tab | KeyCode::Char('\t') => {
-            d.focus = (d.focus + 1) % 3;
-            return Some(AppAction::Continue);
-        }
-        KeyCode::BackTab => {
-            d.focus = (d.focus + 2) % 3;
-            return Some(AppAction::Continue);
-        }
-        KeyCode::Up => {
-            d.focus = (d.focus + 2) % 3;
-            return Some(AppAction::Continue);
-        }
-        KeyCode::Down => {
-            d.focus = (d.focus + 1) % 3;
-            return Some(AppAction::Continue);
-        }
-        KeyCode::Enter => {
-            return Some(if d.focus == 2 {
-                AppAction::ArchiveCancel
-            } else {
-                AppAction::ArchiveConfirm
-            });
-        }
-        KeyCode::Esc => return Some(AppAction::ArchiveCancel),
-        KeyCode::Char(c) => {
-            if modifiers.contains(KeyModifiers::CONTROL) {
-                if c == 'o' {
-                    return Some(AppAction::Suspend);
-                }
-                if c == 'c' {
-                    cancel(app);
-                    return Some(AppAction::ArchiveCancel);
-                }
-            }
-            if d.focus == 0 && c.is_ascii() && !c.is_control() {
-                let at = d.cursor.min(d.name.len());
-                d.name.insert(at, c);
-                d.cursor = at + 1;
-            }
-        }
-        KeyCode::Backspace if d.focus == 0 => {
-            if d.cursor > 0 && d.cursor <= d.name.len() {
-                d.name.remove(d.cursor - 1);
-                d.cursor -= 1;
-            }
-        }
-        KeyCode::Left if d.focus == 0 => {
-            if d.cursor > 0 {
-                d.cursor -= 1;
-            }
-        }
-        KeyCode::Right if d.focus == 0 => {
-            if d.cursor < d.name.len() {
-                d.cursor += 1;
-            }
-        }
-        _ => {}
-    }
-    Some(AppAction::Continue)
+    let d = app.archive_dialog.take()?;
+    let (new_dialog, action) = d.handle_key(code, modifiers);
+    app.archive_dialog = new_dialog;
+    Some(action)
 }
 
-/// Draw the "Archive" dialog: title, prompt, text field with cursor, hint.
-pub fn draw(f: &mut Frame, app: &mut AppState) {
-    let Some(ref mut d) = app.archive_dialog else { return };
-    let area = f.area();
-    const PAD_H: u16 = 2;
-    let max_w = 52u16;
-    let w = max_w.min(area.width.saturating_sub(4));
-    let h = 9u16;
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
-    let grey_bg = Color::Rgb(60, 60, 60);
-    let fill_style = Style::default().bg(grey_bg).fg(Color::White);
-    f.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Archive ")
-        .style(fill_style.fg(Color::Cyan));
-    f.render_widget(block, rect);
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-    let content = Rect {
-        x: inner.x + PAD_H,
-        y: inner.y,
-        width: inner.width.saturating_sub(PAD_H * 2),
-        height: inner.height,
-    };
-    let prompt = "Enter archive file name:";
-    f.render_widget(
-        Paragraph::new(prompt).style(fill_style),
-        Rect {
-            x: content.x,
-            y: content.y,
-            width: content.width,
-            height: 1,
-        },
+/// Draw the "Archive" dialog.
+pub fn draw(f: &mut ratatui::Frame, app: &mut AppState) {
+    let Some(ref d) = app.archive_dialog else { return };
+    text_input::draw_single_input_dialog(
+        f,
+        f.area(),
+        " Archive ",
+        "Enter archive file name:",
+        &d.input,
+        d.focus,
     );
-    let input_y = content.y + 2;
-    let input_rect = Rect {
-        x: content.x,
-        y: input_y,
-        width: content.width,
-        height: 1,
-    };
-    let input_focused = d.focus == 0;
-    let input_bg = if input_focused {
-        Color::Rgb(28, 34, 46)
-    } else {
-        Color::Rgb(38, 44, 56)
-    };
-    let input_style = Style::default().bg(input_bg).fg(Color::White);
-    let input_padded = format!("{:<width$}", d.name, width = content.width as usize);
-    f.render_widget(Paragraph::new(input_padded).style(input_style), input_rect);
-    if input_focused {
-        let cursor_x = content.x
-            + (d.name.chars().take(d.cursor).count() as u16).min(content.width.saturating_sub(1));
-        if cursor_x < content.x + content.width {
-            f.set_cursor_position((cursor_x, input_y));
-        }
-    }
-    const CREATE_W: u16 = 10;
-    const CANCEL_W: u16 = 10;
-    const BTN_GAP: u16 = 4;
-    let total_btns = CREATE_W + CANCEL_W + BTN_GAP;
-    let btn_start_x = content.x + content.width.saturating_sub(total_btns) / 2;
-    let btn_y = content.y + 5;
-    let create_rect = Rect {
-        x: btn_start_x,
-        y: btn_y,
-        width: CREATE_W,
-        height: 1,
-    };
-    let cancel_rect = Rect {
-        x: btn_start_x + CREATE_W + BTN_GAP,
-        y: btn_y,
-        width: CANCEL_W,
-        height: 1,
-    };
-    let create_btn = Line::from(vec![Span::raw("  Create  ")]);
-    let cancel_btn = Line::from(vec![Span::raw("  Cancel  ")]);
-    let create_style = if d.focus == 1 {
-        Style::default().bg(Color::Cyan).fg(Color::Black)
-    } else {
-        fill_style
-    };
-    let cancel_style = if d.focus == 2 {
-        Style::default().bg(Color::Cyan).fg(Color::Black)
-    } else {
-        fill_style
-    };
-    f.render_widget(Paragraph::new(create_btn).style(create_style), create_rect);
-    f.render_widget(Paragraph::new(cancel_btn).style(cancel_style), cancel_rect);
 }
 
 /// Return (create_button_rect, cancel_button_rect) for archive dialog hit-testing.
-pub fn archive_button_rects(area: ratatui::layout::Rect) -> Option<(Rect, Rect)> {
-    const PAD_H: u16 = 2;
-    let max_w = 52u16;
-    let w = max_w.min(area.width.saturating_sub(4));
-    let h = 9u16;
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-    let content = Rect {
-        x: inner.x + PAD_H,
-        y: inner.y,
-        width: inner.width.saturating_sub(PAD_H * 2),
-        height: inner.height,
-    };
-    const CREATE_W: u16 = 10;
-    const CANCEL_W: u16 = 10;
-    const BTN_GAP: u16 = 4;
-    let total_btns = CREATE_W + CANCEL_W + BTN_GAP;
-    let btn_start_x = content.x + content.width.saturating_sub(total_btns) / 2;
-    let btn_y = content.y + 5;
-    Some((
-        Rect {
-            x: btn_start_x,
-            y: btn_y,
-            width: CREATE_W,
-            height: 1,
-        },
-        Rect {
-            x: btn_start_x + CREATE_W + BTN_GAP,
-            y: btn_y,
-            width: CANCEL_W,
-            height: 1,
-        },
-    ))
+pub fn archive_button_rects(area: Rect) -> Option<(Rect, Rect)> {
+    Some(crate::dialog_layout::single_input_dialog_button_rects(area))
 }

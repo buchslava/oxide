@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use walkdir::WalkDir;
 
@@ -19,6 +20,8 @@ use ratatui::{
 
 use crate::app_state::AppState;
 use crate::panel::PanelOperations;
+use crate::styles::{DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED};
+use crate::text_input::TextInputState;
 
 /// One result from Find file: path and optional line number (when content search matched).
 #[derive(Debug, Clone)]
@@ -48,15 +51,12 @@ pub enum FindDialogPhase {
 }
 
 /// State for Ctrl+F Find file dialog.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FindDialogState {
     pub phase: FindDialogPhase,
-    pub start_dir: String,
-    pub start_dir_cursor: usize,
-    pub file_pattern: String,
-    pub file_pattern_cursor: usize,
-    pub content_pattern: String,
-    pub content_pattern_cursor: usize,
+    pub start_dir_input: TextInputState,
+    pub file_pattern_input: TextInputState,
+    pub content_pattern_input: TextInputState,
     pub recursive: bool,
     pub file_case_sens: bool,
     pub content_case_sens: bool,
@@ -71,6 +71,10 @@ pub struct FindDialogState {
     pub visible_list_rows: usize,
     /// Focus in parameter form: 0=start_dir, 1=file_pattern, 2=content, 3=recursive, 4=file_case, 5=content_case, 6=skip_hidden, 7=Find, 8=Cancel.
     pub focus: usize,
+    /// Search params moved into Arc during search; restored to inputs when Done (avoids cloning strings).
+    pub search_start_dir: Option<Arc<str>>,
+    pub search_file_pattern: Option<Arc<str>>,
+    pub search_content_pattern: Option<Arc<str>>,
 }
 
 /// Open Ctrl+F Find file dialog with start dir from active panel.
@@ -79,12 +83,9 @@ pub fn open(app: &mut AppState) {
     let start_dir = app.active_panel_ref().get_current_dir();
     app.find_dialog = Some(FindDialogState {
         phase: FindDialogPhase::Parameter,
-        start_dir: start_dir.to_string(),
-        start_dir_cursor: start_dir.len(),
-        file_pattern: String::new(),
-        file_pattern_cursor: 0,
-        content_pattern: String::new(),
-        content_pattern_cursor: 0,
+        start_dir_input: TextInputState::new(start_dir.to_string()),
+        file_pattern_input: TextInputState::new(String::new()),
+        content_pattern_input: TextInputState::new(String::new()),
         recursive: true,
         file_case_sens: false,
         content_case_sens: false,
@@ -96,6 +97,9 @@ pub fn open(app: &mut AppState) {
         search_current_dir: String::new(),
         visible_list_rows: 18,
         focus: 0,
+        search_start_dir: None,
+        search_file_pattern: None,
+        search_content_pattern: None,
     });
     app.find_search_rx = None;
     app.focus = Focus::FindDialog;
@@ -200,10 +204,11 @@ pub fn glob_match(pattern: &str, name: &str, case_sensitive: bool) -> bool {
 
 /// Run find in a background thread; send matches and Done on tx.
 /// Uses walkdir for robust traversal (handles special dir names like "!!!").
+/// Takes Arc<str> so the caller can Arc::clone (cheap) instead of cloning the string.
 fn run_search(
-    start_dir: String,
-    file_pattern: String,
-    content_pattern: String,
+    start_dir: Arc<str>,
+    file_pattern: Arc<str>,
+    content_pattern: Arc<str>,
     recursive: bool,
     file_case_sens: bool,
     content_case_sens: bool,
@@ -296,9 +301,14 @@ pub fn start_search(app: &mut AppState) {
     d.selected_index = 0;
     d.scroll_offset = 0;
 
-    let start_dir = d.start_dir.clone();
-    let file_pattern = d.file_pattern.clone();
-    let content_pattern = d.content_pattern.clone();
+    // Move strings into Arc<str> (no clone); pass Arc::clone to thread (cheap). Restore from stored Arc when Done.
+    let start_dir = Arc::from(std::mem::take(&mut d.start_dir_input.text));
+    let file_pattern = Arc::from(std::mem::take(&mut d.file_pattern_input.text));
+    let content_pattern = Arc::from(std::mem::take(&mut d.content_pattern_input.text));
+    d.search_start_dir = Some(Arc::clone(&start_dir));
+    d.search_file_pattern = Some(Arc::clone(&file_pattern));
+    d.search_content_pattern = Some(Arc::clone(&content_pattern));
+
     let recursive = d.recursive;
     let file_case_sens = d.file_case_sens;
     let content_case_sens = d.content_case_sens;
@@ -342,6 +352,19 @@ pub fn poll_search(app: &mut AppState) {
                     let n = d.results.len();
                     d.status_message = format!("Search complete. {} match(es).", n);
                     d.search_current_dir.clear();
+                    // Restore search params from Arc into input fields (one copy per field when done).
+                    if let Some(arc) = d.search_start_dir.take() {
+                        d.start_dir_input.text = arc.to_string();
+                        d.start_dir_input.cursor = d.start_dir_input.text.chars().count();
+                    }
+                    if let Some(arc) = d.search_file_pattern.take() {
+                        d.file_pattern_input.text = arc.to_string();
+                        d.file_pattern_input.cursor = d.file_pattern_input.text.chars().count();
+                    }
+                    if let Some(arc) = d.search_content_pattern.take() {
+                        d.content_pattern_input.text = arc.to_string();
+                        d.content_pattern_input.cursor = d.content_pattern_input.text.chars().count();
+                    }
                 }
                 app.find_search_rx = None;
                 return;
@@ -420,59 +443,46 @@ fn handle_key_parameter(
         }
         KeyCode::Char(c) => {
             if c.is_ascii() && !c.is_control() && d.focus <= 2 {
-                let (s, cur) = match d.focus {
-                    0 => (&mut d.start_dir, &mut d.start_dir_cursor),
-                    1 => (&mut d.file_pattern, &mut d.file_pattern_cursor),
-                    2 => (&mut d.content_pattern, &mut d.content_pattern_cursor),
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
-                let at = (*cur).min(s.len());
-                s.insert(at, c);
-                *cur = at + 1;
+                *input = std::mem::take(input).insert_char(c);
             }
         }
         KeyCode::Backspace => {
             if d.focus <= 2 {
-                let (s, cur) = match d.focus {
-                    0 => (&mut d.start_dir, &mut d.start_dir_cursor),
-                    1 => (&mut d.file_pattern, &mut d.file_pattern_cursor),
-                    2 => (&mut d.content_pattern, &mut d.content_pattern_cursor),
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
-                if *cur > 0 && *cur <= s.len() {
-                    s.remove(*cur - 1);
-                    *cur -= 1;
-                }
+                *input = std::mem::take(input).backspace();
             }
         }
         KeyCode::Left => {
             if d.focus <= 2 {
-                let cur = match d.focus {
-                    0 => &mut d.start_dir_cursor,
-                    1 => &mut d.file_pattern_cursor,
-                    2 => &mut d.content_pattern_cursor,
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
-                *cur = cur.saturating_sub(1);
+                *input = std::mem::take(input).move_left();
             }
         }
         KeyCode::Right => {
             if d.focus <= 2 {
-                let len = match d.focus {
-                    0 => d.start_dir.len(),
-                    1 => d.file_pattern.len(),
-                    2 => d.content_pattern.len(),
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
-                let cur = match d.focus {
-                    0 => &mut d.start_dir_cursor,
-                    1 => &mut d.file_pattern_cursor,
-                    2 => &mut d.content_pattern_cursor,
-                    _ => return Some(AppAction::Continue),
-                };
-                if *cur < len {
-                    *cur += 1;
-                }
+                *input = std::mem::take(input).move_right();
             }
         }
         _ => {}
@@ -629,25 +639,23 @@ fn draw_parameter_form(
     let cx = inner.x + 1;
     let mut row = inner.y;
 
-    // High-contrast backgrounds for input fields so they stand out from the dialog.
-    const INPUT_BG_FOCUSED: Color = Color::Rgb(28, 34, 46);
-    const INPUT_BG_UNFOCUSED: Color = Color::Rgb(38, 44, 56);
     const LABEL_W: u16 = 18;
 
-    for (focus_idx, label, value, cursor) in [
-        (0, "Start directory:", d.start_dir.as_str(), d.start_dir_cursor),
-        (1, "File pattern:", d.file_pattern.as_str(), d.file_pattern_cursor),
-        (2, "Content pattern:", d.content_pattern.as_str(), d.content_pattern_cursor),
+    for (focus_idx, label, input) in [
+        (0, "Start directory:", &d.start_dir_input),
+        (1, "File pattern:", &d.file_pattern_input),
+        (2, "Content pattern:", &d.content_pattern_input),
     ] {
+        let value = input.text.as_str();
+        let cursor_char = input.cursor_column();
         let focused = d.focus == focus_idx;
         let bg = if focused {
-            INPUT_BG_FOCUSED
+            DIALOG_INPUT_BG_FOCUSED
         } else {
-            INPUT_BG_UNFOCUSED
+            DIALOG_INPUT_BG_UNFOCUSED
         };
         let value_w = content_w.saturating_sub(LABEL_W);
         let value_w_usize = value_w as usize;
-        let cursor_char = value.chars().take(cursor).count();
         let display_offset = if value_w_usize == 0 {
             0
         } else if cursor_char + 1 <= value_w_usize {

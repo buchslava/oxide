@@ -2,6 +2,7 @@
 //! Single file: editable name + checkboxes + user/group lists. Group: checkboxes + user/group lists only.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
@@ -15,6 +16,8 @@ use crate::app_state::AppState;
 use crate::events::AppAction;
 use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
+use crate::styles::{DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED};
+use crate::text_input::{self, TextInputState};
 
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,11 +29,10 @@ pub enum RenameAttrField {
 }
 
 /// State for F2 "Rename / Attributes" dialog. Permissions as 12 checkboxes; owner/group as list selection.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum RenameAttrDialogState {
     Single {
-        name: String,
-        name_cursor: usize,
+        name_input: TextInputState,
         /// Unix mode (0o7777: suid, sgid, sticky + rwx).
         mode: u32,
         /// Index into the 12 permission checkboxes (0..12).
@@ -41,7 +43,7 @@ pub enum RenameAttrDialogState {
         group_list: Vec<String>,
         user_index: usize,
         group_index: usize,
-        old_name: String,
+        old_name: Arc<str>,
         focus: RenameAttrField,
     },
     Group {
@@ -126,9 +128,9 @@ pub fn open(app: &mut AppState) {
 
     if items.len() == 1 {
         let name = items[0].0.trim_end_matches('/').to_string();
+        let name_arc: Arc<str> = Arc::from(name);
         app.rename_attr_dialog = Some(RenameAttrDialogState::Single {
-            name: name.clone(),
-            name_cursor: name.len(),
+            name_input: TextInputState::new(name_arc.to_string()),
             mode,
             perm_focus: 0,
             owner,
@@ -137,7 +139,7 @@ pub fn open(app: &mut AppState) {
             group_list,
             user_index,
             group_index,
-            old_name: name,
+            old_name: name_arc,
             focus: RenameAttrField::Name,
         });
     } else {
@@ -186,8 +188,7 @@ pub fn apply(app: &mut AppState) -> bool {
 
     match state {
         RenameAttrDialogState::Single {
-            name,
-            name_cursor,
+            name_input,
             mode,
             perm_focus,
             owner,
@@ -199,24 +200,23 @@ pub fn apply(app: &mut AppState) -> bool {
             old_name,
             focus,
         } => {
-            let name_trimmed = name.trim().to_string();
-            let old_name_trim = old_name.trim_end_matches('/');
+            let name_trimmed = name_input.text.trim().to_string();
+            let old_name_trim = old_name.as_ref().trim_end_matches('/');
             if !name_trimmed.is_empty() && old_name_trim != name_trimmed {
                 let path_old = Path::new(&cwd).join(old_name_trim);
                 let path_new = Path::new(&cwd).join(&name_trimmed);
                 if let Err(e) = std::fs::rename(&path_old, &path_new) {
                     app.rename_attr_dialog = Some(RenameAttrDialogState::Single {
-                        name,
-                        name_cursor,
+                        name_input,
                         mode,
                         perm_focus,
                         owner,
                         group,
                         user_list,
                         group_list,
-            user_index,
-            group_index,
-            old_name,
+                        user_index,
+                        group_index,
+                        old_name,
                         focus,
                     });
                     app.rename_attr_error = Some(format!("Rename failed: {}", e));
@@ -226,17 +226,16 @@ pub fn apply(app: &mut AppState) -> bool {
             let path = Path::new(&cwd).join(if name_trimmed.is_empty() { old_name_trim } else { name_trimmed.as_str() });
             if let Err(e) = FileOperations::set_permissions(&path, mode) {
                 app.rename_attr_dialog = Some(RenameAttrDialogState::Single {
-                    name,
-                    name_cursor,
+                    name_input,
                     mode,
                     perm_focus,
                     owner,
                     group,
                     user_list,
                     group_list,
-            user_index,
-            group_index,
-            old_name,
+                    user_index,
+                    group_index,
+                    old_name,
                     focus,
                 });
                 app.rename_attr_error = Some(format!("Set permissions failed: {}", e));
@@ -245,17 +244,16 @@ pub fn apply(app: &mut AppState) -> bool {
             if let (Some(u), Some(g)) = (user_list.get(user_index), group_list.get(group_index)) {
                 if let Err(e) = FileOperations::chown(&path, u, g) {
                     app.rename_attr_dialog = Some(RenameAttrDialogState::Single {
-                        name,
-                        name_cursor,
+                        name_input,
                         mode,
                         perm_focus,
                         owner,
                         group,
                         user_list,
                         group_list,
-            user_index,
-            group_index,
-            old_name,
+                        user_index,
+                        group_index,
+                        old_name,
                         focus,
                     });
                     app.rename_attr_error = Some(format!("Chown failed: {}", e));
@@ -401,51 +399,44 @@ pub fn handle_key(
                 }
             } else if c.is_ascii() && !c.is_control() {
                 if let RenameAttrDialogState::Single {
-                    name,
-                    name_cursor,
+                    name_input,
                     focus,
                     ..
                 } = d
                 {
                     if *focus == RenameAttrField::Name {
-                        let at = (*name_cursor).min(name.len());
-                        name.insert(at, c);
-                        *name_cursor = at + 1;
+                        *name_input = std::mem::take(name_input).insert_char(c);
                     }
                 }
             }
         }
         KeyCode::Backspace => {
             if let RenameAttrDialogState::Single {
-                name,
-                name_cursor,
-                focus,
-                ..
-            } = d
-            {
-                if *focus == RenameAttrField::Name && *name_cursor > 0 && *name_cursor <= name.len() {
-                    name.remove(*name_cursor - 1);
-                    *name_cursor -= 1;
-                }
-            }
-        }
-        KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-            if let RenameAttrDialogState::Single {
-                name,
-                name_cursor,
+                name_input,
                 focus,
                 ..
             } = d
             {
                 if *focus == RenameAttrField::Name {
-                    let len = name.len();
-                    match code {
-                        KeyCode::Left => *name_cursor = name_cursor.saturating_sub(1).min(len),
-                        KeyCode::Right => *name_cursor = (*name_cursor + 1).min(len),
-                        KeyCode::Home => *name_cursor = 0,
-                        KeyCode::End => *name_cursor = len,
-                        _ => {}
-                    }
+                    *name_input = std::mem::take(name_input).backspace();
+                }
+            }
+        }
+        KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+            if let RenameAttrDialogState::Single {
+                name_input,
+                focus,
+                ..
+            } = d
+            {
+                if *focus == RenameAttrField::Name {
+                    *name_input = match code {
+                        KeyCode::Left => std::mem::take(name_input).move_left(),
+                        KeyCode::Right => std::mem::take(name_input).move_right(),
+                        KeyCode::Home => std::mem::take(name_input).move_home(),
+                        KeyCode::End => std::mem::take(name_input).move_end(),
+                        _ => return Some(AppAction::Continue),
+                    };
                 }
             }
         }
@@ -540,9 +531,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
-    // Same dialog background as F7 "Create a new Directory" — distinct from panels.
-    let dialog_bg = Color::Rgb(60, 60, 60);
-    let fill_style = Style::default().bg(dialog_bg).fg(Color::White);
+    let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
     let cyan = Style::default().fg(Color::Cyan);
     let focus_border = Style::default().fg(Color::Yellow);
     f.render_widget(Clear, rect);
@@ -569,16 +558,25 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
 
     match d {
         RenameAttrDialogState::Single {
-            name,
-            name_cursor,
+            name_input,
             focus: _,
             ..
         } => {
-            let name_input_bg = if focus == RenameAttrField::Name { Color::Rgb(28, 34, 46) } else { Color::Rgb(38, 44, 56) };
+            let name_input_bg = if focus == RenameAttrField::Name {
+                DIALOG_INPUT_BG_FOCUSED
+            } else {
+                DIALOG_INPUT_BG_UNFOCUSED
+            };
+            let name_rect = Rect {
+                x: name_inner.x,
+                y: name_inner.y,
+                width: name_inner.width,
+                height: 1,
+            };
             let name_style = fill_style.bg(name_input_bg).fg(Color::White);
-            f.render_widget(Paragraph::new(name.as_str()).style(name_style), Rect { x: name_inner.x, y: name_inner.y, width: name_inner.width, height: 1 });
+            f.render_widget(Paragraph::new(name_input.text.as_str()).style(name_style), name_rect);
             if focus == RenameAttrField::Name {
-                let cx = name_inner.x + (name.chars().take(*name_cursor).count() as u16).min(name_inner.width.saturating_sub(1));
+                let cx = text_input::input_cursor_x(name_rect, name_input);
                 f.set_cursor_position((cx, name_inner.y));
             }
         }

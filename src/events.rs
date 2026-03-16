@@ -54,6 +54,12 @@ pub enum AppAction {
     ArchiveCancel,
     /// ESC during archive progress: stop archiving and close progress dialog (like CopyCancel).
     ArchiveProgressCancel,
+    /// Ctrl+N: open "New file" dialog (create empty file in current directory or archive).
+    OpenNewFileDialog,
+    /// Enter in new file dialog: create file and close (or show error if exists).
+    NewFileConfirm,
+    /// ESC in new file dialog: cancel and close.
+    NewFileCancel,
     /// F2: open "Rename / Attributes" dialog (single file or group).
     OpenRenameAttrDialog,
     /// Enter in F2 dialog: apply rename + chmod and close.
@@ -292,6 +298,13 @@ impl EventHandler {
                     }
                     return Ok(Some(AppAction::Continue));
                 }
+                // When new file error (e.g. file exists) is open: Enter or Esc closes.
+                if app.new_file_error.is_some() {
+                    if key.code == KeyCode::Enter || key.code == KeyCode::Esc {
+                        app.new_file_error = None;
+                    }
+                    return Ok(Some(AppAction::Continue));
+                }
                 // When copy error dialog is open: 1–3 direct, Tab/↑↓ cycle, Enter confirms, Esc=Cancel. Keys differ from Yes/No.
                 if app.copy_error_dialog.is_some() {
                     let choice = match key.code {
@@ -357,6 +370,14 @@ impl EventHandler {
                 if app.archive_dialog.is_some() {
                     if let Some(action) =
                         crate::archive_dialog::handle_key(app, key.code, key.modifiers)
+                    {
+                        return Ok(Some(action));
+                    }
+                }
+                // Ctrl+N "New file" dialog: handle text input and Enter/ESC.
+                if app.new_file_dialog.is_some() {
+                    if let Some(action) =
+                        crate::new_file_dialog::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -561,6 +582,13 @@ impl EventHandler {
                 let action = Self::handle_mouse_event(app, mouse_event)?;
                 Ok(Some(action.unwrap_or(AppAction::Continue)))
             }
+            // Bracketed paste (e.g. Cmd+V on macOS): insert as-is, same as Ctrl+V.
+            Event::Paste(data) => {
+                if let Some(action) = crate::editor::paste_text_as_is(app, &data) {
+                    return Ok(Some(action));
+                }
+                Ok(None)
+            }
             _ => Ok(None), // FocusGained, Resize, etc. - drain
         }
     }
@@ -677,6 +705,12 @@ impl EventHandler {
                 }
                 AppAction::Continue
             }
+            'n' => {
+                if crate::panel_backend::supports_new_file(&app.get_current_location()) {
+                    return AppAction::OpenNewFileDialog;
+                }
+                AppAction::Continue
+            }
             'r' => {
                 let _ = app.active_panel_mut().refresh_files();
                 AppAction::Continue
@@ -777,6 +811,45 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
+        // New file error dialog: handle click on OK to close.
+        if app.new_file_error.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                if let Some(ok_rect) = Renderer::new_file_error_ok_rect(area) {
+                    let (col, row) = (mouse_event.column, mouse_event.row);
+                    if col >= ok_rect.x
+                        && col < ok_rect.x + ok_rect.width
+                        && row >= ok_rect.y
+                        && row < ok_rect.y + ok_rect.height
+                    {
+                        app.new_file_error = None;
+                    }
+                }
+            }
+            return Ok(Some(AppAction::Continue));
+        }
+        // New file dialog: handle clicks on Create and Cancel buttons.
+        if app.new_file_dialog.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                if let Some((create_rect, cancel_rect)) = crate::new_file_dialog::new_file_button_rects(area) {
+                    let (col, row) = (mouse_event.column, mouse_event.row);
+                    if col >= create_rect.x
+                        && col < create_rect.x + create_rect.width
+                        && row >= create_rect.y
+                        && row < create_rect.y + create_rect.height
+                    {
+                        return Ok(Some(AppAction::NewFileConfirm));
+                    }
+                    if col >= cancel_rect.x
+                        && col < cancel_rect.x + cancel_rect.width
+                        && row >= cancel_rect.y
+                        && row < cancel_rect.y + cancel_rect.height
+                    {
+                        return Ok(Some(AppAction::NewFileCancel));
+                    }
+                }
+            }
+            return Ok(Some(AppAction::Continue));
+        }
         // Editor "Save changes?" dialog: handle clicks on option rows (1=Save, 2=Discard, 3=Cancel).
         if app.editor_confirm_pending {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
@@ -850,6 +923,8 @@ impl EventHandler {
             && app.operation_confirm_pending.is_none()
             && app.mkdir_dialog.is_none()
             && app.archive_dialog.is_none()
+            && app.new_file_dialog.is_none()
+            && app.new_file_error.is_none()
             && app.rename_attr_dialog.is_none()
             && app.size_info_dialog.is_none()
             && app.settings_dialog.is_none()

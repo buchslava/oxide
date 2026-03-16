@@ -73,6 +73,38 @@ fn get_lang_from_path(path: &str) -> &'static str {
     }
 }
 
+/// Paste the given text as-is at the editor cursor (same as Ctrl+V). Replaces selection if any.
+/// Returns Some(Continue) when the editor is open and paste was applied (or text was empty); None when not in editor.
+pub fn paste_text_as_is(app: &mut AppState, text: &str) -> Option<AppAction> {
+    let ed = app.editor_screen.as_mut()?;
+    if text.is_empty() {
+        return Some(AppAction::Continue);
+    }
+    let mut cursor = ed.editor.get_cursor();
+    let mut selection = ed.editor.get_selection();
+    let code = ed.editor.code_mut();
+    code.tx();
+    code.set_state_before(cursor, selection);
+    if let Some(sel) = &selection {
+        if !sel.is_empty() {
+            let (start, end) = sel.sorted();
+            code.remove(start, end);
+            cursor = start;
+            selection = None;
+        }
+    }
+    code.insert(cursor, &text);
+    cursor += text.chars().count();
+    code.set_state_after(cursor, selection);
+    code.commit();
+    ed.editor.set_cursor(cursor);
+    ed.editor.set_selection(selection);
+    ed.editor.reset_highlight_cache();
+    ed.selection_extend_mode = false;
+    ed.editor.focus(&ed.area);
+    Some(AppAction::Continue)
+}
+
 /// Open the currently selected file in the embedded editor. Returns true if opened.
 /// Supports both filesystem and files inside ZIP archives.
 pub fn open_editor(app: &mut AppState) -> bool {
@@ -179,6 +211,13 @@ fn find_next(ed: &mut EditorScreenState, query: &str) {
 pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction> {
     let ed = app.editor_screen.as_mut()?;
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    #[cfg(target_os = "macos")]
+    let cmd_like = key.modifiers.contains(KeyModifiers::SUPER) || key.modifiers.contains(KeyModifiers::META);
+    #[cfg(not(target_os = "macos"))]
+    let cmd_like = false;
+    // On macOS, Cmd+V/Cmd+C are the standard shortcuts; also accept Ctrl+V/Ctrl+C. Use same code path for both.
+    let paste_mod = ctrl || cmd_like;
+    let copy_mod = ctrl || cmd_like;
 
     // When search bar is open, handle search-specific keys first
     if let Some(ref mut query) = ed.search_query {
@@ -270,16 +309,41 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
         }
         return Some(AppAction::Continue);
     }
-    // Ctrl+C: copy to clipboard, then clear selection
-    if key.code == KeyCode::Char('c') && ctrl {
-        let _ = ed.editor.input(key, &ed.area);
+    // Ctrl+C / Cmd+C (macOS): copy to clipboard, then clear selection
+    if key.code == KeyCode::Char('c') && copy_mod {
+        if let Some(text) = ed.editor.get_selection_text() {
+            let _ = ed.editor.set_clipboard(&text);
+        }
         ed.editor.clear_selection();
         return Some(AppAction::Continue);
     }
-    // Ctrl+V: paste, then turn off selection-extend mode
-    if key.code == KeyCode::Char('v') && ctrl {
-        let _ = ed.editor.input(key, &ed.area);
+    // Ctrl+V / Cmd+V (macOS): always use paste-as-is (same logic as Event::Paste; never use crate's smart_paste).
+    if key.code == KeyCode::Char('v') && paste_mod {
+        let text = ed.editor.get_clipboard().unwrap_or_default();
+        if !text.is_empty() {
+            let mut cursor = ed.editor.get_cursor();
+            let mut selection = ed.editor.get_selection();
+            let code = ed.editor.code_mut();
+            code.tx();
+            code.set_state_before(cursor, selection);
+            if let Some(sel) = &selection {
+                if !sel.is_empty() {
+                    let (start, end) = sel.sorted();
+                    code.remove(start, end);
+                    cursor = start;
+                    selection = None;
+                }
+            }
+            code.insert(cursor, &text);
+            cursor += text.chars().count();
+            code.set_state_after(cursor, selection);
+            code.commit();
+            ed.editor.set_cursor(cursor);
+            ed.editor.set_selection(selection);
+            ed.editor.reset_highlight_cache();
+        }
         ed.selection_extend_mode = false;
+        ed.editor.focus(&ed.area);
         return Some(AppAction::Continue);
     }
 

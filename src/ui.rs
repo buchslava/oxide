@@ -6,12 +6,14 @@ use ratatui::{
     Frame,
 };
 use crate::app_state::{AppState, Focus, Operation};
+use crate::dialog_layout::{self, DEFAULT_PAD_H};
 use crate::editor;
 use crate::file_ops::FileInfo;
 use crate::panel_backend;
 use crate::viewer;
 use crate::panel::{Panel, PanelOperations, ViewMode};
 use crate::styles;
+use crate::styles::{DIALOG_ACCENT, DIALOG_BG, DIALOG_FOCUS};
 
 /// Dark background for main content area (panels, command line). Ensures consistent look across terminals.
 const MAIN_DARK_BG: Color = Color::Rgb(30, 30, 35);
@@ -174,6 +176,12 @@ impl Renderer {
         if app.archive_dialog.is_some() {
             crate::archive_dialog::draw(f, app);
         }
+        if app.new_file_dialog.is_some() {
+            crate::new_file_dialog::draw(f, app);
+        }
+        if app.new_file_error.is_some() {
+            Self::draw_new_file_error_dialog(f, app);
+        }
         if app.rename_attr_dialog.is_some() {
             crate::rename_attr::draw(f, app);
         }
@@ -207,29 +215,16 @@ impl Renderer {
         };
         let show_paths = matches!(op, Operation::Copy | Operation::Move);
         let area = f.area();
-        let max_w = 60u16;
-        let w = max_w.min(area.width.saturating_sub(4));
         let h = if show_paths { 11 } else { 8 };
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
-        let menu_bg = Color::Rgb(60, 60, 60);
-        let fill_style = Style::default().bg(menu_bg).fg(Color::White);
-        let orange = Color::Rgb(255, 180, 80);
+        let rect = dialog_layout::centered_dialog_rect(area, 60, h);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
+        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
         f.render_widget(Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .style(fill_style.fg(Color::Cyan));
+            .style(fill_style.fg(DIALOG_FOCUS));
         f.render_widget(block, rect);
-        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-        const PAD_H: u16 = 2;
-        let content = Rect {
-            x: inner.x + PAD_H,
-            y: inner.y,
-            width: inner.width.saturating_sub(PAD_H * 2),
-            height: inner.height,
-        };
         let max_msg_w = content.width as usize;
         let mut row = content.y;
         if show_paths {
@@ -258,47 +253,34 @@ impl Renderer {
             width: content.width,
             height: 1,
         });
-        // Buttons row: Yes and No only, Y and N in orange. Tab switches focus. Horizontal padding.
+        // Buttons row: Yes and No only, Y and N in orange. Tab switches focus.
         const YES_W: u16 = 10;
         const NO_W: u16 = 10;
         let btn_y = content.y + content.height.saturating_sub(2);
-        let btn_gap = 4u16;
-        let total_btns = YES_W + NO_W + btn_gap;
-        let btn_start_x = content.x + content.width.saturating_sub(total_btns) / 2;
-        let yes_rect = Rect {
-            x: btn_start_x,
-            y: btn_y,
-            width: YES_W,
-            height: 1,
-        };
-        let no_rect = Rect {
-            x: btn_start_x + YES_W + btn_gap,
-            y: btn_y,
-            width: NO_W,
-            height: 1,
-        };
+        let (yes_rect, no_rect) =
+            dialog_layout::two_button_rects(content, btn_y, YES_W, NO_W, 4);
         let focus_yes = app.operation_confirm_focus_yes;
         let yes_btn = Line::from(vec![
             Span::raw("  "),
-            Span::styled("Y", orange),
+            Span::styled("Y", DIALOG_ACCENT),
             Span::raw("es"),
             Span::raw("  "),
         ]);
         let no_btn = Line::from(vec![
             Span::raw("  "),
-            Span::styled("N", orange),
+            Span::styled("N", DIALOG_ACCENT),
             Span::raw("o"),
             Span::raw("  "),
         ]);
         let yes_style = if focus_yes {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
+            Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
         } else {
             fill_style
         };
         let no_style = if focus_yes {
             fill_style
         } else {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
+            Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
         };
         f.render_widget(Paragraph::new(yes_btn).style(yes_style), yes_rect);
         f.render_widget(Paragraph::new(no_btn).style(no_style), no_rect);
@@ -307,28 +289,17 @@ impl Renderer {
     /// Return (dialog_rect, yes_button_rect, no_button_rect) for operation confirm hit-testing.
     /// show_paths: true for Copy/Move (taller dialog).
     pub fn operation_confirm_button_rects(area: Rect, show_paths: bool) -> Option<(Rect, Rect, Rect)> {
-        let max_w = 60u16;
-        let w = max_w.min(area.width.saturating_sub(4));
         let h = if show_paths { 11 } else { 8 };
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
-        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-        const PAD_H: u16 = 2;
-        let content = Rect {
-            x: inner.x + PAD_H,
-            y: inner.y,
-            width: inner.width.saturating_sub(PAD_H * 2),
-            height: inner.height,
-        };
+        let rect = dialog_layout::centered_dialog_rect(area, 60, h);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
         let btn_y = content.y + content.height.saturating_sub(2);
-        // Mouse-friendly: split bottom row 50/50 — left half = Yes, right half = No
+        // Mouse-friendly: 50/50 split, height 2
         let btn_half_w = content.width / 2;
         let yes_rect = Rect {
             x: content.x,
             y: btn_y,
             width: btn_half_w,
-            height: 2, // extend down for easier clicking
+            height: 2,
         };
         let no_rect = Rect {
             x: content.x + btn_half_w,
@@ -341,54 +312,55 @@ impl Renderer {
 
     /// Return (rect, content) for overwrite dialog hit-testing. Option rows at content.y+2..content.y+7.
     pub fn overwrite_dialog_layout(area: Rect) -> (Rect, Rect) {
-        let max_w = 54u16;
-        let w = max_w.min(area.width.saturating_sub(4));
-        let h = 12u16;
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
-        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-        const PAD_H: u16 = 2;
-        let content = Rect {
-            x: inner.x + PAD_H,
-            y: inner.y,
-            width: inner.width.saturating_sub(PAD_H * 2),
-            height: inner.height,
-        };
+        let rect = dialog_layout::centered_dialog_rect(area, 54, 12);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
         (rect, content)
     }
 
     /// Return (rect, content) for error dialog hit-testing. Option rows at content.y+2..content.y+5.
     pub fn error_dialog_layout(area: Rect) -> (Rect, Rect) {
-        let max_w = 52u16;
-        let w = max_w.min(area.width.saturating_sub(4));
-        let h = 10u16;
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
-        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-        const PAD_H: u16 = 2;
-        let content = Rect {
-            x: inner.x + PAD_H,
-            y: inner.y,
-            width: inner.width.saturating_sub(PAD_H * 2),
-            height: inner.height,
-        };
+        let rect = dialog_layout::centered_dialog_rect(area, 52, 10);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
         (rect, content)
+    }
+
+    /// Draw a list of numbered options (e.g. "1. Skip", "2. Cancel"). Option rows start at content.y + start_row.
+    fn draw_numbered_options(
+        f: &mut Frame,
+        content: Rect,
+        options: &[(u8, &str)],
+        focus_index: usize,
+        fill_style: Style,
+        start_row: u16,
+    ) {
+        let focus = focus_index.min(options.len().saturating_sub(1));
+        for (i, (num, label)) in options.iter().enumerate() {
+            let num_s = num.to_string();
+            let line = Line::from(vec![
+                Span::styled(num_s.as_str(), DIALOG_ACCENT),
+                Span::raw(format!(". {}", label)),
+            ]);
+            let opt_rect = Rect {
+                x: content.x,
+                y: content.y + start_row + i as u16,
+                width: content.width,
+                height: 1,
+            };
+            let style = if i == focus {
+                Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+            } else {
+                fill_style
+            };
+            f.render_widget(Paragraph::new(line).style(style), opt_rect);
+        }
     }
 
     /// Copy/move error dialog: grey style like confirm, keys 1–3, Tab/Enter. Keys differ from Yes/No.
     fn draw_copy_error_dialog(f: &mut Frame, app: &AppState, err: &crate::app_state::CopyErrorState) {
         let area = f.area();
-        let max_w = 52u16;
-        let w = max_w.min(area.width.saturating_sub(4));
-        let h = 10u16;
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
-        let menu_bg = Color::Rgb(60, 60, 60);
-        let fill_style = Style::default().bg(menu_bg).fg(Color::White);
-        let orange = Color::Rgb(255, 180, 80);
+        let rect = dialog_layout::centered_dialog_rect(area, 52, 10);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
+        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
         f.render_widget(Clear, rect);
         let title = match err.operation {
             Operation::Copy => " Copy error ",
@@ -398,95 +370,107 @@ impl Renderer {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .style(fill_style.fg(Color::Cyan));
+            .style(fill_style.fg(DIALOG_FOCUS));
         f.render_widget(block, rect);
-        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-        const PAD_H: u16 = 2;
-        let content = Rect {
-            x: inner.x + PAD_H,
-            y: inner.y,
-            width: inner.width.saturating_sub(PAD_H * 2),
-            height: inner.height,
-        };
         let max_msg_w = content.width as usize;
         let msg_display = truncate_str_ellipsis(&err.message, max_msg_w);
-        let msg_para = Paragraph::new(msg_display.as_str())
-            .style(fill_style)
-            .alignment(Alignment::Center);
-        f.render_widget(msg_para, Rect {
-            x: content.x,
-            y: content.y,
-            width: content.width,
-            height: 1,
-        });
+        f.render_widget(
+            Paragraph::new(msg_display.as_str())
+                .style(fill_style)
+                .alignment(Alignment::Center),
+            Rect {
+                x: content.x,
+                y: content.y,
+                width: content.width,
+                height: 1,
+            },
+        );
         let opts: [(u8, &str); 3] = [
             (1, "Skip this file"),
             (2, "Cancel the whole operation"),
             (3, "Ignore all and continue"),
         ];
-        let focus = app.copy_error_focus.min(2);
-        for (i, (num, label)) in opts.iter().enumerate() {
-            let num_s = num.to_string();
-            let line = Line::from(vec![
-                Span::styled(num_s.as_str(), orange),
-                Span::raw(format!(". {}", label)),
-            ]);
-            let opt_rect = Rect {
+        Self::draw_numbered_options(
+            f,
+            content,
+            &opts,
+            app.copy_error_focus.min(2),
+            fill_style,
+            2,
+        );
+    }
+
+    /// New file error dialog (e.g. file already exists): grey style, message and 1. OK. Enter/Esc or click OK closes.
+    fn draw_new_file_error_dialog(f: &mut Frame, app: &AppState) {
+        let area = f.area();
+        let rect = dialog_layout::centered_dialog_rect(area, 52, 8);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
+        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
+        f.render_widget(Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Error ")
+            .style(fill_style.fg(DIALOG_FOCUS));
+        f.render_widget(block, rect);
+        let msg = app.new_file_error.as_deref().unwrap_or("");
+        let msg_display = truncate_str_ellipsis(msg, content.width as usize);
+        f.render_widget(
+            Paragraph::new(msg_display).style(fill_style).alignment(Alignment::Center),
+            Rect {
                 x: content.x,
-                y: content.y + 2 + i as u16,
+                y: content.y,
                 width: content.width,
                 height: 1,
-            };
-            let style = if i == focus {
-                Style::default().bg(Color::Cyan).fg(Color::Black)
-            } else {
-                fill_style
-            };
-            f.render_widget(Paragraph::new(line).style(style), opt_rect);
-        }
+            },
+        );
+        let ok_opts: [(u8, &str); 1] = [(1, "OK")];
+        Self::draw_numbered_options(f, content, &ok_opts, 0, fill_style, 4);
+    }
+
+    /// Return OK button rect for new file error dialog hit-testing (row at content.y + 4).
+    pub fn new_file_error_ok_rect(area: Rect) -> Option<Rect> {
+        let rect = dialog_layout::centered_dialog_rect(area, 52, 8);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
+        const OK_W: u16 = 6;
+        let ok_x = content.x + content.width.saturating_sub(OK_W) / 2;
+        let ok_y = content.y + 4;
+        Some(Rect {
+            x: ok_x,
+            y: ok_y,
+            width: OK_W,
+            height: 1,
+        })
     }
 
     /// File exists overwrite dialog: grey style like confirm, keys 1–5, Tab/Enter. Keys differ from Yes/No.
     fn draw_copy_overwrite_dialog(f: &mut Frame, app: &AppState, filename: &str) {
         let area = f.area();
-        let max_w = 54u16;
-        let w = max_w.min(area.width.saturating_sub(4));
-        let h = 12u16;
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
-        let menu_bg = Color::Rgb(60, 60, 60);
-        let fill_style = Style::default().bg(menu_bg).fg(Color::White);
-        let orange = Color::Rgb(255, 180, 80);
+        let rect = dialog_layout::centered_dialog_rect(area, 54, 12);
+        let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
+        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
         f.render_widget(Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" File exists ")
-            .style(fill_style.fg(Color::Cyan));
+            .style(fill_style.fg(DIALOG_FOCUS));
         f.render_widget(block, rect);
-        let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-        const PAD_H: u16 = 2;
-        let content = Rect {
-            x: inner.x + PAD_H,
-            y: inner.y,
-            width: inner.width.saturating_sub(PAD_H * 2),
-            height: inner.height,
-        };
         let max_name_w = (content.width as usize).saturating_sub(2);
         let name_only = std::path::Path::new(filename)
             .file_name()
             .and_then(|p| p.to_str())
             .unwrap_or(filename);
         let name_display = truncate_str_ellipsis(name_only, max_name_w);
-        let msg_para = Paragraph::new(name_display.as_str())
-            .style(fill_style)
-            .alignment(Alignment::Center);
-        f.render_widget(msg_para, Rect {
-            x: content.x,
-            y: content.y,
-            width: content.width,
-            height: 1,
-        });
+        f.render_widget(
+            Paragraph::new(name_display.as_str())
+                .style(fill_style)
+                .alignment(Alignment::Center),
+            Rect {
+                x: content.x,
+                y: content.y,
+                width: content.width,
+                height: 1,
+            },
+        );
         let opts: [(u8, &str); 5] = [
             (1, "Rewrite this file"),
             (2, "Rewrite all files"),
@@ -494,26 +478,7 @@ impl Renderer {
             (4, "Skip all existing files"),
             (5, "Cancel the whole operation"),
         ];
-        let focus = app.copy_overwrite_focus.min(4);
-        for (i, (num, label)) in opts.iter().enumerate() {
-            let num_s = num.to_string();
-            let line = Line::from(vec![
-                Span::styled(num_s.as_str(), orange),
-                Span::raw(format!(". {}", label)),
-            ]);
-            let opt_rect = Rect {
-                x: content.x,
-                y: content.y + 2 + i as u16,
-                width: content.width,
-                height: 1,
-            };
-            let style = if i == focus {
-                Style::default().bg(Color::Cyan).fg(Color::Black)
-            } else {
-                fill_style
-            };
-            f.render_widget(Paragraph::new(line).style(style), opt_rect);
-        }
+        Self::draw_numbered_options(f, content, &opts, app.copy_overwrite_focus.min(4), fill_style, 2);
     }
 
     /// MC-style copy progress overlay: navy blue background, wider, centered content, small margins. ESC: Cancel.

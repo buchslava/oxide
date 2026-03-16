@@ -57,6 +57,7 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(vec![Span::raw("    "), Span::styled("Ctrl+O", key), Span::raw("  Shell   "), Span::styled("Ctrl+H", key), Span::raw("  Toggle hidden   "), Span::styled("Ctrl+G", key), Span::raw("  Size of selection")]),
         Line::from(vec![Span::raw("    "), Span::styled("Ctrl+R", key), Span::raw("  Refresh   "), Span::styled("Ctrl+T", key), Span::raw("  One/two columns   "), Span::styled("Ctrl+Q/W", key), Span::raw("  Panel settings")]),
         Line::from(vec![Span::raw("    "), Span::styled("Ctrl+F", key), Span::raw("  Find file   "), Span::styled("Ctrl+A", key), Span::raw("  Archive (zip) selected")]),
+        Line::from(vec![Span::raw("    "), Span::styled("Ctrl+N", key), Span::raw("  New file (in current dir or archive)")]),
         Line::from(""),
         Line::from(vec![Span::styled("  Find file", heading), Span::raw(" (Ctrl+F)")]),
         Line::from(""),

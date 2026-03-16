@@ -1,6 +1,19 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+// --- Dialog styling (single source of truth for modal dialogs) ---
+
+/// Background for dialog panels (grey).
+pub const DIALOG_BG: Color = Color::Rgb(60, 60, 60);
+/// Background for focused text input inside a dialog.
+pub const DIALOG_INPUT_BG_FOCUSED: Color = Color::Rgb(28, 34, 46);
+/// Background for unfocused text input inside a dialog.
+pub const DIALOG_INPUT_BG_UNFOCUSED: Color = Color::Rgb(38, 44, 56);
+/// Accent for option numbers (e.g. "1. Skip") and highlighted keys (Y/N).
+pub const DIALOG_ACCENT: Color = Color::Rgb(255, 180, 80);
+/// Focus highlight (selected button or option row).
+pub const DIALOG_FOCUS: Color = Color::Cyan;
+
 /// Mark prefix shown for files marked for group operations (F12).
 fn mark_prefix_span() -> Span<'static> {
     Span::styled("> ", Style::default().fg(Color::Yellow))

@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use crossterm::{
-    event::EnableMouseCapture,
+    event::{EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
 mod app_state;
 mod archive_dialog;
+mod dialog_layout;
 mod copy_ops;
 mod copy_state;
 mod util;
@@ -19,7 +20,9 @@ mod file_ops;
 mod find_dialog;
 mod location;
 mod mkdir_dialog;
+mod new_file_dialog;
 mod panel;
+mod text_input;
 mod panel_backend;
 mod help_dialog;
 mod panel_overlay;
@@ -128,7 +131,7 @@ fn start_copy_operation(app: &mut AppState, operation: Operation, params: app_st
         operation,
         current_path: initial_path,
         target_path,
-        current: 0,
+        current: 1,
         total,
     });
     app.copy_overwrite_dialog = None;
@@ -433,7 +436,7 @@ fn run_copy_step(app: &mut AppState) {
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -456,7 +459,7 @@ fn main() -> Result<(), io::Error> {
     // Process any events from EnterAlternateScreen (never discard keys).
     if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
         disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture, DisableBracketedPaste)?;
         terminal.show_cursor()?;
         return Ok(());
     }
@@ -465,7 +468,7 @@ fn main() -> Result<(), io::Error> {
     std::thread::sleep(std::time::Duration::from_millis(50));
     if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
         disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture, DisableBracketedPaste)?;
         terminal.show_cursor()?;
         return Ok(());
     }
@@ -486,14 +489,16 @@ fn main() -> Result<(), io::Error> {
         });
         let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
         let archive_input_focused = app.archive_dialog.as_ref().map_or(false, |d| d.focus == 0);
+        let new_file_input_focused = app.new_file_dialog.as_ref().map_or(false, |d| d.focus == 0);
         let rename_name_focused = matches!(
             app.rename_attr_dialog.as_ref(),
             Some(RenameAttrDialogState::Single { focus: RenameAttrField::Name, .. })
         );
-        let input_cursor_blink = find_input_focused || mkdir_input_focused || archive_input_focused || rename_name_focused;
+        let input_cursor_blink = find_input_focused || mkdir_input_focused || archive_input_focused || new_file_input_focused || rename_name_focused;
         let show_cursor = app.editor_screen.is_some()
             || mkdir_input_focused
             || archive_input_focused
+            || new_file_input_focused
             || rename_name_focused
             || (app.focus == Focus::CommandLine)
             || find_input_focused;
@@ -501,7 +506,7 @@ fn main() -> Result<(), io::Error> {
             && app.editor_screen.is_none()
             && app.mkdir_dialog.is_none()
             && app.archive_dialog.is_none()
-            && app.rename_attr_dialog.is_none();
+            && app.new_file_dialog.is_none();
 
         if command_line_cursor_active || input_cursor_blink {
             if cmd_cursor_blink_last_toggle.elapsed() >= std::time::Duration::from_millis(500) {
@@ -861,6 +866,16 @@ fn main() -> Result<(), io::Error> {
                 }
             }
             AppAction::ArchiveCancel => archive_dialog::cancel(&mut app),
+            AppAction::OpenNewFileDialog => new_file_dialog::open(&mut app),
+            AppAction::NewFileConfirm => {
+                if let Some(name) = new_file_dialog::confirm(&mut app) {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        new_file_dialog::create_and_refresh(&mut app, name);
+                    }
+                }
+            }
+            AppAction::NewFileCancel => new_file_dialog::cancel(&mut app),
             AppAction::OpenRenameAttrDialog => rename_attr::open(&mut app),
             AppAction::OpenSizeInfoDialog => size_info_dialog::open(&mut app),
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
@@ -1153,7 +1168,8 @@ fn main() -> Result<(), io::Error> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture
+        crossterm::event::DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 

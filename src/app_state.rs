@@ -67,6 +67,10 @@ pub struct AppState {
     pub mkdir_dialog: Option<MkdirDialogState>,
     /// When Some, Ctrl+A "Archive" dialog is open (text field for archive file name).
     pub archive_dialog: Option<ArchiveDialogState>,
+    /// When Some, Ctrl+N "New file" dialog is open (text field for new file name).
+    pub new_file_dialog: Option<NewFileDialogState>,
+    /// When Some, show error message after new file dialog (e.g. file already exists).
+    pub new_file_error: Option<String>,
     /// When Some, archiving is in progress; show progress overlay (like copy progress).
     pub archive_progress: Option<ArchiveProgress>,
     /// Receiver for background archive thread; polled in main loop.
@@ -113,6 +117,7 @@ pub use crate::size_info_dialog::{SizeInfoDialogState, SizeInfoProgress};
 // Re-exports so AppState and other modules can use these types without circular deps.
 pub use crate::archive_dialog::ArchiveDialogState;
 pub use crate::editor::EditorScreenState;
+pub use crate::new_file_dialog::NewFileDialogState;
 pub use crate::find_dialog::{FindDialogPhase, FindDialogState, FindMessage};
 pub use crate::mkdir_dialog::MkdirDialogState;
 pub use crate::rename_attr::{RenameAttrDialogState, RenameAttrField};
@@ -156,6 +161,8 @@ impl AppState {
             viewer_screen: None,
             mkdir_dialog: None,
             archive_dialog: None,
+            new_file_dialog: None,
+            new_file_error: None,
             archive_progress: None,
             archive_pending_rx: None,
             archive_cancel: None,
