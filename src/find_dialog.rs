@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -106,8 +107,12 @@ pub fn open(app: &mut AppState) {
 }
 
 /// Close the Find file dialog and return focus to panel.
+/// If a search was in progress, signals it to stop so the background thread exits.
 pub fn close(app: &mut AppState) {
     use crate::app_state::Focus;
+    if let Some(c) = app.find_search_cancel.take() {
+        c.store(true, Ordering::Relaxed);
+    }
     app.find_dialog = None;
     app.find_search_rx = None;
     app.focus = Focus::Panel;
@@ -205,6 +210,7 @@ pub fn glob_match(pattern: &str, name: &str, case_sensitive: bool) -> bool {
 /// Run find in a background thread; send matches and Done on tx.
 /// Uses walkdir for robust traversal (handles special dir names like "!!!").
 /// Takes Arc<str> so the caller can Arc::clone (cheap) instead of cloning the string.
+/// If cancel.load(Ordering::Relaxed) becomes true, stops and sends Done.
 fn run_search(
     start_dir: Arc<str>,
     file_pattern: Arc<str>,
@@ -213,6 +219,7 @@ fn run_search(
     file_case_sens: bool,
     content_case_sens: bool,
     skip_hidden: bool,
+    cancel: Arc<AtomicBool>,
     tx: mpsc::Sender<FindMessage>,
 ) {
     thread::spawn(move || {
@@ -242,6 +249,9 @@ fn run_search(
             .filter_map(|e| e.ok());
 
         for entry in walker {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
             let path = entry.path().to_path_buf();
             if let Some(parent) = path.parent() {
                 if current_dir_sent.as_ref().map(PathBuf::as_path) != Some(parent) {
@@ -267,6 +277,9 @@ fn run_search(
                 };
                 let reader = BufReader::new(file);
                 for (line_no, line) in reader.lines().enumerate() {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
                     if let Ok(ref ln) = line {
                         let hay = if content_case_sens {
                             ln.clone()
@@ -314,6 +327,9 @@ pub fn start_search(app: &mut AppState) {
     let content_case_sens = d.content_case_sens;
     let skip_hidden = d.skip_hidden;
 
+    let cancel = Arc::new(AtomicBool::new(false));
+    app.find_search_cancel = Some(Arc::clone(&cancel));
+
     let (tx, rx) = mpsc::channel();
     run_search(
         start_dir,
@@ -323,6 +339,7 @@ pub fn start_search(app: &mut AppState) {
         file_case_sens,
         content_case_sens,
         skip_hidden,
+        cancel,
         tx,
     );
     app.find_search_rx = Some(rx);
@@ -367,6 +384,7 @@ pub fn poll_search(app: &mut AppState) {
                     }
                 }
                 app.find_search_rx = None;
+                app.find_search_cancel = None;
                 return;
             }
         }

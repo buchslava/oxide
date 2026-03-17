@@ -101,6 +101,8 @@ pub struct AppState {
     pub size_info_pending_rx: Option<mpsc::Receiver<SizeInfoProgress>>,
     /// Receiver for find file search thread; polled when find_dialog is open.
     pub find_search_rx: Option<mpsc::Receiver<FindMessage>>,
+    /// When Some, the find search thread should stop; set on Esc/close during search.
+    pub find_search_cancel: Option<Arc<AtomicBool>>,
     /// Last left-click (instant, panel_index, file_index) for double-click detection.
     pub last_mouse_click: Option<(std::time::Instant, usize, usize)>,
     /// Last mouse (column, row) from any mouse event (scroll, move, click).
@@ -178,6 +180,7 @@ impl AppState {
             right_panel_rect: None,
             size_info_pending_rx: None,
             find_search_rx: None,
+            find_search_cancel: None,
             last_mouse_click: None,
             last_mouse_position: None,
             show_hidden_files: true,
