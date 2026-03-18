@@ -112,6 +112,8 @@ pub enum AppAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingChange {
     AutosaveToggle,
+    /// Sync active panel to shell's cwd when returning from Ctrl+O (F9 Settings → General).
+    SyncPanelToShellCwdToggle,
     LeftViewCycle,
     LeftShowHiddenToggle,
     LeftSortCycle,

@@ -15,6 +15,9 @@ pub struct PersistedSettings {
     /// When true, save left/right panel current dirs on navigation (and on exit); restore on start.
     #[serde(default)]
     pub autosave: bool,
+    /// When true (default), after returning from shell (Ctrl+O) sync active panel to shell's cwd. When false, use old flow (panel stays as before).
+    #[serde(default = "default_true")]
+    pub sync_panel_to_shell_cwd: bool,
     /// Saved current directory for left panel. None or invalid => use home on start.
     #[serde(default)]
     pub left_cwd: Option<String>,
@@ -62,6 +65,7 @@ impl Default for PersistedSettings {
     fn default() -> Self {
         Self {
             autosave: false,
+            sync_panel_to_shell_cwd: true,
             left_cwd: None,
             right_cwd: None,
             left_view: "two".to_string(),

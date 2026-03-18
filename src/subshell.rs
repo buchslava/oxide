@@ -5,6 +5,7 @@
 //! stays on so we can detect Ctrl+O; the subshell runs in a PTY with its own termios.
 
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -485,33 +486,126 @@ impl Subshell {
         format!("'{}'", path.replace('\'', "'\"'\"'"))
     }
 
+    /// Current working directory of the subshell process (after user may have run `cd`).
+    /// Used when returning from relay to sync the active panel to the shell's cwd.
+    /// Linux: readlink /proc/pid/cwd. macOS: libproc proc_pidinfo (PROC_PIDVNODEPATHINFO). Other Unix: None.
+    pub fn get_cwd(&self) -> Option<PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            let path = format!("/proc/{}/cwd", self.child_pid);
+            std::fs::read_link(&path).ok()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            get_cwd_macos(self.child_pid as u32)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = self;
+            None
+        }
+    }
+
     /// Change shell cwd to match the active panel then relay until Ctrl+O (for Suspend so ls matches panel).
-    /// Sends `cd 'cwd'` then flushes the shell output (echoed cd + prompt) to stdout and relays without
-    /// forcing an extra newline/prompt, so the user sees a single clean command line.
+    /// Only sends `cd 'cwd'` when the shell is not already in that directory, to avoid redundant commands in history.
     pub fn run_cd_then_relay(&self, cwd: &str, prepared: Option<PreparedRelay>) -> io::Result<()> {
-        let cd_escaped = Self::shell_escape_path(cwd);
-        let mut buf = Vec::with_capacity(8 + cd_escaped.len() + 2);
-        buf.extend_from_slice(b"cd ");
-        buf.extend_from_slice(cd_escaped.as_bytes());
-        buf.push(b'\n');
-        Self::write_all_fd(self.master_fd, &buf)?;
-        let _ = Self::drain_pty_output(self.master_fd);
+        let panel_canonical = Path::new(cwd).canonicalize().ok();
+        let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
+        let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
+            (Some(a), Some(b)) => a != b,
+            _ => true, // if we can't resolve either, send cd to be safe
+        };
+        if need_cd {
+            let cd_escaped = Self::shell_escape_path(cwd);
+            let mut buf = Vec::with_capacity(8 + cd_escaped.len() + 2);
+            buf.extend_from_slice(b"cd ");
+            buf.extend_from_slice(cd_escaped.as_bytes());
+            buf.push(b'\n');
+            Self::write_all_fd(self.master_fd, &buf)?;
+            let _ = Self::drain_pty_output(self.master_fd);
+        }
         self.run_relay_until_ctrl_o(false, prepared)
     }
 
     /// Run a command in the subshell then relay until Ctrl+O (MC: invoke_subshell with command).
-    /// If `prepared` is Some, caller already set relay raw and wrote reset to stdout (single-writer flow).
+    /// Only sends `cd 'cwd'` when the shell is not already in that directory.
     pub fn run_command_then_relay(&self, cwd: &str, cmd: &str, prepared: Option<PreparedRelay>) -> io::Result<()> {
-        let cd_escaped = Self::shell_escape_path(cwd);
-        let mut buf = Vec::with_capacity(8 + cd_escaped.len() + cmd.len() + 2);
-        buf.extend_from_slice(b"cd ");
-        buf.extend_from_slice(cd_escaped.as_bytes());
-        buf.push(b'\n');
+        let panel_canonical = Path::new(cwd).canonicalize().ok();
+        let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
+        let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
+            (Some(a), Some(b)) => a != b,
+            _ => true,
+        };
+        let mut buf = Vec::new();
+        if need_cd {
+            let cd_escaped = Self::shell_escape_path(cwd);
+            buf.extend_from_slice(b"cd ");
+            buf.extend_from_slice(cd_escaped.as_bytes());
+            buf.push(b'\n');
+        }
         buf.extend_from_slice(cmd.as_bytes());
         buf.push(b'\n');
         Self::write_all_fd(self.master_fd, &buf)?;
         self.run_relay_until_ctrl_o(false, prepared)
     }
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "proc", kind = "dylib")]
+extern "C" {
+    fn proc_pidinfo(
+        pid: libc::c_int,
+        flavor: libc::c_int,
+        arg: u64,
+        buffer: *mut libc::c_void,
+        buffersize: libc::c_int,
+    ) -> libc::c_int;
+}
+
+#[cfg(target_os = "macos")]
+fn get_cwd_macos(pid: u32) -> Option<PathBuf> {
+    const PROC_PIDVNODEPATHINFO: libc::c_int = 9;
+    let mut buf = [0u8; 4096];
+    let n = unsafe {
+        proc_pidinfo(
+            pid as libc::c_int,
+            PROC_PIDVNODEPATHINFO,
+            0,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            buf.len() as libc::c_int,
+        )
+    };
+    if n <= 0 {
+        return None;
+    }
+    // proc_vnodepathinfo contains pvi_rdir (root) and pvi_cdir (cwd). Layout varies by OS version.
+    // Scan the buffer for null-terminated absolute paths; prefer the longest that exists and is a directory (cwd).
+    let mut best: Option<PathBuf> = None;
+    let mut i = 0;
+    let len = n as usize;
+    while i < len {
+        if buf[i] != b'/' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < len && buf[i] != 0 {
+            i += 1;
+        }
+        if i > start {
+            if let Ok(s) = std::str::from_utf8(&buf[start..i]) {
+                let s = s.trim();
+                if !s.is_empty() {
+                    let p = PathBuf::from(s);
+                    if p.is_dir() && best.as_ref().map_or(true, |b| p.as_os_str().len() > b.as_os_str().len()) {
+                        best = Some(p);
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    best
 }
 
 /// Kill the entire subshell session so no process (e.g. nohup) outlives the app.

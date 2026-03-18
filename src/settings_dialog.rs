@@ -99,8 +99,9 @@ pub fn handle_key(
         KeyCode::Tab => {
             if state.focus_left {
                 state.focus_left = false;
+            } else if state.selected_section == 0 {
+                state.content_focus = (state.content_focus + 1) % 2;
             } else if state.selected_section == 1 || state.selected_section == 2 {
-                // Cycle between widgets: View (0), Sort (1), Folders first (2), Show hidden (3)
                 state.content_focus = (state.content_focus + 1) % 4;
             }
             return Some(AppAction::Continue);
@@ -120,6 +121,9 @@ pub fn handle_key(
             }
             // Right column: Up = previous item or move focus up
             match state.selected_section {
+                0 => {
+                    state.content_focus = (state.content_focus + 1) % 2;
+                }
                 1 => {
                     if state.content_focus == 1 {
                         return Some(AppAction::SettingChange(SettingChange::LeftSortCyclePrev));
@@ -152,6 +156,9 @@ pub fn handle_key(
             }
             // Right column: Down = next item or move focus down
             match state.selected_section {
+                0 => {
+                    state.content_focus = (state.content_focus + 1) % 2;
+                }
                 1 => {
                     if state.content_focus == 0 {
                         if p.left_view.as_str() == "two" {
@@ -190,7 +197,10 @@ pub fn handle_key(
                 return Some(AppAction::Continue);
             }
             let action = match state.selected_section {
-                0 => Some(AppAction::SettingChange(SettingChange::AutosaveToggle)),
+                0 => match state.content_focus {
+                    0 => Some(AppAction::SettingChange(SettingChange::AutosaveToggle)),
+                    _ => Some(AppAction::SettingChange(SettingChange::SyncPanelToShellCwdToggle)),
+                },
                 1 => match state.content_focus {
                     0 => Some(AppAction::SettingChange(SettingChange::LeftViewCycle)),
                     1 => Some(AppAction::SettingChange(SettingChange::LeftSortCycle)),
@@ -307,13 +317,24 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let right_sort_index = SORT_MODES.iter().position(|s| *s == p.right_sort.as_str()).unwrap_or(0);
     match state.selected_section {
         0 => {
-            let checkbox = if p.autosave { "[x]" } else { "[ ]" };
-            let line = Line::from(vec![
-                Span::raw(checkbox),
-                Span::raw(" Autosave latest state"),
-            ]);
-            let para = Paragraph::new(line).style(right_fill_style);
-            f.render_widget(para, right_inner);
+            let view_highlight = Style::default().bg(Color::Blue).fg(Color::White);
+            let line_h = 1u16;
+            let chk0 = if p.autosave { "[x]" } else { "[ ]" };
+            let style0 = if state.content_focus == 0 { view_highlight } else { right_fill_style };
+            f.render_widget(
+                Paragraph::new(Line::from(vec![Span::raw(chk0), Span::raw(" Autosave latest state")])).style(style0),
+                Rect { x: right_inner.x, y: right_inner.y, width: right_inner.width, height: line_h },
+            );
+            let chk1 = if p.sync_panel_to_shell_cwd { "[x]" } else { "[ ]" };
+            let style1 = if state.content_focus == 1 { view_highlight } else { right_fill_style };
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::raw(chk1),
+                    Span::raw(" Sync panel to shell dir when returning (Ctrl+O)"),
+                ]))
+                .style(style1),
+                Rect { x: right_inner.x, y: right_inner.y + line_h, width: right_inner.width, height: line_h },
+            );
         }
         1 => draw_panel_section(f, right_inner, right_fill_style, left_view_index, left_sort_index, p.left_dirs_first, p.left_show_hidden, state.content_focus),
         2 => draw_panel_section(f, right_inner, right_fill_style, right_view_index, right_sort_index, p.right_dirs_first, p.right_show_hidden, state.content_focus),

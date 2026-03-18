@@ -149,6 +149,32 @@ fn get_or_create_subshell<'a>(
     Ok(subshell.as_ref().expect("subshell initialized above"))
 }
 
+/// When setting is on, sync active panel to shell's cwd if it changed (after Ctrl+O or RunCommand return).
+fn maybe_sync_panel_to_shell_cwd(app: &mut AppState, shell_cwd: Option<PathBuf>) {
+    if !app.persisted_settings.sync_panel_to_shell_cwd {
+        return;
+    }
+    let cwd = match shell_cwd {
+        Some(c) => c,
+        None => return,
+    };
+    if !app.get_current_location().is_fs() {
+        return;
+    }
+    let path = std::path::Path::new(&cwd);
+    if !path.is_dir() {
+        return;
+    }
+    let shell_canonical = path.canonicalize().unwrap_or(cwd);
+    let panel_canonical = app
+        .get_current_location()
+        .as_fs_path()
+        .and_then(|p| std::fs::canonicalize(p).ok());
+    if panel_canonical.as_ref() != Some(&shell_canonical) {
+        let _ = app.active_panel_mut().navigate_to_location(crate::location::PanelLocation::fs(shell_canonical));
+    }
+}
+
 /// One step of copy/move/delete when source is PanelLocation (Fs or Zip). Returns (advance, overwrite_name, error_message).
 fn run_copy_step_backend(
     source_loc: &crate::location::PanelLocation,
@@ -953,6 +979,10 @@ fn main() -> Result<(), io::Error> {
                     SettingChange::AutosaveToggle => {
                         app.persisted_settings.autosave = !app.persisted_settings.autosave;
                     }
+                    SettingChange::SyncPanelToShellCwdToggle => {
+                        app.persisted_settings.sync_panel_to_shell_cwd =
+                            !app.persisted_settings.sync_panel_to_shell_cwd;
+                    }
                     SettingChange::LeftViewCycle => {
                         let v = &mut app.persisted_settings.left_view;
                         *v = if v.as_str() == "one" {
@@ -1020,7 +1050,7 @@ fn main() -> Result<(), io::Error> {
                 }
                 log_if_err("Save settings", settings::save(&app.persisted_settings));
                 match change {
-                    SettingChange::AutosaveToggle => {}
+                    SettingChange::AutosaveToggle | SettingChange::SyncPanelToShellCwdToggle => {}
                     _ => app.sync_from_persisted_settings(),
                 }
             }
@@ -1089,12 +1119,14 @@ fn main() -> Result<(), io::Error> {
                     let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
                     let _ = stdout.flush();
                 }
-                if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
+                let shell_cwd = if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
                     let cwd = app.get_current_dir().to_string();
                     let _ = sub.run_cd_then_relay(&cwd, Some(prepared));
+                    sub.get_cwd()
                 } else {
                     eprintln!("Subshell error");
-                }
+                    None
+                };
                 let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
                 // 3) Return: enter alternate first (Ratatui), then drain input (MC tty_flush_input), then clear + redraw.
                 execute!(
@@ -1107,6 +1139,7 @@ fn main() -> Result<(), io::Error> {
                     break;
                 }
                 app.focus_panel();
+                maybe_sync_panel_to_shell_cwd(&mut app, shell_cwd);
                 terminal.clear()?;
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 // Do NOT terminal.flush() after draw(): draw() already flushes; extra flush can paint black.
@@ -1130,11 +1163,15 @@ fn main() -> Result<(), io::Error> {
                     let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
                     let _ = stdout.flush();
                 }
-                if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
-                    let _ = sub.run_command_then_relay(&cwd, &cmd, Some(prepared));
+                let shell_cwd = if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
+                    let r = sub.run_command_then_relay(&cwd, &cmd, Some(prepared));
+                    let cwd_opt = sub.get_cwd();
+                    let _ = r;
+                    cwd_opt
                 } else {
                     eprintln!("Subshell error");
-                }
+                    None
+                };
                 let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
                 // 3) Return: enter alternate, drain, focus panel, clear + draw (panels visible again).
                 execute!(
@@ -1147,6 +1184,7 @@ fn main() -> Result<(), io::Error> {
                     break;
                 }
                 app.focus_panel();
+                maybe_sync_panel_to_shell_cwd(&mut app, shell_cwd);
                 terminal.clear()?;
                 log_if_err(
                     "Refresh panels",
