@@ -20,9 +20,10 @@ use ratatui::{
 };
 
 use crate::app_state::AppState;
+use crate::clipboard;
 use crate::panel::PanelOperations;
-use crate::styles::{DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED};
-use crate::text_input::TextInputState;
+use crate::styles::{DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG};
+use crate::text_input::{self, TextInputState};
 
 /// One result from Find file: path and optional line number (when content search matched).
 #[derive(Debug, Clone)]
@@ -373,14 +374,17 @@ pub fn poll_search(app: &mut AppState) {
                     if let Some(arc) = d.search_start_dir.take() {
                         d.start_dir_input.text = arc.to_string();
                         d.start_dir_input.cursor = d.start_dir_input.text.chars().count();
+                        d.start_dir_input.anchor = None;
                     }
                     if let Some(arc) = d.search_file_pattern.take() {
                         d.file_pattern_input.text = arc.to_string();
                         d.file_pattern_input.cursor = d.file_pattern_input.text.chars().count();
+                        d.file_pattern_input.anchor = None;
                     }
                     if let Some(arc) = d.search_content_pattern.take() {
                         d.content_pattern_input.text = arc.to_string();
                         d.content_pattern_input.cursor = d.content_pattern_input.text.chars().count();
+                        d.content_pattern_input.anchor = None;
                     }
                 }
                 app.find_search_rx = None;
@@ -426,9 +430,47 @@ fn handle_key_parameter(
 ) -> Option<crate::events::AppAction> {
     use crate::events::AppAction;
     let d = app.find_dialog.as_mut()?;
-    if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
-        close(app);
-        return Some(AppAction::FindClose);
+    if modifiers.contains(KeyModifiers::CONTROL) {
+                if code == KeyCode::Char('a') && d.focus <= 2 {
+                    let input = match d.focus {
+                        0 => &mut d.start_dir_input,
+                        1 => &mut d.file_pattern_input,
+                        2 => &mut d.content_pattern_input,
+                        _ => return Some(AppAction::Continue),
+                    };
+                    if !input.text.is_empty() {
+                        *input = std::mem::take(input).select_all();
+                    }
+                    return Some(AppAction::Continue);
+                }
+                if code == KeyCode::Char('v') && d.focus <= 2 {
+            let input = match d.focus {
+                0 => &mut d.start_dir_input,
+                1 => &mut d.file_pattern_input,
+                2 => &mut d.content_pattern_input,
+                _ => return Some(AppAction::Continue),
+            };
+            if let Some(s) = clipboard::get() {
+                *input = std::mem::take(input).insert_str(&s);
+            }
+            return Some(AppAction::Continue);
+        }
+        if code == KeyCode::Char('c') {
+            if d.focus <= 2 {
+                let text = match d.focus {
+                    0 => d.start_dir_input.get_selected_text().unwrap_or_else(|| d.start_dir_input.text.clone()),
+                    1 => d.file_pattern_input.get_selected_text().unwrap_or_else(|| d.file_pattern_input.text.clone()),
+                    2 => d.content_pattern_input.get_selected_text().unwrap_or_else(|| d.content_pattern_input.text.clone()),
+                    _ => String::new(),
+                };
+                if !text.is_empty() {
+                    clipboard::set(&text);
+                }
+                return Some(AppAction::Continue);
+            }
+            close(app);
+            return Some(AppAction::FindClose);
+        }
     }
     match code {
         KeyCode::Esc => return Some(AppAction::FindClose),
@@ -483,24 +525,50 @@ fn handle_key_parameter(
         }
         KeyCode::Left => {
             if d.focus <= 2 {
+                let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let input = match d.focus {
                     0 => &mut d.start_dir_input,
                     1 => &mut d.file_pattern_input,
                     2 => &mut d.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
-                *input = std::mem::take(input).move_left();
+                *input = std::mem::take(input).move_left(shift);
             }
         }
         KeyCode::Right => {
             if d.focus <= 2 {
+                let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let input = match d.focus {
                     0 => &mut d.start_dir_input,
                     1 => &mut d.file_pattern_input,
                     2 => &mut d.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
-                *input = std::mem::take(input).move_right();
+                *input = std::mem::take(input).move_right(shift);
+            }
+        }
+        KeyCode::Home => {
+            if d.focus <= 2 {
+                let shift = modifiers.contains(KeyModifiers::SHIFT);
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
+                    _ => return Some(AppAction::Continue),
+                };
+                *input = std::mem::take(input).move_home(shift);
+            }
+        }
+        KeyCode::End => {
+            if d.focus <= 2 {
+                let shift = modifiers.contains(KeyModifiers::SHIFT);
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
+                    _ => return Some(AppAction::Continue),
+                };
+                *input = std::mem::take(input).move_end(shift);
             }
         }
         _ => {}
@@ -664,7 +732,6 @@ fn draw_parameter_form(
         (1, "File pattern:", &d.file_pattern_input),
         (2, "Content pattern:", &d.content_pattern_input),
     ] {
-        let value = input.text.as_str();
         let cursor_char = input.cursor_column();
         let focused = d.focus == focus_idx;
         let bg = if focused {
@@ -681,15 +748,23 @@ fn draw_parameter_form(
         } else {
             cursor_char + 1 - value_w_usize
         };
-        let displayed: String = value.chars().skip(display_offset).take(value_w_usize).collect();
         let cursor_screen = cursor_char.saturating_sub(display_offset);
+        let base_style = Style::default().bg(bg).fg(Color::White);
+        let selection_style = Style::default().bg(DIALOG_INPUT_SELECTION_BG).fg(Color::White);
+        let line = text_input::input_line_with_selection_slice(
+            input,
+            display_offset,
+            value_w_usize,
+            base_style,
+            selection_style,
+        );
         // Label and input on one line
         f.render_widget(
             Paragraph::new(label).style(fill_style),
             Rect { x: cx, y: row, width: LABEL_W, height: 1 },
         );
         f.render_widget(
-            Paragraph::new(displayed.as_str()).style(Style::default().bg(bg).fg(Color::White)),
+            Paragraph::new(line),
             Rect { x: cx + LABEL_W, y: row, width: value_w, height: 1 },
         );
         if focused {

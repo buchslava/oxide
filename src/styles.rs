@@ -9,6 +9,8 @@ pub const DIALOG_BG: Color = Color::Rgb(60, 60, 60);
 pub const DIALOG_INPUT_BG_FOCUSED: Color = Color::Rgb(28, 34, 46);
 /// Background for unfocused text input inside a dialog.
 pub const DIALOG_INPUT_BG_UNFOCUSED: Color = Color::Rgb(38, 44, 56);
+/// Background for selected text inside a focused text input.
+pub const DIALOG_INPUT_SELECTION_BG: Color = Color::Rgb(60, 80, 120);
 /// Accent for option numbers (e.g. "1. Skip") and highlighted keys (Y/N).
 pub const DIALOG_ACCENT: Color = Color::Rgb(255, 180, 80);
 /// Focus highlight (selected button or option row).

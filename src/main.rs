@@ -10,6 +10,7 @@ use crossterm::{
 
 mod app_state;
 mod archive_dialog;
+mod clipboard;
 mod dialog_layout;
 mod copy_ops;
 mod copy_state;

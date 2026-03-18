@@ -3,7 +3,7 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     terminal::size,
 };
-use crate::app_state::{AppState, CopyParams, Focus};
+use crate::app_state::{AppState, CopyParams, Focus, RenameAttrDialogState, RenameAttrField};
 pub use crate::editor::EditorConfirmChoice;
 use crate::editor::{handle_editor_key, handle_editor_mouse};
 use crate::panel::PanelOperations;
@@ -582,15 +582,70 @@ impl EventHandler {
                 let action = Self::handle_mouse_event(app, mouse_event)?;
                 Ok(Some(action.unwrap_or(AppAction::Continue)))
             }
-            // Bracketed paste (e.g. Cmd+V on macOS): insert as-is, same as Ctrl+V.
+            // Bracketed paste (e.g. Cmd+V on macOS): editor first if open, else focused dialog/command line.
             Event::Paste(data) => {
-                if let Some(action) = crate::editor::paste_text_as_is(app, &data) {
-                    return Ok(Some(action));
+                if app.editor_screen.is_some() {
+                    if let Some(action) = crate::editor::paste_text_as_is(app, &data) {
+                        return Ok(Some(action));
+                    }
+                }
+                if Self::paste_into_focused_input(app, &data) {
+                    return Ok(Some(AppAction::Continue));
                 }
                 Ok(None)
             }
             _ => Ok(None), // FocusGained, Resize, etc. - drain
         }
+    }
+
+    /// If a dialog text input or the command line has logical focus, insert `data` there and return true.
+    fn paste_into_focused_input(app: &mut AppState, data: &str) -> bool {
+        if let Some(d) = app.find_dialog.as_mut() {
+            if d.focus <= 2 {
+                let input = match d.focus {
+                    0 => &mut d.start_dir_input,
+                    1 => &mut d.file_pattern_input,
+                    2 => &mut d.content_pattern_input,
+                    _ => return false,
+                };
+                *input = std::mem::take(input).insert_str(data);
+                return true;
+            }
+        }
+        if let Some(d) = app.mkdir_dialog.as_mut() {
+            if d.focus == 0 {
+                d.input = std::mem::take(&mut d.input).insert_str(data);
+                return true;
+            }
+        }
+        if let Some(d) = app.archive_dialog.as_mut() {
+            if d.focus == 0 {
+                d.input = std::mem::take(&mut d.input).insert_str(data);
+                return true;
+            }
+        }
+        if let Some(d) = app.new_file_dialog.as_mut() {
+            if d.focus == 0 {
+                d.input = std::mem::take(&mut d.input).insert_str(data);
+                return true;
+            }
+        }
+        if let Some(RenameAttrDialogState::Single {
+            name_input,
+            focus,
+            ..
+        }) = app.rename_attr_dialog.as_mut()
+        {
+            if *focus == RenameAttrField::Name {
+                *name_input = std::mem::take(name_input).insert_str(data);
+                return true;
+            }
+        }
+        if app.focus == Focus::CommandLine {
+            app.command_line_insert_str(data);
+            return true;
+        }
+        false
     }
 
     fn handle_command_line_key(
@@ -616,11 +671,21 @@ impl EventHandler {
                         return AppAction::Suspend;
                     }
                     if c == 'c' {
-                        app.command_line_clear();
+                        if !app.command_line.is_empty() {
+                            crate::clipboard::set(&app.command_line);
+                        } else {
+                            app.command_line_clear();
+                        }
                         return AppAction::Continue;
                     }
                     if c == 'h' {
                         return AppAction::ToggleShowHidden;
+                    }
+                    if c == 'v' {
+                        if let Some(s) = crate::clipboard::get() {
+                            app.command_line_insert_str(&s);
+                        }
+                        return AppAction::Continue;
                     }
                 }
                 app.command_line_insert(c);

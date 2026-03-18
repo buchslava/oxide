@@ -13,10 +13,11 @@ use ratatui::{
 };
 
 use crate::app_state::AppState;
+use crate::clipboard;
 use crate::events::AppAction;
 use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
-use crate::styles::{DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED};
+use crate::styles::{DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG};
 use crate::text_input::{self, TextInputState};
 
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
@@ -369,12 +370,54 @@ pub fn handle_key(
         }
         KeyCode::Char(c) => {
             if modifiers.contains(KeyModifiers::CONTROL) {
-                if c == 'o' {
-                    return Some(AppAction::Suspend);
+                if c == 'v' {
+                    if let RenameAttrDialogState::Single {
+                        name_input,
+                        focus,
+                        ..
+                    } = d
+                    {
+                        if *focus == RenameAttrField::Name {
+                            if let Some(s) = clipboard::get() {
+                                *name_input = std::mem::take(name_input).insert_str(&s);
+                            }
+                            return Some(AppAction::Continue);
+                        }
+                    }
                 }
                 if c == 'c' {
+                    if let RenameAttrDialogState::Single {
+                        name_input,
+                        focus,
+                        ..
+                    } = d
+                    {
+                        if *focus == RenameAttrField::Name {
+                            let text = name_input.get_selected_text().unwrap_or_else(|| name_input.text.clone());
+                            if !text.is_empty() {
+                                clipboard::set(&text);
+                                return Some(AppAction::Continue);
+                            }
+                        }
+                    }
                     cancel(app);
                     return Some(AppAction::RenameAttrCancel);
+                }
+                if c == 'a' {
+                    if let RenameAttrDialogState::Single {
+                        name_input,
+                        focus,
+                        ..
+                    } = d
+                    {
+                        if *focus == RenameAttrField::Name && !name_input.text.is_empty() {
+                            *name_input = std::mem::take(name_input).select_all();
+                            return Some(AppAction::Continue);
+                        }
+                    }
+                }
+                if c == 'o' {
+                    return Some(AppAction::Suspend);
                 }
             }
             if c == ' ' {
@@ -430,11 +473,12 @@ pub fn handle_key(
             } = d
             {
                 if *focus == RenameAttrField::Name {
+                    let shift = modifiers.contains(KeyModifiers::SHIFT);
                     *name_input = match code {
-                        KeyCode::Left => std::mem::take(name_input).move_left(),
-                        KeyCode::Right => std::mem::take(name_input).move_right(),
-                        KeyCode::Home => std::mem::take(name_input).move_home(),
-                        KeyCode::End => std::mem::take(name_input).move_end(),
+                        KeyCode::Left => std::mem::take(name_input).move_left(shift),
+                        KeyCode::Right => std::mem::take(name_input).move_right(shift),
+                        KeyCode::Home => std::mem::take(name_input).move_home(shift),
+                        KeyCode::End => std::mem::take(name_input).move_end(shift),
                         _ => return Some(AppAction::Continue),
                     };
                 }
@@ -573,8 +617,15 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                 width: name_inner.width,
                 height: 1,
             };
-            let name_style = fill_style.bg(name_input_bg).fg(Color::White);
-            f.render_widget(Paragraph::new(name_input.text.as_str()).style(name_style), name_rect);
+            let base_style = fill_style.bg(name_input_bg).fg(Color::White);
+            let selection_style = Style::default().bg(DIALOG_INPUT_SELECTION_BG).fg(Color::White);
+            let line = text_input::input_line_with_selection(
+                name_input,
+                name_rect.width as usize,
+                base_style,
+                selection_style,
+            );
+            f.render_widget(Paragraph::new(line), name_rect);
             if focus == RenameAttrField::Name {
                 let cx = text_input::input_cursor_x(name_rect, name_input);
                 f.set_cursor_position((cx, name_inner.y));
