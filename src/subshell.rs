@@ -41,6 +41,13 @@ pub struct Subshell {
 }
 
 #[cfg(unix)]
+struct AutoExitConfig {
+    delay: std::time::Duration,
+    marker: Vec<u8>,
+    helper_echo: Vec<u8>,
+}
+
+#[cfg(unix)]
 impl Subshell {
     fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.is_empty() || haystack.len() < needle.len() {
@@ -136,6 +143,76 @@ impl Subshell {
                 Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e)),
             }
         }
+        Ok(())
+    }
+
+    /// Stream PTY bytes to stdout while suppressing the auto-return marker.
+    /// Returns true when marker is detected (possibly across chunk boundaries).
+    fn write_pty_chunk_without_marker(
+        pending: &mut Vec<u8>,
+        chunk: &[u8],
+        marker: &[u8],
+        helper_echo: &[u8],
+    ) -> io::Result<bool> {
+        pending.extend_from_slice(chunk);
+
+        loop {
+            let echo_pos = Self::find_subsequence(pending, helper_echo);
+            let marker_pos = Self::find_subsequence(pending, marker);
+            match (echo_pos, marker_pos) {
+                (Some(e), Some(m)) if e < m => {
+                    if e > 0 {
+                        Self::write_all_fd(1, &pending[..e])?;
+                    }
+                    pending.drain(..e + helper_echo.len());
+                    continue;
+                }
+                (Some(e), None) => {
+                    if e > 0 {
+                        Self::write_all_fd(1, &pending[..e])?;
+                    }
+                    pending.drain(..e + helper_echo.len());
+                    continue;
+                }
+                (_, Some(m)) => {
+                    if m > 0 {
+                        Self::write_all_fd(1, &pending[..m])?;
+                    }
+                    pending.clear();
+                    return Ok(true);
+                }
+                (None, None) => break,
+            }
+        }
+
+        let keep = marker
+            .len()
+            .max(helper_echo.len())
+            .saturating_sub(1);
+        if pending.len() > keep {
+            let flush_len = pending.len() - keep;
+            Self::write_all_fd(1, &pending[..flush_len])?;
+            pending.drain(..flush_len);
+        }
+        Ok(false)
+    }
+
+    fn flush_pty_pending_without_marker(
+        pending: &mut Vec<u8>,
+        helper_echo: &[u8],
+    ) -> io::Result<()> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        if let Some(pos) = Self::find_subsequence(pending, helper_echo) {
+            if pos > 0 {
+                Self::write_all_fd(1, &pending[..pos])?;
+            }
+            pending.clear();
+            return Ok(());
+        }
+        Self::write_all_fd(1, pending)?;
+        pending.clear();
         Ok(())
     }
 
@@ -382,11 +459,17 @@ impl Subshell {
         }
     }
 
-    /// Full-screen relay: stdin → pty, pty → stdout, until Ctrl+O (0x0F) on stdin. Shell keeps running.
+    /// Full-screen relay: stdin → pty, pty → stdout, until Ctrl+O (0x0F) on stdin.
+    /// Shell keeps running.
     /// Caller must leave alternate screen before calling and re-enter after return (see main.rs Suspend).
     /// If `prepared` is Some, caller already set relay raw and wrote reset sequence to stdout; we skip that and use saved termios for restore. If None, we set raw and write reset ourselves.
     /// If `show_prompt_first` is true (Ctrl+O toggle), send " \b" and flush PTY so the prompt is visible.
-    pub fn run_relay_until_ctrl_o(&self, show_prompt_first: bool, prepared: Option<PreparedRelay>) -> io::Result<()> {
+    fn run_relay_until_ctrl_o(
+        &self,
+        show_prompt_first: bool,
+        prepared: Option<PreparedRelay>,
+        auto_exit: Option<AutoExitConfig>,
+    ) -> io::Result<()> {
         use nix::errno::Errno;
         use nix::poll::{poll, PollFd, PollFlags};
         use nix::unistd;
@@ -428,6 +511,11 @@ impl Subshell {
         let mut stdin_buf = [0u8; 256];
         let mut pty_buf = [0u8; 4096];
         let mut stdin_carry: Vec<u8> = Vec::with_capacity(32);
+        let max_auto_token_len = auto_exit
+            .as_ref()
+            .map(|c| c.marker.len().max(c.helper_echo.len()))
+            .unwrap_or(0);
+        let mut marker_pending: Vec<u8> = Vec::with_capacity(max_auto_token_len);
 
         let relay_result = (|| -> io::Result<()> {
             loop {
@@ -452,9 +540,20 @@ impl Subshell {
                     match unistd::read(0, &mut stdin_buf) {
                         Ok(0) => break,
                         Ok(n) => {
+                            let saw_ctrl_c = auto_exit.is_some()
+                                && stdin_buf[..n].iter().any(|b| *b == 0x03);
                             if self.relay_stdin_chunk(&mut stdin_carry, &stdin_buf[..n])? {
                                 let _ = Self::drain_pty_output(self.master_fd);
                                 return Ok(());
+                            }
+                            if saw_ctrl_c {
+                                if let Some(cfg) = auto_exit.as_ref() {
+                                    // "Interrupted" flow: user pressed Ctrl+C while command relay is active.
+                                    // Wait configured delay, drain shell output/prompt, then return to panels.
+                                    std::thread::sleep(cfg.delay);
+                                    let _ = Self::drain_pty_output(self.master_fd);
+                                    return Ok(());
+                                }
                             }
                         }
                         Err(Errno::EINTR) => {}
@@ -469,10 +568,27 @@ impl Subshell {
                     match Self::read_pty_nonblock(self.master_fd, &mut pty_buf)? {
                         Some(0) => break,
                         Some(n) => {
-                            Self::write_all_fd(1, &pty_buf[..n])?;
+                            if let Some(cfg) = auto_exit.as_ref() {
+                                if Self::write_pty_chunk_without_marker(
+                                    &mut marker_pending,
+                                    &pty_buf[..n],
+                                    &cfg.marker,
+                                    &cfg.helper_echo,
+                                )? {
+                                    std::thread::sleep(cfg.delay);
+                                    return Ok(());
+                                }
+                            } else {
+                                Self::write_all_fd(1, &pty_buf[..n])?;
+                            }
                         }
                         None => {} // EAGAIN, no data this time
                     }
+                }
+            }
+            if let Some(cfg) = auto_exit.as_ref() {
+                if !marker_pending.is_empty() {
+                    Self::flush_pty_pending_without_marker(&mut marker_pending, &cfg.helper_echo)?;
                 }
             }
             Ok(())
@@ -524,12 +640,18 @@ impl Subshell {
             Self::write_all_fd(self.master_fd, &buf)?;
             let _ = Self::drain_pty_output(self.master_fd);
         }
-        self.run_relay_until_ctrl_o(false, prepared)
+        self.run_relay_until_ctrl_o(false, prepared, None)
     }
 
     /// Run a command in the subshell then relay until Ctrl+O (MC: invoke_subshell with command).
     /// Only sends `cd 'cwd'` when the shell is not already in that directory.
-    pub fn run_command_then_relay(&self, cwd: &str, cmd: &str, prepared: Option<PreparedRelay>) -> io::Result<()> {
+    pub fn run_command_then_relay(
+        &self,
+        cwd: &str,
+        cmd: &str,
+        prepared: Option<PreparedRelay>,
+        auto_exit_after_idle: Option<std::time::Duration>,
+    ) -> io::Result<()> {
         let panel_canonical = Path::new(cwd).canonicalize().ok();
         let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
         let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
@@ -543,10 +665,38 @@ impl Subshell {
             buf.extend_from_slice(cd_escaped.as_bytes());
             buf.push(b'\n');
         }
-        buf.extend_from_slice(cmd.as_bytes());
-        buf.push(b'\n');
+        let mut auto_exit_cfg: Option<AutoExitConfig> = None;
+        if let Some(delay) = auto_exit_after_idle {
+            // Keep marker compact so shell echo is unlikely to wrap.
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64
+                ^ (self.child_pid as u64);
+            // Marker uses only [A-Za-z0-9_] so helper can be emitted without shell quoting.
+            let marker = format!("OXD_{:08x}_{}", (nonce & 0xffff_ffff) as u32, self.child_pid);
+            let helper = format!("printf %s {marker}");
+            let cmd_escaped = Self::shell_escape_path(cmd);
+            // Print marker when the command line completes (including interrupted foreground jobs),
+            // so the relay can return through the same path as Ctrl+O.
+            // IMPORTANT: send one shell line (`eval ...; helper`) so interactive apps (like top)
+            // don't consume helper bytes as queued stdin.
+            buf.extend_from_slice(b"eval ");
+            buf.extend_from_slice(cmd_escaped.as_bytes());
+            buf.extend_from_slice(b"; ");
+            buf.extend_from_slice(helper.as_bytes());
+            buf.push(b'\n');
+            auto_exit_cfg = Some(AutoExitConfig {
+                delay,
+                marker: marker.into_bytes(),
+                helper_echo: helper.into_bytes(),
+            });
+        } else {
+            buf.extend_from_slice(cmd.as_bytes());
+            buf.push(b'\n');
+        }
         Self::write_all_fd(self.master_fd, &buf)?;
-        self.run_relay_until_ctrl_o(false, prepared)
+        self.run_relay_until_ctrl_o(false, prepared, auto_exit_cfg)
     }
 }
 
@@ -742,13 +892,26 @@ impl Subshell {
     pub fn write(&self, _data: &[u8]) -> io::Result<usize> {
         Ok(0)
     }
-    pub fn run_relay_until_ctrl_o(&self, _show_prompt_first: bool, _prepared: Option<PreparedRelay>) -> io::Result<()> {
+    pub fn run_relay_until_ctrl_o(
+        &self,
+        _show_prompt_first: bool,
+        _prepared: Option<PreparedRelay>,
+        _auto_exit_after_idle: Option<std::time::Duration>,
+    ) -> io::Result<()> {
         Ok(())
     }
+
     pub fn run_cd_then_relay(&self, _cwd: &str, _prepared: Option<PreparedRelay>) -> io::Result<()> {
         Ok(())
     }
-    pub fn run_command_then_relay(&self, _cwd: &str, _cmd: &str, _prepared: Option<PreparedRelay>) -> io::Result<()> {
+
+    pub fn run_command_then_relay(
+        &self,
+        _cwd: &str,
+        _cmd: &str,
+        _prepared: Option<PreparedRelay>,
+        _auto_exit_after_idle: Option<std::time::Duration>,
+    ) -> io::Result<()> {
         Ok(())
     }
 }

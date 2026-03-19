@@ -114,6 +114,10 @@ pub enum SettingChange {
     AutosaveToggle,
     /// Sync active panel to shell's cwd when returning from Ctrl+O (F9 Settings → General).
     SyncPanelToShellCwdToggle,
+    /// Toggle auto-return to panels after running a command/executable.
+    AutoReopenPanelsAfterCommandToggle,
+    /// Cycle the delay (seconds) for auto-return to panels.
+    AutoReopenPanelsAfterCommandDelayCycle,
     LeftViewCycle,
     LeftShowHiddenToggle,
     LeftSortCycle,

@@ -100,7 +100,7 @@ pub fn handle_key(
             if state.focus_left {
                 state.focus_left = false;
             } else if state.selected_section == 0 {
-                state.content_focus = (state.content_focus + 1) % 2;
+                state.content_focus = (state.content_focus + 1) % 4;
             } else if state.selected_section == 1 || state.selected_section == 2 {
                 state.content_focus = (state.content_focus + 1) % 4;
             }
@@ -122,7 +122,7 @@ pub fn handle_key(
             // Right column: Up = previous item or move focus up
             match state.selected_section {
                 0 => {
-                    state.content_focus = (state.content_focus + 1) % 2;
+                    state.content_focus = (state.content_focus + 1) % 4;
                 }
                 1 => {
                     if state.content_focus == 1 {
@@ -157,7 +157,7 @@ pub fn handle_key(
             // Right column: Down = next item or move focus down
             match state.selected_section {
                 0 => {
-                    state.content_focus = (state.content_focus + 1) % 2;
+                    state.content_focus = (state.content_focus + 1) % 4;
                 }
                 1 => {
                     if state.content_focus == 0 {
@@ -199,7 +199,9 @@ pub fn handle_key(
             let action = match state.selected_section {
                 0 => match state.content_focus {
                     0 => Some(AppAction::SettingChange(SettingChange::AutosaveToggle)),
-                    _ => Some(AppAction::SettingChange(SettingChange::SyncPanelToShellCwdToggle)),
+                    1 => Some(AppAction::SettingChange(SettingChange::SyncPanelToShellCwdToggle)),
+                    2 => Some(AppAction::SettingChange(SettingChange::AutoReopenPanelsAfterCommandToggle)),
+                    _ => Some(AppAction::SettingChange(SettingChange::AutoReopenPanelsAfterCommandDelayCycle)),
                 },
                 1 => match state.content_focus {
                     0 => Some(AppAction::SettingChange(SettingChange::LeftViewCycle)),
@@ -334,6 +336,34 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                 ]))
                 .style(style1),
                 Rect { x: right_inner.x, y: right_inner.y + line_h, width: right_inner.width, height: line_h },
+            );
+            let chk2 = if p.auto_reopen_panels_after_command { "[x]" } else { "[ ]" };
+            let style2 = if state.content_focus == 2 { view_highlight } else { right_fill_style };
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::raw(chk2),
+                    Span::raw(" Auto reopen panels after command/executable"),
+                ]))
+                .style(style2),
+                Rect {
+                    x: right_inner.x,
+                    y: right_inner.y + 2 * line_h,
+                    width: right_inner.width,
+                    height: line_h,
+                },
+            );
+            let delay_style = if state.content_focus == 3 { view_highlight } else { right_fill_style };
+            let delay_secs = p.auto_reopen_panels_after_command_delay_secs;
+            let delay_label = format!(" Delay (sec): {delay_secs}");
+            f.render_widget(
+                Paragraph::new(Line::from(delay_label))
+                    .style(delay_style),
+                Rect {
+                    x: right_inner.x,
+                    y: right_inner.y + 3 * line_h,
+                    width: right_inner.width,
+                    height: line_h,
+                },
             );
         }
         1 => draw_panel_section(f, right_inner, right_fill_style, left_view_index, left_sort_index, p.left_dirs_first, p.left_show_hidden, state.content_focus),

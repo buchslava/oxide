@@ -983,6 +983,17 @@ fn main() -> Result<(), io::Error> {
                         app.persisted_settings.sync_panel_to_shell_cwd =
                             !app.persisted_settings.sync_panel_to_shell_cwd;
                     }
+                    SettingChange::AutoReopenPanelsAfterCommandToggle => {
+                        app.persisted_settings.auto_reopen_panels_after_command =
+                            !app.persisted_settings.auto_reopen_panels_after_command;
+                    }
+                    SettingChange::AutoReopenPanelsAfterCommandDelayCycle => {
+                        let cur =
+                            app.persisted_settings.auto_reopen_panels_after_command_delay_secs.max(1);
+                        let max = 30u64;
+                        let next = if cur >= max { 1 } else { cur + 1 };
+                        app.persisted_settings.auto_reopen_panels_after_command_delay_secs = next;
+                    }
                     SettingChange::LeftViewCycle => {
                         let v = &mut app.persisted_settings.left_view;
                         *v = if v.as_str() == "one" {
@@ -1050,7 +1061,10 @@ fn main() -> Result<(), io::Error> {
                 }
                 log_if_err("Save settings", settings::save(&app.persisted_settings));
                 match change {
-                    SettingChange::AutosaveToggle | SettingChange::SyncPanelToShellCwdToggle => {}
+                    SettingChange::AutosaveToggle
+                    | SettingChange::SyncPanelToShellCwdToggle
+                    | SettingChange::AutoReopenPanelsAfterCommandToggle
+                    | SettingChange::AutoReopenPanelsAfterCommandDelayCycle => {}
                     _ => app.sync_from_persisted_settings(),
                 }
             }
@@ -1151,6 +1165,18 @@ fn main() -> Result<(), io::Error> {
             AppAction::Move(params) => start_copy_operation(&mut app, Operation::Move, params),
             AppAction::RunCommand(cmd) => {
                 // Run command in the subshell (MC-style): output and prompt stay visible; Ctrl+O returns to panels. Same single-writer flow as Suspend.
+                let auto_exit_after_idle = if app
+                    .persisted_settings
+                    .auto_reopen_panels_after_command
+                {
+                    let secs = app
+                        .persisted_settings
+                        .auto_reopen_panels_after_command_delay_secs
+                        .max(1);
+                    Some(std::time::Duration::from_secs(secs))
+                } else {
+                    None
+                };
                 let left_selected = app.left_panel_mut().get_selected_file().map(|f| f.name.to_string());
                 let right_selected = app.right_panel_mut().get_selected_file().map(|f| f.name.to_string());
                 let cwd = app.get_current_dir().to_string();
@@ -1164,7 +1190,7 @@ fn main() -> Result<(), io::Error> {
                     let _ = stdout.flush();
                 }
                 let shell_cwd = if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
-                    let r = sub.run_command_then_relay(&cwd, &cmd, Some(prepared));
+                    let r = sub.run_command_then_relay(&cwd, &cmd, Some(prepared), auto_exit_after_idle);
                     let cwd_opt = sub.get_cwd();
                     let _ = r;
                     cwd_opt

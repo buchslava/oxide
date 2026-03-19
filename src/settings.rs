@@ -18,6 +18,14 @@ pub struct PersistedSettings {
     /// When true (default), after returning from shell (Ctrl+O) sync active panel to shell's cwd. When false, use old flow (panel stays as before).
     #[serde(default = "default_true")]
     pub sync_panel_to_shell_cwd: bool,
+    /// When true, after running a command/executable from panels, automatically return to panels
+    /// after the PTY is idle for `auto_reopen_panels_after_command_delay_secs` seconds.
+    #[serde(default = "default_true")]
+    pub auto_reopen_panels_after_command: bool,
+    /// Idle timeout (seconds) used by `auto_reopen_panels_after_command`.
+    /// This is an "after last output" delay: the PTY relay returns once no PTY output arrives for this long.
+    #[serde(default = "default_auto_reopen_panels_delay_secs")]
+    pub auto_reopen_panels_after_command_delay_secs: u64,
     /// Saved current directory for left panel. None or invalid => use home on start.
     #[serde(default)]
     pub left_cwd: Option<String>,
@@ -57,6 +65,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_auto_reopen_panels_delay_secs() -> u64 {
+    2
+}
+
 fn default_sort() -> String {
     "name_asc".to_string()
 }
@@ -66,6 +78,8 @@ impl Default for PersistedSettings {
         Self {
             autosave: false,
             sync_panel_to_shell_cwd: true,
+            auto_reopen_panels_after_command: true,
+            auto_reopen_panels_after_command_delay_secs: default_auto_reopen_panels_delay_secs(),
             left_cwd: None,
             right_cwd: None,
             left_view: "two".to_string(),
@@ -143,5 +157,7 @@ mod tests {
         assert!(json.contains("\"right_sort\""));
         assert!(json.contains("\"left_dirs_first\""));
         assert!(json.contains("\"right_dirs_first\""));
+        assert!(json.contains("\"auto_reopen_panels_after_command\""));
+        assert!(json.contains("\"auto_reopen_panels_after_command_delay_secs\""));
     }
 }
