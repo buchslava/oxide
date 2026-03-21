@@ -1,14 +1,24 @@
+use crate::core::settings::PersistedSettings;
+use crate::panel::{Panel, PanelOperations, ViewMode};
+use ratatui::layout::Rect;
 use std::io;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
-use ratatui::layout::Rect;
-use crate::panel::{Panel, PanelOperations, ViewMode};
-use crate::settings::PersistedSettings;
 
+pub use crate::core::copy_state::{
+    ArchiveProgress, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation,
+};
+use crate::core::location::PanelLocation;
 use std::path::PathBuf;
-use crate::location::PanelLocation;
-pub use crate::copy_state::{ArchiveProgress, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation};
+
+fn view_mode_from_settings_flag(view: &str) -> ViewMode {
+    if view == "one" {
+        ViewMode::SingleColumn
+    } else {
+        ViewMode::DoubleColumn
+    }
+}
 
 /// Message from the background archive thread: progress update or completion.
 #[derive(Debug)]
@@ -118,10 +128,11 @@ pub use crate::size_info_dialog::{SizeInfoDialogState, SizeInfoProgress};
 
 // Re-exports so AppState and other modules can use these types without circular deps.
 pub use crate::archive_dialog::ArchiveDialogState;
+pub use crate::core::find::FindMessage;
 pub use crate::editor::EditorScreenState;
-pub use crate::new_file_dialog::NewFileDialogState;
-pub use crate::find_dialog::{FindDialogPhase, FindDialogState, FindMessage};
+pub use crate::find_dialog::{FindDialogPhase, FindDialogState};
 pub use crate::mkdir_dialog::MkdirDialogState;
+pub use crate::new_file_dialog::NewFileDialogState;
 pub use crate::rename_attr::{RenameAttrDialogState, RenameAttrField};
 pub use crate::settings_dialog::SettingsDialogState;
 pub use crate::viewer::ViewerState;
@@ -193,16 +204,8 @@ impl AppState {
     /// Single sync point: apply persisted_settings to both panels (view_mode, show_hidden, refresh file lists).
     /// Call after startup and whenever persisted_settings change so UI always matches the source of truth.
     pub fn sync_from_persisted_settings(&mut self) {
-        let view_left = if self.persisted_settings.left_view.as_str() == "one" {
-            ViewMode::SingleColumn
-        } else {
-            ViewMode::DoubleColumn
-        };
-        let view_right = if self.persisted_settings.right_view.as_str() == "one" {
-            ViewMode::SingleColumn
-        } else {
-            ViewMode::DoubleColumn
-        };
+        let view_left = view_mode_from_settings_flag(&self.persisted_settings.left_view);
+        let view_right = view_mode_from_settings_flag(&self.persisted_settings.right_view);
         let left_show = self.persisted_settings.left_show_hidden;
         let right_show = self.persisted_settings.right_show_hidden;
         self.left_panel_mut().set_view_mode(view_left);
@@ -229,14 +232,21 @@ impl AppState {
         }
         let loc_left = self.left_panel.current_location();
         let loc_right = self.right_panel.current_location();
-        self.persisted_settings.left_cwd = loc_left.as_fs_path().map(|p| p.to_string_lossy().to_string());
-        self.persisted_settings.right_cwd = loc_right.as_fs_path().map(|p| p.to_string_lossy().to_string());
+        self.persisted_settings.left_cwd = loc_left
+            .as_fs_path()
+            .map(|p| p.to_string_lossy().to_string());
+        self.persisted_settings.right_cwd = loc_right
+            .as_fs_path()
+            .map(|p| p.to_string_lossy().to_string());
         self.persisted_settings.active_panel = if self.active_panel == 0 { 0 } else { 1 };
-        let _ = crate::settings::save(&self.persisted_settings);
+        let _ = crate::core::settings::save(&self.persisted_settings);
     }
 
     /// Set the active panel by index (0 = left, 1 = right).
-    pub fn set_active_panel(&mut self, panel_index: usize) {
+    pub fn set_active_panel(
+        &mut self,
+        panel_index: usize,
+    ) {
         self.active_panel = if panel_index == 0 { 0 } else { 1 };
     }
 
@@ -351,14 +361,20 @@ impl AppState {
         self.focus = Focus::Panel;
     }
 
-    pub fn command_line_insert(&mut self, c: char) {
+    pub fn command_line_insert(
+        &mut self,
+        c: char,
+    ) {
         let at = self.command_line_cursor.min(self.command_line.len());
         self.command_line.insert(at, c);
         self.command_line_cursor = at + 1;
     }
 
     /// Insert a string at the current command-line cursor (e.g. for Ctrl+Enter to insert current file).
-    pub fn command_line_insert_str(&mut self, s: &str) {
+    pub fn command_line_insert_str(
+        &mut self,
+        s: &str,
+    ) {
         let at = self.command_line_cursor.min(self.command_line.len());
         self.command_line.insert_str(at, s);
         self.command_line_cursor = at + s.len();

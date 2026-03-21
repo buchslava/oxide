@@ -44,10 +44,10 @@ pub enum SizeInfoDialogState {
         dir_count: usize,
     },
 }
+use crate::core::file_ops::FileOperations;
+use crate::core::text_format::format_byte_size;
 use crate::events::AppAction;
-use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
-use crate::ui::format_size;
 
 /// Open size info (start background calculation). Ctrl+G. Result shown in panel bottom bar.
 pub fn open(app: &mut AppState) {
@@ -68,10 +68,12 @@ pub fn open(app: &mut AppState) {
             let path = FileOperations::join_path(&cwd, name);
             if *is_dir {
                 dir_count += 1;
-                total_bytes = total_bytes.saturating_add(FileOperations::size_of_path_recursive(&path));
+                total_bytes =
+                    total_bytes.saturating_add(FileOperations::size_of_path_recursive(&path));
             } else {
                 file_count += 1;
-                total_bytes = total_bytes.saturating_add(FileOperations::size_of_path_recursive(&path));
+                total_bytes =
+                    total_bytes.saturating_add(FileOperations::size_of_path_recursive(&path));
             }
             let current = i + 1;
             let _ = tx.send(SizeInfoProgress::Progress {
@@ -134,19 +136,23 @@ pub fn format_bottom_bar_line(app: &AppState) -> Option<String> {
             dir_count,
             ..
         } => {
-            let size_str = format_size(*total_bytes);
-            let count_parts: Vec<String> = [
-                (*file_count, "file", "files"),
-                (*dir_count, "dir", "dirs"),
-            ]
-            .into_iter()
-            .filter(|(n, ..)| *n > 0)
-            .map(|(n, sing, pl)| format!("{} {}", n, if n == 1 { sing } else { pl }))
-            .collect();
+            let size_str = format_byte_size(*total_bytes);
+            let count_parts: Vec<String> =
+                [(*file_count, "file", "files"), (*dir_count, "dir", "dirs")]
+                    .into_iter()
+                    .filter(|(n, ..)| *n > 0)
+                    .map(|(n, sing, pl)| format!("{} {}", n, if n == 1 { sing } else { pl }))
+                    .collect();
             if count_parts.is_empty() {
                 format!("Calculating {} / {} · {}", current, total, size_str)
             } else {
-                format!("Calculating {} / {} · {} ({})", current, total, size_str, count_parts.join(", "))
+                format!(
+                    "Calculating {} / {} · {} ({})",
+                    current,
+                    total,
+                    size_str,
+                    count_parts.join(", ")
+                )
             }
         }
         SizeInfoDialogState::Done {
@@ -154,15 +160,13 @@ pub fn format_bottom_bar_line(app: &AppState) -> Option<String> {
             file_count,
             dir_count,
         } => {
-            let size_str = format_size(*total_bytes);
-            let count_parts: Vec<String> = [
-                (*file_count, "file", "files"),
-                (*dir_count, "dir", "dirs"),
-            ]
-            .into_iter()
-            .filter(|(n, ..)| *n > 0)
-            .map(|(n, sing, pl)| format!("{} {}", n, if n == 1 { sing } else { pl }))
-            .collect();
+            let size_str = format_byte_size(*total_bytes);
+            let count_parts: Vec<String> =
+                [(*file_count, "file", "files"), (*dir_count, "dir", "dirs")]
+                    .into_iter()
+                    .filter(|(n, ..)| *n > 0)
+                    .map(|(n, sing, pl)| format!("{} {}", n, if n == 1 { sing } else { pl }))
+                    .collect();
             if count_parts.is_empty() {
                 format!("Total: {}", size_str)
             } else {

@@ -133,7 +133,8 @@ pub fn save(settings: &PersistedSettings) -> std::io::Result<()> {
         ));
     };
     let path = dir.join("settings.json");
-    let data = serde_json::to_string_pretty(settings).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let data = serde_json::to_string_pretty(settings)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     fs::write(path, data)
 }
 

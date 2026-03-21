@@ -2,16 +2,16 @@
 //! selected items are zipped into it; originals are kept. Enter = create (if non-empty), Esc = cancel.
 
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::app_state::{AppState, ArchiveMessage, ArchiveProgress};
+use crate::core::file_ops::FileOperations;
+use crate::core::location::PanelLocation;
 use crate::events::AppAction;
-use crate::file_ops::FileOperations;
-use crate::location::PanelLocation;
 use crate::text_input::{self, TextInputState};
 
 /// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
@@ -49,7 +49,7 @@ pub fn create_and_refresh(
     items: &[(String, bool)],
 ) {
     let loc = app.get_current_location();
-    if let Err(e) = crate::panel_backend::create_archive(&loc, items, name) {
+    if let Err(e) = crate::core::panel_backend::create_archive(&loc, items, name) {
         eprintln!("Cannot create archive: {}", e);
         return;
     }
@@ -62,7 +62,11 @@ pub fn create_and_refresh(
 }
 
 /// Start creating the archive in a background thread; show progress overlay. Call after closing the dialog.
-pub fn start_archive_background(app: &mut AppState, name: &str, items: &[(String, bool)]) {
+pub fn start_archive_background(
+    app: &mut AppState,
+    name: &str,
+    items: &[(String, bool)],
+) {
     let loc = app.get_current_location();
     let PanelLocation::Fs(base_dir) = &loc else {
         eprintln!("Archive only supported on filesystem");
@@ -70,13 +74,22 @@ pub fn start_archive_background(app: &mut AppState, name: &str, items: &[(String
     };
     let items: Vec<(String, bool)> = items.to_vec();
     let name = name.to_string();
-    let target_path = FileOperations::join_path(base_dir, &name).to_string_lossy().to_string();
+    let target_path = FileOperations::join_path(base_dir, &name)
+        .to_string_lossy()
+        .to_string();
 
     let (tx, rx) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
 
     let total = items.len();
-    let first_path = items.first().map(|(n, _)| FileOperations::join_path(base_dir, n).to_string_lossy().to_string()).unwrap_or_default();
+    let first_path = items
+        .first()
+        .map(|(n, _)| {
+            FileOperations::join_path(base_dir, n)
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_default();
     app.archive_progress = Some(ArchiveProgress {
         current_path: first_path,
         target_path: target_path.clone(),
@@ -96,7 +109,7 @@ pub fn start_archive_background(app: &mut AppState, name: &str, items: &[(String
                 total,
             }));
         };
-        let result = crate::panel_backend::create_archive_with_progress(
+        let result = crate::core::panel_backend::create_archive_with_progress(
             &loc_clone,
             &items,
             &name,
@@ -121,8 +134,12 @@ impl ArchiveDialogState {
         match result {
             text_input::SingleInputKeyResult::Confirm => (None, AppAction::ArchiveConfirm),
             text_input::SingleInputKeyResult::Cancel => (None, AppAction::ArchiveCancel),
-            text_input::SingleInputKeyResult::Suspend => (Some(Self { input, focus }), AppAction::Suspend),
-            text_input::SingleInputKeyResult::Continue => (Some(Self { input, focus }), AppAction::Continue),
+            text_input::SingleInputKeyResult::Suspend => {
+                (Some(Self { input, focus }), AppAction::Suspend)
+            }
+            text_input::SingleInputKeyResult::Continue => {
+                (Some(Self { input, focus }), AppAction::Continue)
+            }
         }
     }
 }
@@ -140,8 +157,13 @@ pub fn handle_key(
 }
 
 /// Draw the "Archive" dialog.
-pub fn draw(f: &mut ratatui::Frame, app: &mut AppState) {
-    let Some(ref d) = app.archive_dialog else { return };
+pub fn draw(
+    f: &mut ratatui::Frame,
+    app: &mut AppState,
+) {
+    let Some(ref d) = app.archive_dialog else {
+        return;
+    };
     text_input::draw_single_input_dialog(
         f,
         f.area(),

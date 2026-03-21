@@ -1,9 +1,20 @@
 use std::collections::HashSet;
 use std::io;
 
-use crate::file_ops::FileInfo;
-use crate::location::PanelLocation;
-use crate::panel_backend;
+use crate::core::file_ops::FileInfo;
+use crate::core::location::PanelLocation;
+use crate::core::panel_backend;
+
+/// Index of a non–parent-dir entry whose name matches `name` (trimmed trailing `/`).
+fn index_of_non_parent_file_named(
+    files: &[FileInfo],
+    name: &str,
+) -> Option<usize> {
+    let name_trimmed = name.trim_end_matches('/');
+    files
+        .iter()
+        .position(|f| !f.is_parent_dir() && f.name.trim_end_matches('/') == name_trimmed)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewMode {
@@ -12,30 +23,65 @@ pub enum ViewMode {
 }
 
 pub trait PanelOperations {
-    fn move_up(&mut self, panel_height: usize);
-    fn move_down(&mut self, panel_height: usize);
-    fn page_up(&mut self, panel_height: usize);
-    fn page_down(&mut self, panel_height: usize);
-    fn smart_move_left(&mut self, panel_height: usize);
-    fn smart_move_right(&mut self, panel_height: usize);
+    fn move_up(
+        &mut self,
+        panel_height: usize,
+    );
+    fn move_down(
+        &mut self,
+        panel_height: usize,
+    );
+    fn page_up(
+        &mut self,
+        panel_height: usize,
+    );
+    fn page_down(
+        &mut self,
+        panel_height: usize,
+    );
+    fn smart_move_left(
+        &mut self,
+        panel_height: usize,
+    );
+    fn smart_move_right(
+        &mut self,
+        panel_height: usize,
+    );
     fn enter_directory(&mut self) -> io::Result<()>;
     fn refresh_files(&mut self) -> io::Result<()>;
-    fn update_scroll_offset(&mut self, panel_height: usize);
-    fn update_scroll_offset_double_column(&mut self, panel_height: usize);
+    fn update_scroll_offset(
+        &mut self,
+        panel_height: usize,
+    );
+    fn update_scroll_offset_double_column(
+        &mut self,
+        panel_height: usize,
+    );
     fn get_current_dir(&self) -> &str;
     fn get_selected_file(&self) -> Option<&FileInfo>;
     fn get_selected_index(&self) -> usize;
     fn get_scroll_offset(&self) -> usize;
     fn get_files(&self) -> &[FileInfo];
     fn get_view_mode(&self) -> ViewMode;
-    fn set_view_mode(&mut self, mode: ViewMode);
+    fn set_view_mode(
+        &mut self,
+        mode: ViewMode,
+    );
     /// Toggle selection (mark) of the current file and move to the next. F12 / MC Insert.
-    fn toggle_mark_and_move_next(&mut self, panel_height: usize);
+    fn toggle_mark_and_move_next(
+        &mut self,
+        panel_height: usize,
+    );
     /// Invert selection: all marked become unmarked, all unmarked (except "..") become marked. MC *.
     fn invert_selection(&mut self);
-    fn is_marked(&self, index: usize) -> bool;
+    fn is_marked(
+        &self,
+        index: usize,
+    ) -> bool;
     /// Same as get_names_to_copy plus names of file before (first-1) and after (first+count) for restore after delete/move.
-    fn get_names_to_copy_with_restore_neighbors(&self) -> (Vec<(String, bool)>, Option<String>, Option<String>);
+    fn get_names_to_copy_with_restore_neighbors(
+        &self
+    ) -> (Vec<(String, bool)>, Option<String>, Option<String>);
 }
 
 #[derive(Debug)]
@@ -80,7 +126,10 @@ impl Panel {
     }
 
     /// Navigate to a new location (e.g. from Find file "Chdir"). Public for use from main.
-    pub fn navigate_to_location(&mut self, new_location: PanelLocation) -> io::Result<()> {
+    pub fn navigate_to_location(
+        &mut self,
+        new_location: PanelLocation,
+    ) -> io::Result<()> {
         self.marked_indices.clear();
         self.navigation_history
             .push((self.current_location.clone(), self.selected_index));
@@ -106,13 +155,25 @@ impl Panel {
         // Try to find the directory we came from in the parent list
         if let Some((prev_loc, _)) = self.navigation_history.pop() {
             let prev_name_str = match &prev_loc {
-                PanelLocation::Fs(p) => p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()),
-                PanelLocation::Zip { archive, path_inside } => {
+                PanelLocation::Fs(p) => p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                PanelLocation::Zip {
+                    archive,
+                    path_inside,
+                } => {
                     let inside = path_inside.trim_end_matches('/');
                     if inside.is_empty() {
-                        archive.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                        archive
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.to_string())
                     } else {
-                        inside.rsplit_once('/').map(|(_, last)| last.to_string()).or_else(|| Some(inside.to_string()))
+                        inside
+                            .rsplit_once('/')
+                            .map(|(_, last)| last.to_string())
+                            .or_else(|| Some(inside.to_string()))
                     }
                 }
             };
@@ -138,7 +199,10 @@ impl Panel {
 }
 
 impl PanelOperations for Panel {
-    fn move_up(&mut self, panel_height: usize) {
+    fn move_up(
+        &mut self,
+        panel_height: usize,
+    ) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
             if self.view_mode == ViewMode::DoubleColumn {
@@ -155,7 +219,10 @@ impl PanelOperations for Panel {
         }
     }
 
-    fn move_down(&mut self, panel_height: usize) {
+    fn move_down(
+        &mut self,
+        panel_height: usize,
+    ) {
         if !self.files.is_empty() && self.selected_index < self.files.len() - 1 {
             self.selected_index += 1;
             if self.view_mode == ViewMode::DoubleColumn {
@@ -173,7 +240,10 @@ impl PanelOperations for Panel {
         }
     }
 
-    fn page_up(&mut self, panel_height: usize) {
+    fn page_up(
+        &mut self,
+        panel_height: usize,
+    ) {
         let h = panel_height.max(1);
         if self.view_mode == ViewMode::DoubleColumn {
             // MC prev_page: move current and top together by one page (or less if near top)
@@ -199,7 +269,10 @@ impl PanelOperations for Panel {
         }
     }
 
-    fn page_down(&mut self, panel_height: usize) {
+    fn page_down(
+        &mut self,
+        panel_height: usize,
+    ) {
         let h = panel_height.max(1);
         if self.files.is_empty() {
             return;
@@ -214,7 +287,9 @@ impl PanelOperations for Panel {
             }
             let mut items = files_per_page;
             if self.scroll_offset > max_scroll.saturating_sub(files_per_page) {
-                items = total.saturating_sub(files_per_page).saturating_sub(self.scroll_offset);
+                items = total
+                    .saturating_sub(files_per_page)
+                    .saturating_sub(self.scroll_offset);
             }
             if self.scroll_offset + items > max_scroll {
                 items = max_scroll.saturating_sub(self.scroll_offset);
@@ -241,7 +316,10 @@ impl PanelOperations for Panel {
 
     /// MC move_left: panel_move_current(panel, -panel_lines). Same as MC: current -= lines;
     /// if current goes above visible window, top += lines (top moves up by one column).
-    fn smart_move_left(&mut self, panel_height: usize) {
+    fn smart_move_left(
+        &mut self,
+        panel_height: usize,
+    ) {
         let h = panel_height.max(1);
         let files_per_page = h * 2;
         let total = self.files.len();
@@ -271,7 +349,10 @@ impl PanelOperations for Panel {
 
     /// MC move_right: panel_move_current(panel, panel_lines). Same as MC: current += lines;
     /// if current goes below visible window, top += lines (window scrolls down by one column).
-    fn smart_move_right(&mut self, panel_height: usize) {
+    fn smart_move_right(
+        &mut self,
+        panel_height: usize,
+    ) {
         let h = panel_height.max(1);
         let files_per_page = h * 2;
         let total = self.files.len();
@@ -325,7 +406,12 @@ impl PanelOperations for Panel {
 
     fn refresh_files(&mut self) -> io::Result<()> {
         self.marked_indices.clear();
-        self.files = panel_backend::list(&self.current_location, self.show_hidden, &self.sort_mode, self.dirs_first)?;
+        self.files = panel_backend::list(
+            &self.current_location,
+            self.show_hidden,
+            &self.sort_mode,
+            self.dirs_first,
+        )?;
         self.selected_index = 0;
         self.scroll_offset = 0;
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
@@ -334,8 +420,10 @@ impl PanelOperations for Panel {
         Ok(())
     }
 
-
-    fn update_scroll_offset(&mut self, panel_height: usize) {
+    fn update_scroll_offset(
+        &mut self,
+        panel_height: usize,
+    ) {
         let h = panel_height.max(1);
         if self.selected_index >= self.scroll_offset + h {
             self.scroll_offset = self.selected_index - h + 1;
@@ -347,7 +435,10 @@ impl PanelOperations for Panel {
     /// MC adjust_top_file: keep scroll so current is visible; minimal adjustment.
     /// top in [current - items + 1, current] and in [0, len - items]. Only adjust when
     /// current is outside the visible window (or clamp to valid range).
-    fn update_scroll_offset_double_column(&mut self, panel_height: usize) {
+    fn update_scroll_offset_double_column(
+        &mut self,
+        panel_height: usize,
+    ) {
         let h = panel_height.max(1);
         let files_per_page = h * 2;
         let total_files = self.files.len();
@@ -401,11 +492,17 @@ impl PanelOperations for Panel {
         self.view_mode
     }
 
-    fn set_view_mode(&mut self, mode: ViewMode) {
+    fn set_view_mode(
+        &mut self,
+        mode: ViewMode,
+    ) {
         self.view_mode = mode;
     }
 
-    fn toggle_mark_and_move_next(&mut self, panel_height: usize) {
+    fn toggle_mark_and_move_next(
+        &mut self,
+        panel_height: usize,
+    ) {
         if self.files.is_empty() {
             return;
         }
@@ -439,11 +536,16 @@ impl PanelOperations for Panel {
         }
     }
 
-    fn is_marked(&self, index: usize) -> bool {
+    fn is_marked(
+        &self,
+        index: usize,
+    ) -> bool {
         self.marked_indices.contains(&index)
     }
 
-    fn get_names_to_copy_with_restore_neighbors(&self) -> (Vec<(String, bool)>, Option<String>, Option<String>) {
+    fn get_names_to_copy_with_restore_neighbors(
+        &self
+    ) -> (Vec<(String, bool)>, Option<String>, Option<String>) {
         let files = self.get_files();
         if files.is_empty() {
             return (Vec::new(), None, None);
@@ -463,8 +565,11 @@ impl PanelOperations for Panel {
             }
         } else {
             let mut it = self.marked_indices.iter().copied();
-            let first = it.next().expect("marked_indices non-empty in get_names_to_copy");
-            let (first_index, last_index) = it.fold((first, first), |(min, max), i| (min.min(i), max.max(i)));
+            let first = it
+                .next()
+                .expect("marked_indices non-empty in get_names_to_copy");
+            let (first_index, last_index) =
+                it.fold((first, first), |(min, max), i| (min.min(i), max.max(i)));
             let mut items = Vec::new();
             for &idx in &self.marked_indices {
                 if let Some(f) = files.get(idx) {
@@ -511,22 +616,35 @@ impl Panel {
     }
 
     /// Set whether hidden files (names starting with ".") are shown. Used by Ctrl+H toggle.
-    pub fn set_show_hidden(&mut self, show: bool) {
+    pub fn set_show_hidden(
+        &mut self,
+        show: bool,
+    ) {
         self.show_hidden = show;
     }
 
     /// Set sort mode for file list.
-    pub fn set_sort_mode(&mut self, mode: &str) {
+    pub fn set_sort_mode(
+        &mut self,
+        mode: &str,
+    ) {
         self.sort_mode = mode.to_string();
     }
 
     /// Set whether directories appear before files (true) or unified sort (false).
-    pub fn set_dirs_first(&mut self, dirs_first: bool) {
+    pub fn set_dirs_first(
+        &mut self,
+        dirs_first: bool,
+    ) {
         self.dirs_first = dirs_first;
     }
 
     /// Set the current selection to the given index and update scroll so it is visible.
-    pub fn set_selection(&mut self, index: usize, panel_height: usize) {
+    pub fn set_selection(
+        &mut self,
+        index: usize,
+        panel_height: usize,
+    ) {
         let len = self.files.len();
         if len == 0 {
             return;
@@ -556,30 +674,27 @@ impl Panel {
             .map(|f| f.name.trim_end_matches('/').to_string());
 
         self.marked_indices.clear();
-        self.files = panel_backend::list(&self.current_location, self.show_hidden, &self.sort_mode, self.dirs_first)?;
+        self.files = panel_backend::list(
+            &self.current_location,
+            self.show_hidden,
+            &self.sort_mode,
+            self.dirs_first,
+        )?;
         self.selected_index = 0;
         self.scroll_offset = 0;
 
         let mut found = false;
         if let Some(name) = preferred_after {
-            let name_trimmed = name.trim_end_matches('/');
-            for (i, f) in self.files.iter().enumerate() {
-                if f.name.trim_end_matches('/') == name_trimmed && !f.is_parent_dir() {
-                    self.selected_index = i;
-                    found = true;
-                    break;
-                }
+            if let Some(i) = index_of_non_parent_file_named(&self.files, name) {
+                self.selected_index = i;
+                found = true;
             }
         }
         if !found {
             if let Some(name) = preferred_before {
-                let name_trimmed = name.trim_end_matches('/');
-                for (i, f) in self.files.iter().enumerate() {
-                    if f.name.trim_end_matches('/') == name_trimmed && !f.is_parent_dir() {
-                        self.selected_index = i;
-                        found = true;
-                        break;
-                    }
+                if let Some(i) = index_of_non_parent_file_named(&self.files, name) {
+                    self.selected_index = i;
+                    found = true;
                 }
             }
         }

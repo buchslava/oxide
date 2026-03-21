@@ -1,15 +1,11 @@
 //! Ctrl+F Find file dialog (MC-style). Parameter form (start dir, file pattern, content pattern,
 //! options), then results list. Shell-style wildcards (*, ?). Optional content search.
 
-use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::thread;
-use walkdir::WalkDir;
 
+use crate::core::find::run_find_search;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Margin, Rect},
@@ -22,24 +18,12 @@ use ratatui::{
 use crate::app_state::AppState;
 use crate::clipboard;
 use crate::panel::PanelOperations;
-use crate::styles::{DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG};
+use crate::styles::{
+    DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG,
+};
 use crate::text_input::{self, TextInputState};
 
-/// One result from Find file: path and optional line number (when content search matched).
-#[derive(Debug, Clone)]
-pub struct FindResult {
-    pub path: PathBuf,
-    pub line: Option<u64>,
-}
-
-/// Message from the find search background thread.
-#[derive(Debug)]
-pub enum FindMessage {
-    Match(PathBuf, Option<u64>),
-    /// Current directory being traversed (empty when search is done).
-    CurrentDir(String),
-    Done,
-}
+pub use crate::core::find::{build_display_rows, FindDisplayRow, FindMessage, FindResult};
 
 /// Phase of the Find file dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,189 +103,6 @@ pub fn close(app: &mut AppState) {
     app.focus = Focus::Panel;
 }
 
-/// One row in the grouped find results list: either a folder (header) or a file.
-#[derive(Debug, Clone)]
-pub enum FindDisplayRow {
-    Folder(PathBuf),
-    File(FindResult),
-}
-
-/// Build display list grouped by parent directory: for each directory (in order of first occurrence),
-/// one Folder row then one File row per match in that directory.
-pub fn build_display_rows(results: &[FindResult]) -> Vec<FindDisplayRow> {
-    let mut groups: Vec<(PathBuf, Vec<FindResult>)> = Vec::new();
-    for r in results {
-        let parent = r
-            .path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(PathBuf::new);
-        if groups.last().map(|(p, _)| p != &parent).unwrap_or(true) {
-            groups.push((parent, Vec::new()));
-        }
-        if let Some((_, files)) = groups.last_mut() {
-            files.push(r.clone());
-        }
-    }
-    let mut rows = Vec::new();
-    for (dir, files) in groups {
-        rows.push(FindDisplayRow::Folder(dir));
-        for r in files {
-            rows.push(FindDisplayRow::File(r));
-        }
-    }
-    rows
-}
-
-/// Shell-style glob match: * = any sequence, ? = one character. Empty pattern matches all.
-pub fn glob_match(pattern: &str, name: &str, case_sensitive: bool) -> bool {
-    let (p, n) = if case_sensitive {
-        (pattern.as_bytes().to_vec(), name.as_bytes().to_vec())
-    } else {
-        (
-            pattern.to_lowercase().into_bytes(),
-            name.to_lowercase().into_bytes(),
-        )
-    };
-    let (p, n) = (p.as_slice(), n.as_slice());
-    fn match_at(p: &[u8], n: &[u8]) -> bool {
-        let mut pi = 0;
-        let mut ni = 0;
-        while pi < p.len() {
-            match p[pi] {
-                b'*' => {
-                    pi += 1;
-                    if pi == p.len() {
-                        return true;
-                    }
-                    while ni <= n.len() {
-                        if match_at(&p[pi..], &n[ni..]) {
-                            return true;
-                        }
-                        ni += 1;
-                    }
-                    return false;
-                }
-                b'?' => {
-                    if ni < n.len() {
-                        pi += 1;
-                        ni += 1;
-                    } else {
-                        return false;
-                    }
-                }
-                c => {
-                    if ni < n.len() && n[ni] == c {
-                        pi += 1;
-                        ni += 1;
-                    } else {
-                        return false;
-                    }
-                }
-            }
-        }
-        ni == n.len()
-    }
-    if p.is_empty() {
-        return true;
-    }
-    match_at(p, n)
-}
-
-/// Run find in a background thread; send matches and Done on tx.
-/// Uses walkdir for robust traversal (handles special dir names like "!!!").
-/// Takes Arc<str> so the caller can Arc::clone (cheap) instead of cloning the string.
-/// If cancel.load(Ordering::Relaxed) becomes true, stops and sends Done.
-fn run_search(
-    start_dir: Arc<str>,
-    file_pattern: Arc<str>,
-    content_pattern: Arc<str>,
-    recursive: bool,
-    file_case_sens: bool,
-    content_case_sens: bool,
-    skip_hidden: bool,
-    cancel: Arc<AtomicBool>,
-    tx: mpsc::Sender<FindMessage>,
-) {
-    thread::spawn(move || {
-        let start_dir = start_dir.trim();
-        let file_pattern = file_pattern.trim();
-        let content_pattern = content_pattern.trim();
-        let start = PathBuf::from(start_dir);
-        if !start.is_dir() {
-            let _ = tx.send(FindMessage::Done);
-            return;
-        }
-        let content_empty = content_pattern.is_empty();
-        let mut current_dir_sent: Option<PathBuf> = None;
-
-        let walker = WalkDir::new(&start)
-            .min_depth(1)
-            .max_depth(if recursive { usize::MAX } else { 1 })
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy();
-                if skip_hidden && name.starts_with('.') {
-                    return false;
-                }
-                true
-            })
-            .filter_map(|e| e.ok());
-
-        for entry in walker {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
-            let path = entry.path().to_path_buf();
-            if let Some(parent) = path.parent() {
-                if current_dir_sent.as_ref().map(PathBuf::as_path) != Some(parent) {
-                    current_dir_sent = Some(parent.to_path_buf());
-                    let _ = tx.send(FindMessage::CurrentDir(parent.display().to_string()));
-                }
-            }
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let name_cow = entry.file_name().to_string_lossy();
-            let name = name_cow.as_ref();
-            if !glob_match(file_pattern, name, file_case_sens) {
-                continue;
-            }
-            if content_empty {
-                let _ = tx.send(FindMessage::Match(path, None));
-            } else if let Ok(file) = fs::File::open(&path) {
-                let needle = if content_case_sens {
-                    content_pattern.to_string()
-                } else {
-                    content_pattern.to_lowercase()
-                };
-                let reader = BufReader::new(file);
-                for (line_no, line) in reader.lines().enumerate() {
-                    if cancel.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if let Ok(ref ln) = line {
-                        let hay = if content_case_sens {
-                            ln.clone()
-                        } else {
-                            ln.to_lowercase()
-                        };
-                        if hay.contains(&needle) {
-                            let _ = tx.send(FindMessage::Match(
-                                path.clone(),
-                                Some((line_no + 1) as u64),
-                            ));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        let _ = tx.send(FindMessage::Done);
-    });
-}
-
 /// Start the find search in a background thread; app.find_dialog must be Some.
 pub fn start_search(app: &mut AppState) {
     let d = match app.find_dialog.as_mut() {
@@ -332,7 +133,7 @@ pub fn start_search(app: &mut AppState) {
     app.find_search_cancel = Some(Arc::clone(&cancel));
 
     let (tx, rx) = mpsc::channel();
-    run_search(
+    run_find_search(
         start_dir,
         file_pattern,
         content_pattern,
@@ -383,7 +184,8 @@ pub fn poll_search(app: &mut AppState) {
                     }
                     if let Some(arc) = d.search_content_pattern.take() {
                         d.content_pattern_input.text = arc.to_string();
-                        d.content_pattern_input.cursor = d.content_pattern_input.text.chars().count();
+                        d.content_pattern_input.cursor =
+                            d.content_pattern_input.text.chars().count();
                         d.content_pattern_input.anchor = None;
                     }
                 }
@@ -431,19 +233,19 @@ fn handle_key_parameter(
     use crate::events::AppAction;
     let d = app.find_dialog.as_mut()?;
     if modifiers.contains(KeyModifiers::CONTROL) {
-                if code == KeyCode::Char('a') && d.focus <= 2 {
-                    let input = match d.focus {
-                        0 => &mut d.start_dir_input,
-                        1 => &mut d.file_pattern_input,
-                        2 => &mut d.content_pattern_input,
-                        _ => return Some(AppAction::Continue),
-                    };
-                    if !input.text.is_empty() {
-                        *input = std::mem::take(input).select_all();
-                    }
-                    return Some(AppAction::Continue);
-                }
-                if code == KeyCode::Char('v') && d.focus <= 2 {
+        if code == KeyCode::Char('a') && d.focus <= 2 {
+            let input = match d.focus {
+                0 => &mut d.start_dir_input,
+                1 => &mut d.file_pattern_input,
+                2 => &mut d.content_pattern_input,
+                _ => return Some(AppAction::Continue),
+            };
+            if !input.text.is_empty() {
+                *input = std::mem::take(input).select_all();
+            }
+            return Some(AppAction::Continue);
+        }
+        if code == KeyCode::Char('v') && d.focus <= 2 {
             let input = match d.focus {
                 0 => &mut d.start_dir_input,
                 1 => &mut d.file_pattern_input,
@@ -458,9 +260,18 @@ fn handle_key_parameter(
         if code == KeyCode::Char('c') {
             if d.focus <= 2 {
                 let text = match d.focus {
-                    0 => d.start_dir_input.get_selected_text().unwrap_or_else(|| d.start_dir_input.text.clone()),
-                    1 => d.file_pattern_input.get_selected_text().unwrap_or_else(|| d.file_pattern_input.text.clone()),
-                    2 => d.content_pattern_input.get_selected_text().unwrap_or_else(|| d.content_pattern_input.text.clone()),
+                    0 => d
+                        .start_dir_input
+                        .get_selected_text()
+                        .unwrap_or_else(|| d.start_dir_input.text.clone()),
+                    1 => d
+                        .file_pattern_input
+                        .get_selected_text()
+                        .unwrap_or_else(|| d.file_pattern_input.text.clone()),
+                    2 => d
+                        .content_pattern_input
+                        .get_selected_text()
+                        .unwrap_or_else(|| d.content_pattern_input.text.clone()),
                     _ => String::new(),
                 };
                 if !text.is_empty() {
@@ -662,7 +473,10 @@ const STATUS_ROWS: u16 = 2; // status line + gap
 const HINT_ROWS: u16 = 1;
 
 /// Draw the Find file dialog (parameter form or results list).
-pub fn draw(f: &mut Frame, app: &mut AppState) {
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
     poll_search(app);
     let d = match app.find_dialog.as_mut() {
         Some(d) => d,
@@ -750,7 +564,9 @@ fn draw_parameter_form(
         };
         let cursor_screen = cursor_char.saturating_sub(display_offset);
         let base_style = Style::default().bg(bg).fg(Color::White);
-        let selection_style = Style::default().bg(DIALOG_INPUT_SELECTION_BG).fg(Color::White);
+        let selection_style = Style::default()
+            .bg(DIALOG_INPUT_SELECTION_BG)
+            .fg(Color::White);
         let line = text_input::input_line_with_selection_slice(
             input,
             display_offset,
@@ -761,11 +577,21 @@ fn draw_parameter_form(
         // Label and input on one line
         f.render_widget(
             Paragraph::new(label).style(fill_style),
-            Rect { x: cx, y: row, width: LABEL_W, height: 1 },
+            Rect {
+                x: cx,
+                y: row,
+                width: LABEL_W,
+                height: 1,
+            },
         );
         f.render_widget(
             Paragraph::new(line),
-            Rect { x: cx + LABEL_W, y: row, width: value_w, height: 1 },
+            Rect {
+                x: cx + LABEL_W,
+                y: row,
+                width: value_w,
+                height: 1,
+            },
         );
         if focused {
             let cursor_x = cx + LABEL_W + (cursor_screen as u16).min(value_w.saturating_sub(1));
@@ -955,13 +781,20 @@ fn draw_status_and_list(
     }
 }
 
-fn truncate_path(s: &str, max: usize) -> String {
-    crate::util::truncate_str(s, max, crate::util::TruncateMode::SuffixEllipsis)
+fn truncate_path(
+    s: &str,
+    max: usize,
+) -> String {
+    crate::core::text_format::truncate_str(
+        s,
+        max,
+        crate::core::text_format::TruncateMode::SuffixEllipsis,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use crate::core::find::glob_match;
 
     #[test]
     fn glob_star_offline_zip_matches_offline_zip() {

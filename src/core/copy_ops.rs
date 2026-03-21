@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::file_ops::FileOperations;
+use super::file_ops::FileOperations;
 
 /// EXDEV: cross-device link not permitted (rename across filesystems).
 #[cfg(unix)]
@@ -13,12 +13,18 @@ const EXDEV: i32 = 18;
 const EXDEV: i32 = -1;
 
 /// Copy a single file from src to dst. Overwrites if dst exists.
-pub fn copy_file<P: AsRef<Path>>(src: P, dst: P) -> io::Result<u64> {
+pub fn copy_file<P: AsRef<Path>>(
+    src: P,
+    dst: P,
+) -> io::Result<u64> {
     fs::copy(src.as_ref(), dst.as_ref())
 }
 
 /// Copy a directory recursively from src to dst. Creates dst if needed.
-pub fn copy_dir_recursive<P: AsRef<Path>>(src: P, dst: P) -> io::Result<()> {
+pub fn copy_dir_recursive<P: AsRef<Path>>(
+    src: P,
+    dst: P,
+) -> io::Result<()> {
     let src = src.as_ref();
     let dst = dst.as_ref();
     fs::create_dir_all(dst)?;
@@ -80,7 +86,11 @@ pub fn move_item<P: AsRef<Path>>(
 
 /// Delete one item (file or directory) at source_dir/name.
 /// is_dir: true = remove directory and contents recursively.
-pub fn delete_item<P: AsRef<Path>>(source_dir: P, name: &str, is_dir: bool) -> io::Result<()> {
+pub fn delete_item<P: AsRef<Path>>(
+    source_dir: P,
+    name: &str,
+    is_dir: bool,
+) -> io::Result<()> {
     let path = FileOperations::join_path(source_dir, name);
     if is_dir {
         fs::remove_dir_all(&path)

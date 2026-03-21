@@ -5,8 +5,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::app_state::AppState;
+use crate::core::panel_backend;
 use crate::events::AppAction;
-use crate::panel_backend;
 use crate::text_input::{self, TextInputState};
 
 /// State for Ctrl+N "New file" dialog. Single text field for the new file name.
@@ -38,7 +38,10 @@ pub fn confirm(app: &mut AppState) -> Option<String> {
 /// Create the empty file in the active panel's current location and refresh the panel.
 /// If the file already exists, sets app.new_file_error with a message and leaves the dialog closed.
 /// Call only when name is non-empty (after trim). Supported on filesystem and inside ZIP archives.
-pub fn create_and_refresh(app: &mut AppState, name: &str) {
+pub fn create_and_refresh(
+    app: &mut AppState,
+    name: &str,
+) {
     let loc = app.get_current_location();
     if let Ok(true) = panel_backend::entry_exists(&loc, name) {
         app.new_file_error = Some(format!("File already exists: {}", name));
@@ -69,8 +72,12 @@ impl NewFileDialogState {
         match result {
             text_input::SingleInputKeyResult::Confirm => (None, AppAction::NewFileConfirm),
             text_input::SingleInputKeyResult::Cancel => (None, AppAction::NewFileCancel),
-            text_input::SingleInputKeyResult::Suspend => (Some(Self { input, focus }), AppAction::Suspend),
-            text_input::SingleInputKeyResult::Continue => (Some(Self { input, focus }), AppAction::Continue),
+            text_input::SingleInputKeyResult::Suspend => {
+                (Some(Self { input, focus }), AppAction::Suspend)
+            }
+            text_input::SingleInputKeyResult::Continue => {
+                (Some(Self { input, focus }), AppAction::Continue)
+            }
         }
     }
 }
@@ -88,8 +95,13 @@ pub fn handle_key(
 }
 
 /// Draw the "New file" dialog.
-pub fn draw(f: &mut ratatui::Frame, app: &mut AppState) {
-    let Some(ref d) = app.new_file_dialog else { return };
+pub fn draw(
+    f: &mut ratatui::Frame,
+    app: &mut AppState,
+) {
+    let Some(ref d) = app.new_file_dialog else {
+        return;
+    };
     text_input::draw_single_input_dialog(
         f,
         f.area(),

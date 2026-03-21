@@ -121,6 +121,11 @@ Expert Rust developer mastering Rust 1.75+ features, advanced type system usage,
 - Cross-language interoperability patterns
 - Auditing and minimizing unsafe code blocks
 
+### Imports and path style (coding & refactoring)
+- Prefer **`use` imports** for types, traits, and functions referenced in a module; call them **unqualified** (`ZipArchive::new`, `ZipWriter::new`) instead of repeating crate/module prefixes (`zip::ZipArchive::new`) throughout the body.
+- When refactoring, **add or extend `use` lines** at the top of the module rather than growing long qualified paths inline—this keeps call sites readable and matches common Rust style (`rustfmt`/Clippy-friendly).
+- **Exceptions:** keep paths qualified when it **disambiguates** the same name from different crates or submodules, or for a **one-off** reference where an import would add noise; use `use crate::...` / `use super::...` for internal paths the same way.
+
 ### Modern Tooling & Ecosystem
 - Cargo workspace management and feature flags
 - Cross-compilation and target configuration

@@ -12,7 +12,10 @@ use ratatui::{
 
 use crate::clipboard;
 use crate::dialog_layout::{self, single_input_button_rects};
-use crate::styles::{DIALOG_BG, DIALOG_FOCUS, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG};
+use crate::styles::{
+    DIALOG_BG, DIALOG_FOCUS, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED,
+    DIALOG_INPUT_SELECTION_BG,
+};
 
 /// Single-line text input: content, cursor, and optional selection anchor (for Shift+arrow).
 /// Does not implement Clone to avoid accidental expensive cloning of the text buffer.
@@ -60,12 +63,20 @@ impl TextInputState {
     }
 
     /// Insert a character at the cursor (replacing selection if any). Returns new state (pure transition).
-    pub fn insert_char(mut self, c: char) -> Self {
+    pub fn insert_char(
+        mut self,
+        c: char,
+    ) -> Self {
         let sel = self.selection_bounds();
         self.anchor = None;
         if let Some((s, e)) = sel {
             let byte_start = self.text.char_indices().nth(s).map(|(i, _)| i).unwrap_or(0);
-            let byte_end = self.text.char_indices().nth(e).map(|(i, _)| i).unwrap_or(self.text.len());
+            let byte_end = self
+                .text
+                .char_indices()
+                .nth(e)
+                .map(|(i, _)| i)
+                .unwrap_or(self.text.len());
             self.text.drain(byte_start..byte_end);
             self.cursor = s;
         }
@@ -82,13 +93,26 @@ impl TextInputState {
 
     /// Insert a string at the cursor (e.g. for paste); replaces selection if any. Returns new state (pure transition).
     /// For single-line use, newlines in `s` are replaced with space.
-    pub fn insert_str(mut self, s: &str) -> Self {
+    pub fn insert_str(
+        mut self,
+        s: &str,
+    ) -> Self {
         let s = s.replace('\r', "").replace('\n', " ");
         let sel = self.selection_bounds();
         self.anchor = None;
         if let Some((start, end)) = sel {
-            let byte_start = self.text.char_indices().nth(start).map(|(i, _)| i).unwrap_or(0);
-            let byte_end = self.text.char_indices().nth(end).map(|(i, _)| i).unwrap_or(self.text.len());
+            let byte_start = self
+                .text
+                .char_indices()
+                .nth(start)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            let byte_end = self
+                .text
+                .char_indices()
+                .nth(end)
+                .map(|(i, _)| i)
+                .unwrap_or(self.text.len());
             self.text.drain(byte_start..byte_end);
             self.cursor = start;
         }
@@ -113,7 +137,12 @@ impl TextInputState {
         self.anchor = None;
         if let Some((s, e)) = sel {
             let byte_start = self.text.char_indices().nth(s).map(|(i, _)| i).unwrap_or(0);
-            let byte_end = self.text.char_indices().nth(e).map(|(i, _)| i).unwrap_or(self.text.len());
+            let byte_end = self
+                .text
+                .char_indices()
+                .nth(e)
+                .map(|(i, _)| i)
+                .unwrap_or(self.text.len());
             self.text.drain(byte_start..byte_end);
             self.cursor = s;
             return self;
@@ -139,18 +168,28 @@ impl TextInputState {
     }
 
     /// Move cursor left. If shift, extend selection; else clear selection.
-    pub fn move_left(self, shift: bool) -> Self {
+    pub fn move_left(
+        self,
+        shift: bool,
+    ) -> Self {
         let cursor = self.cursor.saturating_sub(1);
         let anchor = if shift {
             Some(self.anchor.unwrap_or(self.cursor))
         } else {
             None
         };
-        Self { cursor, anchor, ..self }
+        Self {
+            cursor,
+            anchor,
+            ..self
+        }
     }
 
     /// Move cursor right. If shift, extend selection; else clear selection.
-    pub fn move_right(self, shift: bool) -> Self {
+    pub fn move_right(
+        self,
+        shift: bool,
+    ) -> Self {
         let len = self.text.chars().count();
         let cursor = (self.cursor + 1).min(len);
         let anchor = if shift {
@@ -158,11 +197,18 @@ impl TextInputState {
         } else {
             None
         };
-        Self { cursor, anchor, ..self }
+        Self {
+            cursor,
+            anchor,
+            ..self
+        }
     }
 
     /// Move cursor to start. If shift, extend selection; else clear selection.
-    pub fn move_home(self, shift: bool) -> Self {
+    pub fn move_home(
+        self,
+        shift: bool,
+    ) -> Self {
         let anchor = if shift {
             Some(self.anchor.unwrap_or(self.cursor))
         } else {
@@ -176,7 +222,10 @@ impl TextInputState {
     }
 
     /// Move cursor to end. If shift, extend selection; else clear selection.
-    pub fn move_end(self, shift: bool) -> Self {
+    pub fn move_end(
+        self,
+        shift: bool,
+    ) -> Self {
         let len = self.text.chars().count();
         let anchor = if shift {
             Some(self.anchor.unwrap_or(self.cursor))
@@ -291,17 +340,38 @@ pub fn handle_single_input_key(
                 (input, focus, SingleInputKeyResult::Continue)
             }
         }
-        KeyCode::Backspace if focus == 0 => (input.backspace(), focus, SingleInputKeyResult::Continue),
-        KeyCode::Left if focus == 0 => (input.move_left(modifiers.contains(KeyModifiers::SHIFT)), focus, SingleInputKeyResult::Continue),
-        KeyCode::Right if focus == 0 => (input.move_right(modifiers.contains(KeyModifiers::SHIFT)), focus, SingleInputKeyResult::Continue),
-        KeyCode::Home if focus == 0 => (input.move_home(modifiers.contains(KeyModifiers::SHIFT)), focus, SingleInputKeyResult::Continue),
-        KeyCode::End if focus == 0 => (input.move_end(modifiers.contains(KeyModifiers::SHIFT)), focus, SingleInputKeyResult::Continue),
+        KeyCode::Backspace if focus == 0 => {
+            (input.backspace(), focus, SingleInputKeyResult::Continue)
+        }
+        KeyCode::Left if focus == 0 => (
+            input.move_left(modifiers.contains(KeyModifiers::SHIFT)),
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
+        KeyCode::Right if focus == 0 => (
+            input.move_right(modifiers.contains(KeyModifiers::SHIFT)),
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
+        KeyCode::Home if focus == 0 => (
+            input.move_home(modifiers.contains(KeyModifiers::SHIFT)),
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
+        KeyCode::End if focus == 0 => (
+            input.move_end(modifiers.contains(KeyModifiers::SHIFT)),
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
         _ => (input, focus, SingleInputKeyResult::Continue),
     }
 }
 
 /// Cursor x position for drawing the text input (content area and width).
-pub fn input_cursor_x(content_rect: Rect, input: &TextInputState) -> u16 {
+pub fn input_cursor_x(
+    content_rect: Rect,
+    input: &TextInputState,
+) -> u16 {
     let col = input.cursor_column() as u16;
     content_rect.x + col.min(content_rect.width.saturating_sub(1))
 }
@@ -321,13 +391,12 @@ pub fn input_line_with_selection(
     let mut i = 0;
     while i < len.min(width) {
         let in_sel = sel.map(|(s, e)| i >= s && i < e).unwrap_or(false);
-        let style = if in_sel {
-            selection_style
-        } else {
-            base_style
-        };
+        let style = if in_sel { selection_style } else { base_style };
         let j = (i + 1..=len.min(width))
-            .find(|&k| sel.map(|(s, e)| (k >= s && k < e) != (i >= s && i < e)).unwrap_or(false))
+            .find(|&k| {
+                sel.map(|(s, e)| (k >= s && k < e) != (i >= s && i < e))
+                    .unwrap_or(false)
+            })
             .unwrap_or(len.min(width));
         let s: String = chars[i..j].iter().collect();
         if !s.is_empty() {
@@ -360,13 +429,12 @@ pub fn input_line_with_selection_slice(
     let mut i = start;
     while i < end {
         let in_sel = sel.map(|(s, e)| i >= s && i < e).unwrap_or(false);
-        let style = if in_sel {
-            selection_style
-        } else {
-            base_style
-        };
+        let style = if in_sel { selection_style } else { base_style };
         let j = (i + 1..=end)
-            .find(|&k| sel.map(|(s, e)| (k >= s && k < e) != (i >= s && i < e)).unwrap_or(false))
+            .find(|&k| {
+                sel.map(|(s, e)| (k >= s && k < e) != (i >= s && i < e))
+                    .unwrap_or(false)
+            })
             .unwrap_or(end);
         let s: String = chars[i..j].iter().collect();
         if !s.is_empty() {
@@ -423,8 +491,11 @@ pub fn draw_single_input_dialog(
         DIALOG_INPUT_BG_UNFOCUSED
     };
     let base_style = Style::default().bg(input_bg).fg(Color::White);
-    let selection_style = Style::default().bg(DIALOG_INPUT_SELECTION_BG).fg(Color::White);
-    let line = input_line_with_selection(input, content.width as usize, base_style, selection_style);
+    let selection_style = Style::default()
+        .bg(DIALOG_INPUT_SELECTION_BG)
+        .fg(Color::White);
+    let line =
+        input_line_with_selection(input, content.width as usize, base_style, selection_style);
     f.render_widget(Paragraph::new(line), input_rect);
     if input_focused {
         let cursor_x = input_cursor_x(input_rect, input);

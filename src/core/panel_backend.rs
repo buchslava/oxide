@@ -6,25 +6,43 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use crate::file_ops::{apply_sort_mode, FileInfo, FileOperations};
-use crate::location::PanelLocation;
-use crate::copy_ops;
+use super::copy_ops;
+use super::file_ops::{apply_sort_mode, FileInfo, FileOperations};
+use super::location::PanelLocation;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// List contents of a location (directory or zip virtual directory).
 /// sort_mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
 /// dirs_first: when true, directories appear before files.
-pub fn list(loc: &PanelLocation, show_hidden: bool, sort_mode: &str, dirs_first: bool) -> io::Result<Vec<FileInfo>> {
+pub fn list(
+    loc: &PanelLocation,
+    show_hidden: bool,
+    sort_mode: &str,
+    dirs_first: bool,
+) -> io::Result<Vec<FileInfo>> {
     match loc {
-        PanelLocation::Fs(p) => FileOperations::read_directory(p, show_hidden, sort_mode, dirs_first),
-        PanelLocation::Zip { archive, path_inside } => zip_list(archive, path_inside, show_hidden, sort_mode, dirs_first),
+        PanelLocation::Fs(p) => {
+            FileOperations::read_directory(p, show_hidden, sort_mode, dirs_first)
+        }
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => zip_list(archive, path_inside, show_hidden, sort_mode, dirs_first),
     }
 }
 
 /// Read full contents of a file at the given location.
-pub fn read_file(loc: &PanelLocation, name: &str) -> io::Result<Vec<u8>> {
+pub fn read_file(
+    loc: &PanelLocation,
+    name: &str,
+) -> io::Result<Vec<u8>> {
     match loc {
         PanelLocation::Fs(p) => fs::read(FileOperations::join_path(p, name)),
-        PanelLocation::Zip { archive, path_inside } => zip_read_file(archive, path_inside, name),
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => zip_read_file(archive, path_inside, name),
     }
 }
 
@@ -44,7 +62,10 @@ pub fn supports_new_file(_loc: &PanelLocation) -> bool {
 }
 
 /// Check if a file or directory with the given name already exists at the location.
-pub fn entry_exists(loc: &PanelLocation, name: &str) -> io::Result<bool> {
+pub fn entry_exists(
+    loc: &PanelLocation,
+    name: &str,
+) -> io::Result<bool> {
     let name_clean = name.trim_end_matches('/');
     if name_clean.is_empty() || name_clean == ".." {
         return Ok(false);
@@ -59,18 +80,31 @@ pub fn entry_exists(loc: &PanelLocation, name: &str) -> io::Result<bool> {
 }
 
 /// Create directory. Only valid when supports_mkdir(loc). For Zip, adds a directory entry to the archive.
-pub fn mkdir(loc: &PanelLocation, name: &str) -> io::Result<()> {
+pub fn mkdir(
+    loc: &PanelLocation,
+    name: &str,
+) -> io::Result<()> {
     match loc {
         PanelLocation::Fs(p) => fs::create_dir(FileOperations::join_path(p, name)),
-        PanelLocation::Zip { archive, path_inside } => zip_mkdir(archive, path_inside, name),
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => zip_mkdir(archive, path_inside, name),
     }
 }
 
 /// Write full contents of a file at the given location. For Zip, rewrites the archive with this entry replaced or added.
-pub fn write_file(loc: &PanelLocation, name: &str, content: &[u8]) -> io::Result<()> {
+pub fn write_file(
+    loc: &PanelLocation,
+    name: &str,
+    content: &[u8],
+) -> io::Result<()> {
     match loc {
         PanelLocation::Fs(p) => fs::write(FileOperations::join_path(p, name), content),
-        PanelLocation::Zip { archive, path_inside } => zip_write_file(archive, path_inside, name, content),
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => zip_write_file(archive, path_inside, name, content),
     }
 }
 
@@ -105,9 +139,9 @@ pub fn create_archive_with_progress(
     };
     let archive_path = FileOperations::join_path(base_dir, archive_name);
     let file = fs::File::create(&archive_path)?;
-    let mut writer = zip::ZipWriter::new(file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let mut writer = ZipWriter::new(file);
+    let opts = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
 
     let total = items.len();
     for (idx, (name, is_dir)) in items.iter().enumerate() {
@@ -115,7 +149,10 @@ pub fn create_archive_with_progress(
             if c.load(Ordering::Relaxed) {
                 drop(writer);
                 let _ = fs::remove_file(&archive_path);
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Archive cancelled"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Archive cancelled",
+                ));
             }
         }
         let current_path = FileOperations::join_path(base_dir, name);
@@ -133,7 +170,10 @@ pub fn create_archive_with_progress(
                     if c.load(Ordering::Relaxed) {
                         drop(writer);
                         let _ = fs::remove_file(&archive_path);
-                        return Err(io::Error::new(io::ErrorKind::Interrupted, "Archive cancelled"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "Archive cancelled",
+                        ));
                     }
                 }
                 let path = entry.path();
@@ -175,9 +215,10 @@ pub fn copy_items_to_fs(
             }
             Ok(())
         }
-        PanelLocation::Zip { archive, path_inside } => {
-            zip_extract_items(archive, path_inside, items, target_dir, false)
-        }
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => zip_extract_items(archive, path_inside, items, target_dir, false),
     }
 }
 
@@ -215,7 +256,10 @@ pub fn move_items_into_archive(
 }
 
 /// Delete items at location (F8). For Zip, removes entries from the archive.
-pub fn delete_items(loc: &PanelLocation, items: &[(String, bool)]) -> io::Result<()> {
+pub fn delete_items(
+    loc: &PanelLocation,
+    items: &[(String, bool)],
+) -> io::Result<()> {
     match loc {
         PanelLocation::Fs(p) => {
             for (name, is_dir) in items {
@@ -223,15 +267,26 @@ pub fn delete_items(loc: &PanelLocation, items: &[(String, bool)]) -> io::Result
             }
             Ok(())
         }
-        PanelLocation::Zip { archive, path_inside } => zip_remove_items(archive, path_inside, items),
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => zip_remove_items(archive, path_inside, items),
     }
 }
 
 /// Join path for display; for Fs same as FileOperations::join_path; for Zip we build virtual path.
-pub fn join_path_display(loc: &PanelLocation, name: &str) -> String {
+pub fn join_path_display(
+    loc: &PanelLocation,
+    name: &str,
+) -> String {
     match loc {
-        PanelLocation::Fs(p) => FileOperations::join_path(p, name).to_string_lossy().to_string(),
-        PanelLocation::Zip { archive, path_inside } => {
+        PanelLocation::Fs(p) => FileOperations::join_path(p, name)
+            .to_string_lossy()
+            .to_string(),
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => {
             let prefix = path_inside.trim_end_matches('/');
             let full = if prefix.is_empty() {
                 name.to_string()
@@ -245,7 +300,13 @@ pub fn join_path_display(loc: &PanelLocation, name: &str) -> String {
 
 // --- Zip implementation ---
 
-fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool, sort_mode: &str, dirs_first: bool) -> io::Result<Vec<FileInfo>> {
+fn zip_list(
+    archive_path: &Path,
+    path_inside: &str,
+    show_hidden: bool,
+    sort_mode: &str,
+    dirs_first: bool,
+) -> io::Result<Vec<FileInfo>> {
     let prefix = path_inside.trim_end_matches('/');
     let prefix_with_slash = if prefix.is_empty() {
         String::new()
@@ -254,12 +315,15 @@ fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool, sort_mode
     };
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     let mut map: std::collections::HashMap<String, FileInfo> = std::collections::HashMap::new();
 
     for i in 0..archive.len() {
-        let entry = archive.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let entry = archive
+            .by_index(i)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let name = entry.name().to_string();
         let name_clean = name.trim_end_matches('/');
 
@@ -303,17 +367,20 @@ fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool, sort_mode
         let size = entry.size();
         // ZIP DateTime conversion APIs differ across versions/features; keep mtime empty for now.
         let mtime = None;
-        map.insert(key, FileInfo::with_metadata(
-            display,
-            is_dir,
-            false,
-            false,
-            size,
-            mtime,
-            "----------".to_string(),
-            String::new(),
-            String::new(),
-        ));
+        map.insert(
+            key,
+            FileInfo::with_metadata(
+                display,
+                is_dir,
+                false,
+                false,
+                size,
+                mtime,
+                "----------".to_string(),
+                String::new(),
+                String::new(),
+            ),
+        );
     }
 
     let mut files: Vec<FileInfo> = map.into_values().collect();
@@ -324,16 +391,25 @@ fn zip_list(archive_path: &Path, path_inside: &str, show_hidden: bool, sort_mode
     Ok(files)
 }
 
-fn zip_read_file(archive_path: &Path, path_inside: &str, name: &str) -> io::Result<Vec<u8>> {
+fn zip_read_file(
+    archive_path: &Path,
+    path_inside: &str,
+    name: &str,
+) -> io::Result<Vec<u8>> {
     let prefix = path_inside.trim_end_matches('/');
     let full_name = if prefix.is_empty() {
         name.trim_start_matches('/').to_string()
     } else {
-        format!("{}/{}", prefix, name.trim_start_matches('/').trim_end_matches('/'))
+        format!(
+            "{}/{}",
+            prefix,
+            name.trim_start_matches('/').trim_end_matches('/')
+        )
     };
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     if let Ok(mut entry) = archive.by_name(&full_name) {
         if !entry.is_dir() {
@@ -344,12 +420,16 @@ fn zip_read_file(archive_path: &Path, path_inside: &str, name: &str) -> io::Resu
     }
 
     let file = fs::File::open(archive_path)?;
-    let mut arch2 = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut arch2 =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let mut entry = arch2
         .by_name(&format!("{}/", full_name))
         .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e))?;
     if entry.is_dir() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Is a directory"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Is a directory",
+        ));
     }
     let mut buf = Vec::with_capacity(entry.size() as usize);
     io::copy(&mut entry, &mut buf)?;
@@ -366,7 +446,8 @@ fn zip_extract_items(
     let prefix = path_inside.trim_end_matches('/');
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     for (name, is_dir) in items {
         let name_clean = name.trim_end_matches('/');
@@ -379,9 +460,14 @@ fn zip_extract_items(
         if *is_dir {
             let dir_prefix = format!("{}/", entry_path.trim_end_matches('/'));
             for i in 0..archive.len() {
-                let mut entry = archive.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let mut entry = archive
+                    .by_index(i)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 let ename = entry.name().to_string();
-                if ename == entry_path || ename == format!("{}/", entry_path) || ename.starts_with(&dir_prefix) {
+                if ename == entry_path
+                    || ename == format!("{}/", entry_path)
+                    || ename.starts_with(&dir_prefix)
+                {
                     let rel = ename[entry_path.len().min(ename.len())..].trim_start_matches('/');
                     let is_entry_dir = ename.ends_with('/');
                     let dest = target_dir.join(name_clean).join(rel.trim_end_matches('/'));
@@ -416,7 +502,10 @@ fn zip_extract_items(
 }
 
 /// List all entries under a directory at the given location (recursive). Returns (relative_path, is_dir) with forward slashes.
-fn list_all_under(loc: &PanelLocation, dir_name: &str) -> io::Result<Vec<(String, bool)>> {
+fn list_all_under(
+    loc: &PanelLocation,
+    dir_name: &str,
+) -> io::Result<Vec<(String, bool)>> {
     match loc {
         PanelLocation::Fs(p) => {
             let dir_path = FileOperations::join_path(p, dir_name);
@@ -437,7 +526,10 @@ fn list_all_under(loc: &PanelLocation, dir_name: &str) -> io::Result<Vec<(String
             }
             Ok(out)
         }
-        PanelLocation::Zip { archive, path_inside } => {
+        PanelLocation::Zip {
+            archive,
+            path_inside,
+        } => {
             let prefix_trim = path_inside.trim_end_matches('/');
             let dir_trim = dir_name.trim_end_matches('/');
             let prefix = if prefix_trim.is_empty() {
@@ -446,10 +538,13 @@ fn list_all_under(loc: &PanelLocation, dir_name: &str) -> io::Result<Vec<(String
                 format!("{}/{}/", prefix_trim, dir_trim)
             };
             let file = fs::File::open(archive)?;
-            let mut arch = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let mut arch = ZipArchive::new(file)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             let mut out = Vec::new();
             for i in 0..arch.len() {
-                let entry = arch.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let entry = arch
+                    .by_index(i)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 let name = entry.name().to_string();
                 if !name.starts_with(&prefix) || name == prefix {
                     continue;
@@ -514,15 +609,18 @@ fn zip_add_items(
     }
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
-    let mut writer = zip::ZipWriter::new(out_file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let mut writer = ZipWriter::new(out_file);
+    let opts = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let name = entry.name().to_string();
         if to_add.contains(&name) || to_add.contains(name.trim_end_matches('/')) {
             continue;
@@ -533,8 +631,8 @@ fn zip_add_items(
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let copy_opts = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let copy_opts = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Stored);
         writer.start_file(name, copy_opts)?;
         writer.write_all(&data)?;
     }
@@ -633,15 +731,18 @@ fn zip_remove_items(
     };
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
-    let mut writer = zip::ZipWriter::new(out_file);
-    let options = zip::write::SimpleFileOptions::default();
+    let mut writer = ZipWriter::new(out_file);
+    let options = SimpleFileOptions::default();
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let name = entry.name().to_string();
         if should_remove(&name) {
             continue;
@@ -652,7 +753,7 @@ fn zip_remove_items(
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let opts = options.compression_method(zip::CompressionMethod::Stored);
+        let opts = options.compression_method(CompressionMethod::Stored);
         writer.start_file(name, opts)?;
         writer.write_all(&data)?;
     }
@@ -663,7 +764,11 @@ fn zip_remove_items(
 }
 
 /// Add a directory entry to an existing archive at path_inside/name/.
-fn zip_mkdir(archive_path: &Path, path_inside: &str, name: &str) -> io::Result<()> {
+fn zip_mkdir(
+    archive_path: &Path,
+    path_inside: &str,
+    name: &str,
+) -> io::Result<()> {
     let prefix = path_inside.trim_end_matches('/');
     let name_clean = name.trim_end_matches('/');
     let dir_entry = if prefix.is_empty() {
@@ -673,14 +778,17 @@ fn zip_mkdir(archive_path: &Path, path_inside: &str, name: &str) -> io::Result<(
     };
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
-    let mut writer = zip::ZipWriter::new(out_file);
-    let opts = zip::write::SimpleFileOptions::default();
+    let mut writer = ZipWriter::new(out_file);
+    let opts = SimpleFileOptions::default();
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let name = entry.name().to_string();
         if entry.is_dir() {
             continue;
@@ -688,7 +796,7 @@ fn zip_mkdir(archive_path: &Path, path_inside: &str, name: &str) -> io::Result<(
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let copy_opts = opts.compression_method(zip::CompressionMethod::Stored);
+        let copy_opts = opts.compression_method(CompressionMethod::Stored);
         writer.start_file(name, copy_opts)?;
         writer.write_all(&data)?;
     }
@@ -700,7 +808,12 @@ fn zip_mkdir(archive_path: &Path, path_inside: &str, name: &str) -> io::Result<(
 }
 
 /// Replace or add a single file in the archive at path_inside/name.
-fn zip_write_file(archive_path: &Path, path_inside: &str, name: &str, content: &[u8]) -> io::Result<()> {
+fn zip_write_file(
+    archive_path: &Path,
+    path_inside: &str,
+    name: &str,
+    content: &[u8],
+) -> io::Result<()> {
     let prefix = path_inside.trim_end_matches('/');
     let name_clean = name.trim_end_matches('/');
     let entry_name = if prefix.is_empty() {
@@ -710,17 +823,20 @@ fn zip_write_file(archive_path: &Path, path_inside: &str, name: &str, content: &
     };
 
     let file = fs::File::open(archive_path)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
-    let mut writer = zip::ZipWriter::new(out_file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let copy_opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let mut writer = ZipWriter::new(out_file);
+    let opts = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
+    let copy_opts =
+        SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let name = entry.name().to_string();
         if name == entry_name || name == format!("{}/", entry_name) {
             continue; // skip existing entry; we'll write new content below

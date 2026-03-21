@@ -78,6 +78,14 @@ This repo includes [agent skills](https://github.com/sickn33/antigravity-awesome
 
 The upstream `posix-shell-pro` skill references a playbook file that is not shipped in that repository; this project adds `.cursor/skills/posix-shell-pro/resources/implementation-playbook.md` as a short pointer so that instruction is not a dead link.
 
+### Project-local skills
+
+Design and architecture notes maintained in-repo (YAML frontmatter for id/tags). Reference them in Chat via path or `@`-mention if your Cursor setup indexes them; you can also copy or symlink into `.cursor/skills/` for the same layout as vendored skills.
+
+| Topic | File |
+|-------|------|
+| Single Responsibility Principle (SRP) | [`skills/principles/single_responsibility.md`](skills/principles/single_responsibility.md) |
+
 ## License
 
 [LICENSE](LICENSE) — MIT License.

@@ -10,7 +10,11 @@ const AREA_MARGIN: u16 = 4;
 
 /// Return a centered dialog rect within `area` with given max width and height.
 #[must_use]
-pub fn centered_dialog_rect(area: Rect, max_width: u16, height: u16) -> Rect {
+pub fn centered_dialog_rect(
+    area: Rect,
+    max_width: u16,
+    height: u16,
+) -> Rect {
     let w = max_width.min(area.width.saturating_sub(AREA_MARGIN));
     let h = height.min(area.height.saturating_sub(2));
     let x = area.x + area.width.saturating_sub(w) / 2;
@@ -25,7 +29,10 @@ pub fn centered_dialog_rect(area: Rect, max_width: u16, height: u16) -> Rect {
 
 /// Return the content rect inside a dialog (inside borders, with horizontal padding).
 #[must_use]
-pub fn dialog_content_rect(rect: Rect, pad_h: u16) -> Rect {
+pub fn dialog_content_rect(
+    rect: Rect,
+    pad_h: u16,
+) -> Rect {
     let inner = rect.inner(Margin {
         horizontal: 1,
         vertical: 1,

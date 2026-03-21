@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::location::PanelLocation;
+use super::location::PanelLocation;
 
 /// Copy, Move, or Delete operation (F5 / F6 / F8). Shared flow for progress, overwrite, and error dialogs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +74,10 @@ pub struct CopyErrorState {
 }
 
 impl CopyErrorState {
-    pub fn new(operation: Operation, message: impl Into<String>) -> Self {
+    pub fn new(
+        operation: Operation,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             operation,
             message: message.into(),

@@ -5,8 +5,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::app_state::AppState;
+use crate::core::panel_backend;
 use crate::events::AppAction;
-use crate::panel_backend;
 use crate::text_input::{self, TextInputState};
 
 /// State for F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name.
@@ -23,7 +23,10 @@ pub fn open(app: &mut AppState) {
 }
 
 /// Open the dialog with an optional default name (e.g. from selected file).
-pub fn open_with_name(app: &mut AppState, default_name: String) {
+pub fn open_with_name(
+    app: &mut AppState,
+    default_name: String,
+) {
     app.mkdir_dialog = Some(MkdirDialogState {
         input: TextInputState::new(default_name),
         focus: 0,
@@ -42,7 +45,10 @@ pub fn confirm(app: &mut AppState) -> Option<String> {
 
 /// Create the directory in the active panel's current location and refresh the panel.
 /// Call only when name is non-empty (after trim). Supported on filesystem and inside ZIP archives.
-pub fn create_and_refresh(app: &mut AppState, name: &str) {
+pub fn create_and_refresh(
+    app: &mut AppState,
+    name: &str,
+) {
     let loc = app.get_current_location();
     if let Err(e) = panel_backend::mkdir(&loc, name) {
         eprintln!("Cannot create directory: {}", e);
@@ -69,8 +75,12 @@ impl MkdirDialogState {
         match result {
             text_input::SingleInputKeyResult::Confirm => (None, AppAction::MkdirConfirm),
             text_input::SingleInputKeyResult::Cancel => (None, AppAction::MkdirCancel),
-            text_input::SingleInputKeyResult::Suspend => (Some(Self { input, focus }), AppAction::Suspend),
-            text_input::SingleInputKeyResult::Continue => (Some(Self { input, focus }), AppAction::Continue),
+            text_input::SingleInputKeyResult::Suspend => {
+                (Some(Self { input, focus }), AppAction::Suspend)
+            }
+            text_input::SingleInputKeyResult::Continue => {
+                (Some(Self { input, focus }), AppAction::Continue)
+            }
         }
     }
 }
@@ -88,8 +98,13 @@ pub fn handle_key(
 }
 
 /// Draw the "Create a new Directory" dialog.
-pub fn draw(f: &mut ratatui::Frame, app: &mut AppState) {
-    let Some(ref d) = app.mkdir_dialog else { return };
+pub fn draw(
+    f: &mut ratatui::Frame,
+    app: &mut AppState,
+) {
+    let Some(ref d) = app.mkdir_dialog else {
+        return;
+    };
     text_input::draw_single_input_dialog(
         f,
         f.area(),

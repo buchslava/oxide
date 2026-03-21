@@ -41,12 +41,24 @@ pub fn close_right(app: &mut AppState) {
 }
 
 /// Draw the overlay over the given panel area. Centered within the panel rect. is_left: use left panel settings.
-fn draw_overlay(f: &mut Frame, panel_rect: Rect, title: &str, app: &AppState, content_focus: usize, is_left: bool) {
+fn draw_overlay(
+    f: &mut Frame,
+    panel_rect: Rect,
+    title: &str,
+    app: &AppState,
+    content_focus: usize,
+    is_left: bool,
+) {
     let w = OVERLAY_MIN_W.min(panel_rect.width.saturating_sub(2));
     let h = OVERLAY_MIN_H.min(panel_rect.height.saturating_sub(2));
     let x = panel_rect.x + (panel_rect.width.saturating_sub(w)) / 2;
     let y = panel_rect.y + (panel_rect.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let grey_bg = Color::Rgb(60, 60, 60);
     let right_bg = Color::Rgb(50, 52, 58);
@@ -61,7 +73,10 @@ fn draw_overlay(f: &mut Frame, panel_rect: Rect, title: &str, app: &AppState, co
         .style(border_style);
     f.render_widget(block, rect);
 
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let content_rect = Rect {
         x: inner.x,
         y: inner.y,
@@ -72,15 +87,40 @@ fn draw_overlay(f: &mut Frame, panel_rect: Rect, title: &str, app: &AppState, co
     let p = &app.persisted_settings;
     let (view_index, sort_index, dirs_first, show_hidden) = if is_left {
         let view_index = if p.left_view.as_str() == "one" { 1 } else { 0 };
-        let sort_index = crate::file_ops::SORT_MODES.iter().position(|s| *s == p.left_sort.as_str()).unwrap_or(0);
-        (view_index, sort_index, p.left_dirs_first, p.left_show_hidden)
+        let sort_index = crate::core::file_ops::SORT_MODES
+            .iter()
+            .position(|s| *s == p.left_sort.as_str())
+            .unwrap_or(0);
+        (
+            view_index,
+            sort_index,
+            p.left_dirs_first,
+            p.left_show_hidden,
+        )
     } else {
         let view_index = if p.right_view.as_str() == "one" { 1 } else { 0 };
-        let sort_index = crate::file_ops::SORT_MODES.iter().position(|s| *s == p.right_sort.as_str()).unwrap_or(0);
-        (view_index, sort_index, p.right_dirs_first, p.right_show_hidden)
+        let sort_index = crate::core::file_ops::SORT_MODES
+            .iter()
+            .position(|s| *s == p.right_sort.as_str())
+            .unwrap_or(0);
+        (
+            view_index,
+            sort_index,
+            p.right_dirs_first,
+            p.right_show_hidden,
+        )
     };
 
-    draw_panel_section(f, content_rect, right_fill_style, view_index, sort_index, dirs_first, show_hidden, content_focus);
+    draw_panel_section(
+        f,
+        content_rect,
+        right_fill_style,
+        view_index,
+        sort_index,
+        dirs_first,
+        show_hidden,
+        content_focus,
+    );
 
     let hint_rect = Rect {
         x: inner.x,
@@ -97,16 +137,43 @@ fn draw_overlay(f: &mut Frame, panel_rect: Rect, title: &str, app: &AppState, co
 }
 
 /// Draw whichever panel overlay is open. Call after panels are drawn; uses app.left_panel_rect / right_panel_rect.
-pub fn draw(f: &mut Frame, app: &mut AppState) {
-    if let (Some(state), Some(panel_rect)) = (app.left_panel_settings_overlay.as_ref(), app.left_panel_rect) {
-        draw_overlay(f, panel_rect, " Left panel ", app, state.content_focus, true);
-    } else if let (Some(state), Some(panel_rect)) = (app.right_panel_settings_overlay.as_ref(), app.right_panel_rect) {
-        draw_overlay(f, panel_rect, " Right panel ", app, state.content_focus, false);
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
+    if let (Some(state), Some(panel_rect)) = (
+        app.left_panel_settings_overlay.as_ref(),
+        app.left_panel_rect,
+    ) {
+        draw_overlay(
+            f,
+            panel_rect,
+            " Left panel ",
+            app,
+            state.content_focus,
+            true,
+        );
+    } else if let (Some(state), Some(panel_rect)) = (
+        app.right_panel_settings_overlay.as_ref(),
+        app.right_panel_rect,
+    ) {
+        draw_overlay(
+            f,
+            panel_rect,
+            " Right panel ",
+            app,
+            state.content_focus,
+            false,
+        );
     }
 }
 
 /// Handle key for the panel overlay. Returns None if no overlay is open.
-pub fn handle_key(app: &mut AppState, code: KeyCode, modifiers: KeyModifiers) -> Option<AppAction> {
+pub fn handle_key(
+    app: &mut AppState,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> Option<AppAction> {
     let (is_left, state) = if let Some(s) = app.left_panel_settings_overlay.as_mut() {
         (true, s)
     } else if let Some(s) = app.right_panel_settings_overlay.as_mut() {
@@ -119,7 +186,11 @@ pub fn handle_key(app: &mut AppState, code: KeyCode, modifiers: KeyModifiers) ->
 
     match code {
         KeyCode::Esc => {
-            return Some(if is_left { AppAction::CloseLeftPanelSettings } else { AppAction::CloseRightPanelSettings });
+            return Some(if is_left {
+                AppAction::CloseLeftPanelSettings
+            } else {
+                AppAction::CloseRightPanelSettings
+            });
         }
         KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'o' => {
             return Some(AppAction::Suspend);
@@ -130,23 +201,41 @@ pub fn handle_key(app: &mut AppState, code: KeyCode, modifiers: KeyModifiers) ->
         }
         KeyCode::Up => {
             if state.content_focus == 1 {
-                return Some(AppAction::SettingChange(if is_left { SettingChange::LeftSortCyclePrev } else { SettingChange::RightSortCyclePrev }));
+                return Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftSortCyclePrev
+                } else {
+                    SettingChange::RightSortCyclePrev
+                }));
             }
             if state.content_focus >= 2 {
                 state.content_focus -= 1;
             } else {
-                return Some(AppAction::SettingChange(if is_left { SettingChange::LeftViewCycle } else { SettingChange::RightViewCycle }));
+                return Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftViewCycle
+                } else {
+                    SettingChange::RightViewCycle
+                }));
             }
             return Some(AppAction::Continue);
         }
         KeyCode::Down => {
             if state.content_focus == 0 {
-                if (is_left && p.left_view.as_str() == "two") || (!is_left && p.right_view.as_str() == "two") {
-                    return Some(AppAction::SettingChange(if is_left { SettingChange::LeftViewCycle } else { SettingChange::RightViewCycle }));
+                if (is_left && p.left_view.as_str() == "two")
+                    || (!is_left && p.right_view.as_str() == "two")
+                {
+                    return Some(AppAction::SettingChange(if is_left {
+                        SettingChange::LeftViewCycle
+                    } else {
+                        SettingChange::RightViewCycle
+                    }));
                 }
                 state.content_focus = 1;
             } else if state.content_focus == 1 {
-                return Some(AppAction::SettingChange(if is_left { SettingChange::LeftSortCycle } else { SettingChange::RightSortCycle }));
+                return Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftSortCycle
+                } else {
+                    SettingChange::RightSortCycle
+                }));
             } else if state.content_focus < 3 {
                 state.content_focus += 1;
             } else {
@@ -156,10 +245,26 @@ pub fn handle_key(app: &mut AppState, code: KeyCode, modifiers: KeyModifiers) ->
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
             let action = match state.content_focus {
-                0 => Some(AppAction::SettingChange(if is_left { SettingChange::LeftViewCycle } else { SettingChange::RightViewCycle })),
-                1 => Some(AppAction::SettingChange(if is_left { SettingChange::LeftSortCycle } else { SettingChange::RightSortCycle })),
-                2 => Some(AppAction::SettingChange(if is_left { SettingChange::LeftDirsFirstToggle } else { SettingChange::RightDirsFirstToggle })),
-                _ => Some(AppAction::SettingChange(if is_left { SettingChange::LeftShowHiddenToggle } else { SettingChange::RightShowHiddenToggle })),
+                0 => Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftViewCycle
+                } else {
+                    SettingChange::RightViewCycle
+                })),
+                1 => Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftSortCycle
+                } else {
+                    SettingChange::RightSortCycle
+                })),
+                2 => Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftDirsFirstToggle
+                } else {
+                    SettingChange::RightDirsFirstToggle
+                })),
+                _ => Some(AppAction::SettingChange(if is_left {
+                    SettingChange::LeftShowHiddenToggle
+                } else {
+                    SettingChange::RightShowHiddenToggle
+                })),
             };
             if let Some(a) = action {
                 return Some(a);

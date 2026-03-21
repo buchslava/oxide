@@ -15,8 +15,8 @@ use ratatui_code_editor::selection::Selection;
 use ratatui_code_editor::theme::vesper;
 
 use crate::app_state::AppState;
+use crate::core::location::PanelLocation;
 use crate::events::AppAction;
-use crate::location::PanelLocation;
 use crate::panel::PanelOperations;
 
 /// State when the embedded code editor is open (F4).
@@ -75,7 +75,10 @@ fn get_lang_from_path(path: &str) -> &'static str {
 
 /// Paste the given text as-is at the editor cursor (same as Ctrl+V). Replaces selection if any.
 /// Returns Some(Continue) when the editor is open and paste was applied (or text was empty); None when not in editor.
-pub fn paste_text_as_is(app: &mut AppState, text: &str) -> Option<AppAction> {
+pub fn paste_text_as_is(
+    app: &mut AppState,
+    text: &str,
+) -> Option<AppAction> {
     let ed = app.editor_screen.as_mut()?;
     if text.is_empty() {
         return Some(AppAction::Continue);
@@ -111,17 +114,19 @@ pub fn open_editor(app: &mut AppState) -> bool {
     let loc = app.get_current_location();
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
-            let content = match crate::panel_backend::read_file(&loc, &file.name) {
+            let content = match crate::core::panel_backend::read_file(&loc, &file.name) {
                 Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(_) => return false,
             };
-            let file_path_str = crate::panel_backend::join_path_display(&loc, &file.name);
+            let file_path_str = crate::core::panel_backend::join_path_display(&loc, &file.name);
             let lang = get_lang_from_path(&file_path_str);
             let theme = vesper();
             let editor = Editor::new(lang, &content, theme);
             let (edit_location, edit_name) = match &loc {
-                crate::location::PanelLocation::Zip { .. } => (Some(loc), Some(file.name.clone())),
-                crate::location::PanelLocation::Fs(_) => (None, None),
+                crate::core::location::PanelLocation::Zip { .. } => {
+                    (Some(loc), Some(file.name.clone()))
+                }
+                crate::core::location::PanelLocation::Fs(_) => (None, None),
             };
             app.editor_screen = Some(EditorScreenState {
                 file_path: file_path_str,
@@ -142,7 +147,10 @@ pub fn open_editor(app: &mut AppState) -> bool {
 }
 
 /// Open a file by path in the editor (e.g. from Find file results). Returns true if opened.
-pub fn open_editor_path(app: &mut AppState, path: std::path::PathBuf) -> bool {
+pub fn open_editor_path(
+    app: &mut AppState,
+    path: std::path::PathBuf,
+) -> bool {
     if !path.is_file() {
         return false;
     }
@@ -168,7 +176,10 @@ pub fn open_editor_path(app: &mut AppState, path: std::path::PathBuf) -> bool {
 
 /// Find next occurrence of query in the **opened file only** (editor buffer).
 /// Search from current cursor, wrap from start if not found.
-fn find_next(ed: &mut EditorScreenState, query: &str) {
+fn find_next(
+    ed: &mut EditorScreenState,
+    query: &str,
+) {
     if query.is_empty() {
         return;
     }
@@ -186,7 +197,8 @@ fn find_next(ed: &mut EditorScreenState, query: &str) {
     while pos + qlen <= len {
         if content_chars[pos..pos + qlen] == query_chars[..] {
             ed.editor.set_cursor(pos);
-            ed.editor.set_selection(Some(Selection::new(pos, pos + qlen)));
+            ed.editor
+                .set_selection(Some(Selection::new(pos, pos + qlen)));
             ed.editor.reset_highlight_cache();
             ed.editor.focus(&ed.area);
             return;
@@ -198,7 +210,8 @@ fn find_next(ed: &mut EditorScreenState, query: &str) {
     while pos + qlen <= len && pos <= cursor {
         if content_chars[pos..pos + qlen] == query_chars[..] {
             ed.editor.set_cursor(pos);
-            ed.editor.set_selection(Some(Selection::new(pos, pos + qlen)));
+            ed.editor
+                .set_selection(Some(Selection::new(pos, pos + qlen)));
             ed.editor.reset_highlight_cache();
             ed.editor.focus(&ed.area);
             return;
@@ -208,11 +221,15 @@ fn find_next(ed: &mut EditorScreenState, query: &str) {
 }
 
 /// Handle key when embedded editor is open. Returns Some(action) when handled, None if not in editor.
-pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction> {
+pub fn handle_editor_key(
+    app: &mut AppState,
+    key: KeyEvent,
+) -> Option<AppAction> {
     let ed = app.editor_screen.as_mut()?;
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     #[cfg(target_os = "macos")]
-    let cmd_like = key.modifiers.contains(KeyModifiers::SUPER) || key.modifiers.contains(KeyModifiers::META);
+    let cmd_like =
+        key.modifiers.contains(KeyModifiers::SUPER) || key.modifiers.contains(KeyModifiers::META);
     #[cfg(not(target_os = "macos"))]
     let cmd_like = false;
     // On macOS, Cmd+V/Cmd+C are the standard shortcuts; also accept Ctrl+V/Ctrl+C. Use same code path for both.
@@ -350,8 +367,8 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
     // Extend when Shift (if reported) or F3 selection mode (MC-style).
     let extend = key.modifiers.contains(KeyModifiers::SHIFT) || ed.selection_extend_mode;
     // After 2nd F3: selection is visible but "stopped" — arrows must not clear it, typing must preserve it.
-    let selection_frozen = !ed.selection_extend_mode
-        && ed.editor.get_selection().map_or(false, |s| !s.is_empty());
+    let selection_frozen =
+        !ed.selection_extend_mode && ed.editor.get_selection().map_or(false, |s| !s.is_empty());
 
     if key.code == KeyCode::Left {
         let cursor = ed.editor.get_cursor();
@@ -445,7 +462,11 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
             let end_pos = line_end.min(code.len_chars());
             if end_pos > line_start {
                 let last_ch = code.slice(end_pos - 1, end_pos);
-                if last_ch == "\n" { end_pos - 1 } else { end_pos }
+                if last_ch == "\n" {
+                    end_pos - 1
+                } else {
+                    end_pos
+                }
             } else {
                 line_start
             }
@@ -537,7 +558,10 @@ pub fn handle_editor_key(app: &mut AppState, key: KeyEvent) -> Option<AppAction>
 
 /// Handle mouse when embedded editor is open. Returns true if handled.
 /// Clicks on the bottom (hint) row are not passed to the editor so the cursor cannot move there.
-pub fn handle_editor_mouse(app: &mut AppState, mouse_event: crossterm::event::MouseEvent) -> bool {
+pub fn handle_editor_mouse(
+    app: &mut AppState,
+    mouse_event: crossterm::event::MouseEvent,
+) -> bool {
     if let Some(ref mut ed) = app.editor_screen {
         let hint_row = ed.area.y + ed.area.height;
         if mouse_event.row >= hint_row {
@@ -554,7 +578,9 @@ pub fn save(app: &mut AppState) {
     if let Some(ref mut ed) = app.editor_screen {
         let content = ed.editor.get_content();
         let result = match (&ed.edit_location, &ed.edit_name) {
-            (Some(loc), Some(name)) => crate::panel_backend::write_file(loc, name, content.as_bytes()),
+            (Some(loc), Some(name)) => {
+                crate::core::panel_backend::write_file(loc, name, content.as_bytes())
+            }
             _ => std::fs::write(&ed.file_path, &content),
         };
         if let Err(e) = result {
@@ -571,14 +597,33 @@ fn panel_height() -> usize {
 
 fn refresh_panels_after_editor_close(app: &mut AppState) {
     let panel_height = panel_height();
-    let selected_name = app.active_panel_mut().get_selected_file().map(|f| f.name.clone());
+    let selected_name = app
+        .active_panel_mut()
+        .get_selected_file()
+        .map(|f| f.name.clone());
     if let Some(name) = selected_name {
         if app.active_panel() == 0 {
-            let _ = app.left_panel_mut().refresh_files_restore_selection(Some(&name), None, Some(panel_height));
-            let _ = app.right_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height));
+            let _ = app.left_panel_mut().refresh_files_restore_selection(
+                Some(&name),
+                None,
+                Some(panel_height),
+            );
+            let _ = app.right_panel_mut().refresh_files_restore_selection(
+                None,
+                None,
+                Some(panel_height),
+            );
         } else {
-            let _ = app.right_panel_mut().refresh_files_restore_selection(Some(&name), None, Some(panel_height));
-            let _ = app.left_panel_mut().refresh_files_restore_selection(None, None, Some(panel_height));
+            let _ = app.right_panel_mut().refresh_files_restore_selection(
+                Some(&name),
+                None,
+                Some(panel_height),
+            );
+            let _ = app.left_panel_mut().refresh_files_restore_selection(
+                None,
+                None,
+                Some(panel_height),
+            );
         }
     }
 }
@@ -594,14 +639,19 @@ pub fn close(app: &mut AppState) {
 }
 
 /// Apply user choice from "Save changes?" dialog.
-pub fn apply_confirm_choice(app: &mut AppState, choice: EditorConfirmChoice) {
+pub fn apply_confirm_choice(
+    app: &mut AppState,
+    choice: EditorConfirmChoice,
+) {
     app.editor_confirm_pending = false;
     match choice {
         EditorConfirmChoice::Save => {
             if let Some(ref mut ed) = app.editor_screen {
                 let content = ed.editor.get_content();
                 let _ = match (&ed.edit_location, &ed.edit_name) {
-                    (Some(loc), Some(name)) => crate::panel_backend::write_file(loc, name, content.as_bytes()),
+                    (Some(loc), Some(name)) => {
+                        crate::core::panel_backend::write_file(loc, name, content.as_bytes())
+                    }
                     _ => std::fs::write(&ed.file_path, &content),
                 };
                 ed.initial_content = content;
@@ -626,25 +676,36 @@ pub fn apply_confirm_choice(app: &mut AppState, choice: EditorConfirmChoice) {
 /// Draw the embedded editor and, if editor_confirm_pending, the "Save changes?" dialog.
 /// The bottom row is reserved for the hint; the editor content area excludes it so the cursor
 /// cannot reach that line.
-pub fn draw(f: &mut Frame, app: &mut AppState) {
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
     if let Some(ref mut ed) = app.editor_screen {
         let area = f.area();
         let content_height = area.height.saturating_sub(1);
-        ed.area = Rect { x: area.x, y: area.y, width: area.width, height: content_height };
+        ed.area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: content_height,
+        };
         let dark_bg = Color::Rgb(30, 30, 35);
-        f.render_widget(
-            Block::default().style(Style::default().bg(dark_bg)),
-            area,
-        );
+        f.render_widget(Block::default().style(Style::default().bg(dark_bg)), area);
         f.render_widget(&ed.editor, ed.area);
         if let Some((cx, cy)) = ed.editor.get_visible_cursor(&ed.area) {
             f.set_cursor_position((cx, cy));
         }
         if area.height > 0 {
-            let hint = " F3: start/stop selection | ←→↑↓ extend | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
+            let hint =
+                " F3: start/stop selection | ←→↑↓ extend | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
             let row = area.bottom().saturating_sub(1);
             let w = hint.chars().count().min(area.width as usize) as u16;
-            let r = Rect { x: area.x, y: row, width: w, height: 1 };
+            let r = Rect {
+                x: area.x,
+                y: row,
+                width: w,
+                height: 1,
+            };
             f.render_widget(
                 Paragraph::new(hint).style(Style::default().bg(dark_bg).fg(Color::DarkGray)),
                 r,
@@ -661,7 +722,12 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
 }
 
 /// TUI search window (bordered box). Searches only in the opened file buffer; not the terminal/OS.
-fn draw_search_bar(f: &mut Frame, area: Rect, query: &str, cursor_pos: usize) {
+fn draw_search_bar(
+    f: &mut Frame,
+    area: Rect,
+    query: &str,
+    cursor_pos: usize,
+) {
     let title = " Find (in file) ";
     let hint = " Enter: next  ←→: move  Esc: close ";
     let inner_w = 52u16;
@@ -669,7 +735,12 @@ fn draw_search_bar(f: &mut Frame, area: Rect, query: &str, cursor_pos: usize) {
     let h = 5u16;
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     // Same dialog background as F7 / F2 — distinct from editor panel.
     let dialog_bg = Color::Rgb(60, 60, 60);
     let style = Style::default().bg(dialog_bg).fg(Color::White);
@@ -679,25 +750,49 @@ fn draw_search_bar(f: &mut Frame, area: Rect, query: &str, cursor_pos: usize) {
         .title(title)
         .style(style.fg(Color::Cyan));
     f.render_widget(block, rect);
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
-    let line0 = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let line0 = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
     let text = format!("  {}", query);
     f.render_widget(Paragraph::new(text.as_str()).style(style), line0);
-    let hint_row = Rect { x: inner.x, y: inner.y + 2, width: inner.width, height: 1 };
-    f.render_widget(Paragraph::new(hint).style(style.fg(Color::DarkGray)), hint_row);
+    let hint_row = Rect {
+        x: inner.x,
+        y: inner.y + 2,
+        width: inner.width,
+        height: 1,
+    };
+    f.render_widget(
+        Paragraph::new(hint).style(style.fg(Color::DarkGray)),
+        hint_row,
+    );
     let cursor_col = (2 + cursor_pos).min(inner.width as usize);
     f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
 }
 
 /// "Save changes?" when exiting editor with unsaved changes. Tab/↑↓ cycle, Enter confirms, 1/2/3 direct.
-pub fn draw_confirm_dialog(f: &mut Frame, app: &AppState) {
+pub fn draw_confirm_dialog(
+    f: &mut Frame,
+    app: &AppState,
+) {
     let area = f.area();
     let max_w = 48u16;
     let w = max_w.min(area.width.saturating_sub(4));
     let h = 9u16;
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     let menu_bg = Color::Rgb(60, 60, 60);
     let fill_style = Style::default().bg(menu_bg).fg(Color::White);
     let orange = Color::Rgb(255, 180, 80);
@@ -707,7 +802,10 @@ pub fn draw_confirm_dialog(f: &mut Frame, app: &AppState) {
         .title(" Save changes? ")
         .style(fill_style.fg(Color::Cyan));
     f.render_widget(block, rect);
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     const PAD_H: u16 = 2;
     let content = Rect {
         x: inner.x + PAD_H,
@@ -717,7 +815,9 @@ pub fn draw_confirm_dialog(f: &mut Frame, app: &AppState) {
     };
     let msg = "File was modified.";
     f.render_widget(
-        Paragraph::new(msg).style(fill_style).alignment(Alignment::Center),
+        Paragraph::new(msg)
+            .style(fill_style)
+            .alignment(Alignment::Center),
         Rect {
             x: content.x,
             y: content.y,
@@ -772,8 +872,16 @@ pub fn editor_confirm_option_rects(area: Rect) -> Option<[(Rect, EditorConfirmCh
     let h = 9u16;
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     const PAD_H: u16 = 2;
     let content = Rect {
         x: inner.x + PAD_H,

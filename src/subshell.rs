@@ -49,7 +49,10 @@ struct AutoExitConfig {
 
 #[cfg(unix)]
 impl Subshell {
-    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    fn find_subsequence(
+        haystack: &[u8],
+        needle: &[u8],
+    ) -> Option<usize> {
         if needle.is_empty() || haystack.len() < needle.len() {
             return None;
         }
@@ -72,7 +75,11 @@ impl Subshell {
 
     /// Feed stdin bytes into relay and intercept Ctrl+O in both raw and escaped encodings.
     /// Returns true when Ctrl+O is detected (caller should exit relay).
-    fn relay_stdin_chunk(&self, carry: &mut Vec<u8>, chunk: &[u8]) -> io::Result<bool> {
+    fn relay_stdin_chunk(
+        &self,
+        carry: &mut Vec<u8>,
+        chunk: &[u8],
+    ) -> io::Result<bool> {
         carry.extend_from_slice(chunk);
         loop {
             let plain_pos = carry.iter().position(|&b| b == CTRL_O).map(|p| (p, 1usize));
@@ -108,7 +115,10 @@ impl Subshell {
     }
 
     /// Read from PTY in non-blocking mode (MC: read_nonblock). Avoids lockup when slave tcflush() revokes data between poll and read.
-    fn read_pty_nonblock(fd: i32, buf: &mut [u8]) -> io::Result<Option<usize>> {
+    fn read_pty_nonblock(
+        fd: i32,
+        buf: &mut [u8],
+    ) -> io::Result<Option<usize>> {
         use nix::errno::Errno;
         let old_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         if old_flags < 0 {
@@ -128,7 +138,10 @@ impl Subshell {
         result
     }
 
-    fn write_all_fd(fd: i32, mut data: &[u8]) -> io::Result<()> {
+    fn write_all_fd(
+        fd: i32,
+        mut data: &[u8],
+    ) -> io::Result<()> {
         use nix::errno::Errno;
         while !data.is_empty() {
             match nix::unistd::write(unsafe { BorrowedFd::borrow_raw(fd) }, data) {
@@ -185,10 +198,7 @@ impl Subshell {
             }
         }
 
-        let keep = marker
-            .len()
-            .max(helper_echo.len())
-            .saturating_sub(1);
+        let keep = marker.len().max(helper_echo.len()).saturating_sub(1);
         if pending.len() > keep {
             let flush_len = pending.len() - keep;
             Self::write_all_fd(1, &pending[..flush_len])?;
@@ -324,7 +334,7 @@ impl Subshell {
         tio.c_lflag |= libc::ICANON | libc::ECHO | libc::IEXTEN | libc::ISIG;
         tio.c_iflag |= libc::ICRNL;
         tio.c_iflag &= !libc::IXON; // pass ^S/^Q to shell (MC does this in raw_mode)
-        // Cooked output: postprocess, \n → \r\n
+                                    // Cooked output: postprocess, \n → \r\n
         tio.c_oflag |= libc::OPOST | libc::ONLCR;
         tio.c_cc[libc::VMIN] = 1;
         tio.c_cc[libc::VTIME] = 0;
@@ -332,7 +342,12 @@ impl Subshell {
         if libc::VDISCARD < libc::NCCS {
             tio.c_cc[libc::VDISCARD] = libc::_POSIX_VDISABLE as libc::cc_t;
         }
-        #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
         {
             tio.c_lflag &= !libc::FLUSHO;
         }
@@ -441,10 +456,7 @@ impl Subshell {
                 }
                 let _ = std::env::set_current_dir(cwd);
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-                let err = Command::new(&shell)
-                    .arg("-i")
-                    .current_dir(cwd)
-                    .exec();
+                let err = Command::new(&shell).arg("-i").current_dir(cwd).exec();
                 eprintln!("exec {}: {}", shell, err);
                 std::process::exit(1);
             }
@@ -533,15 +545,14 @@ impl Subshell {
                     Err(_) => break,
                 }
 
-                if fds[0]
-                    .revents()
-                    .map_or(false, |r| r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP))
-                {
+                if fds[0].revents().map_or(false, |r| {
+                    r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP)
+                }) {
                     match unistd::read(0, &mut stdin_buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            let saw_ctrl_c = auto_exit.is_some()
-                                && stdin_buf[..n].iter().any(|b| *b == 0x03);
+                            let saw_ctrl_c =
+                                auto_exit.is_some() && stdin_buf[..n].iter().any(|b| *b == 0x03);
                             if self.relay_stdin_chunk(&mut stdin_carry, &stdin_buf[..n])? {
                                 let _ = Self::drain_pty_output(self.master_fd);
                                 return Ok(());
@@ -561,10 +572,9 @@ impl Subshell {
                     }
                 }
 
-                if fds[1]
-                    .revents()
-                    .map_or(false, |r| r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP))
-                {
+                if fds[1].revents().map_or(false, |r| {
+                    r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP)
+                }) {
                     match Self::read_pty_nonblock(self.master_fd, &mut pty_buf)? {
                         Some(0) => break,
                         Some(n) => {
@@ -624,7 +634,11 @@ impl Subshell {
 
     /// Change shell cwd to match the active panel then relay until Ctrl+O (for Suspend so ls matches panel).
     /// Only sends `cd 'cwd'` when the shell is not already in that directory, to avoid redundant commands in history.
-    pub fn run_cd_then_relay(&self, cwd: &str, prepared: Option<PreparedRelay>) -> io::Result<()> {
+    pub fn run_cd_then_relay(
+        &self,
+        cwd: &str,
+        prepared: Option<PreparedRelay>,
+    ) -> io::Result<()> {
         let panel_canonical = Path::new(cwd).canonicalize().ok();
         let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
         let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
@@ -674,7 +688,11 @@ impl Subshell {
                 .as_nanos() as u64
                 ^ (self.child_pid as u64);
             // Marker uses only [A-Za-z0-9_] so helper can be emitted without shell quoting.
-            let marker = format!("OXD_{:08x}_{}", (nonce & 0xffff_ffff) as u32, self.child_pid);
+            let marker = format!(
+                "OXD_{:08x}_{}",
+                (nonce & 0xffff_ffff) as u32,
+                self.child_pid
+            );
             let helper = format!("printf %s {marker}");
             let cmd_escaped = Self::shell_escape_path(cmd);
             // Print marker when the command line completes (including interrupted foreground jobs),
@@ -747,7 +765,11 @@ fn get_cwd_macos(pid: u32) -> Option<PathBuf> {
                 let s = s.trim();
                 if !s.is_empty() {
                     let p = PathBuf::from(s);
-                    if p.is_dir() && best.as_ref().map_or(true, |b| p.as_os_str().len() > b.as_os_str().len()) {
+                    if p.is_dir()
+                        && best
+                            .as_ref()
+                            .map_or(true, |b| p.as_os_str().len() > b.as_os_str().len())
+                    {
                         best = Some(p);
                     }
                 }
@@ -772,15 +794,22 @@ fn kill_subshell_session(session_leader_pid: i32) {
     let self_pid = nix::unistd::getpid();
 
     #[cfg(target_os = "linux")]
-    fn pids_in_session_linux(session_leader: Pid, exclude_pid: Pid) -> Vec<Pid> {
+    fn pids_in_session_linux(
+        session_leader: Pid,
+        exclude_pid: Pid,
+    ) -> Vec<Pid> {
         use nix::unistd::getsid;
         use std::fs;
 
         let mut pids = Vec::new();
-        let Ok(entries) = fs::read_dir("/proc") else { return pids };
+        let Ok(entries) = fs::read_dir("/proc") else {
+            return pids;
+        };
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let Ok(pid) = name.to_string_lossy().parse::<i32>() else { continue };
+            let Ok(pid) = name.to_string_lossy().parse::<i32>() else {
+                continue;
+            };
             if pid <= 0 || Pid::from_raw(pid) == exclude_pid {
                 continue;
             }
@@ -795,15 +824,17 @@ fn kill_subshell_session(session_leader_pid: i32) {
     }
 
     #[cfg(target_os = "macos")]
-    fn pids_in_session_macos(session_leader: Pid, exclude_pid: Pid) -> Vec<Pid> {
+    fn pids_in_session_macos(
+        session_leader: Pid,
+        exclude_pid: Pid,
+    ) -> Vec<Pid> {
         use nix::unistd::getsid;
 
         const MAX_PIDS: usize = 8192;
         let mut buf = [0i32; MAX_PIDS];
         let size_bytes = (MAX_PIDS * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
-        let n_bytes = unsafe {
-            libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, size_bytes)
-        };
+        let n_bytes =
+            unsafe { libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, size_bytes) };
         if n_bytes <= 0 {
             return Vec::new();
         }
@@ -868,10 +899,7 @@ impl Drop for Subshell {
     fn drop(&mut self) {
         kill_subshell_session(self.child_pid);
         let _ = nix::unistd::close(self.master_fd);
-        let _ = nix::sys::wait::waitpid(
-            nix::unistd::Pid::from_raw(self.child_pid),
-            None,
-        );
+        let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(self.child_pid), None);
     }
 }
 
@@ -889,7 +917,10 @@ impl Subshell {
     pub fn spawn(_cwd: &str) -> io::Result<Self> {
         Ok(Self)
     }
-    pub fn write(&self, _data: &[u8]) -> io::Result<usize> {
+    pub fn write(
+        &self,
+        _data: &[u8],
+    ) -> io::Result<usize> {
         Ok(0)
     }
     pub fn run_relay_until_ctrl_o(
@@ -901,7 +932,11 @@ impl Subshell {
         Ok(())
     }
 
-    pub fn run_cd_then_relay(&self, _cwd: &str, _prepared: Option<PreparedRelay>) -> io::Result<()> {
+    pub fn run_cd_then_relay(
+        &self,
+        _cwd: &str,
+        _prepared: Option<PreparedRelay>,
+    ) -> io::Result<()> {
         Ok(())
     }
 

@@ -1,14 +1,14 @@
-use std::io;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
-    terminal::size,
-};
 use crate::app_state::{AppState, CopyParams, Focus, RenameAttrDialogState, RenameAttrField};
 pub use crate::editor::EditorConfirmChoice;
 use crate::editor::{handle_editor_key, handle_editor_mouse};
 use crate::panel::PanelOperations;
 use crate::ui::Renderer;
 use crate::viewer::handle_viewer_key;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    terminal::size,
+};
+use std::io;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
@@ -147,9 +147,8 @@ pub enum CopyErrorChoice {
 pub struct EventHandler;
 
 impl EventHandler {
-    /// Process all pending events: handle Key/Mouse (update app, return action), ignore FocusGained/Resize.
-    /// Never discards keys. Returns the last action from a key/mouse, or None if queue empty or only non-keys.
-    pub fn process_queued_events(app: &mut AppState) -> io::Result<Option<AppAction>> {
+    /// Drain the crossterm queue without blocking; return the last key/mouse action, if any.
+    fn drain_events_nonblocking(app: &mut AppState) -> io::Result<Option<AppAction>> {
         let mut last_action = None;
         while event::poll(std::time::Duration::ZERO)? {
             let ev = event::read()?;
@@ -160,17 +159,16 @@ impl EventHandler {
         Ok(last_action)
     }
 
+    /// Process all pending events: handle Key/Mouse (update app, return action), ignore FocusGained/Resize.
+    /// Never discards keys. Returns the last action from a key/mouse, or None if queue empty or only non-keys.
+    pub fn process_queued_events(app: &mut AppState) -> io::Result<Option<AppAction>> {
+        Self::drain_events_nonblocking(app)
+    }
+
     pub fn handle_events(app: &mut AppState) -> io::Result<AppAction> {
         // Process all queued events first (no block). Handle every Key/Mouse; drain non-keys.
         // This ensures rapid keypresses when switching panels (e.g. Tab then Down) are all applied.
-        let mut last_action = None;
-        while event::poll(std::time::Duration::ZERO)? {
-            let ev = event::read()?;
-            if let Some(action) = Self::dispatch_event(app, ev)? {
-                last_action = Some(action);
-            }
-        }
-        if let Some(action) = last_action {
+        if let Some(action) = Self::drain_events_nonblocking(app)? {
             return Ok(action);
         }
         // Queue empty: block for one event.
@@ -272,7 +270,9 @@ impl EventHandler {
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Enter => {
-                            return Ok(Some(AppAction::CopyOverwriteChoice(app.copy_overwrite_focus + 1)));
+                            return Ok(Some(AppAction::CopyOverwriteChoice(
+                                app.copy_overwrite_focus + 1,
+                            )));
                         }
                         _ => None,
                     };
@@ -389,7 +389,9 @@ impl EventHandler {
                     }
                 }
                 // Panel settings overlay (Ctrl+Q left, Ctrl+W right).
-                if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
+                if app.left_panel_settings_overlay.is_some()
+                    || app.right_panel_settings_overlay.is_some()
+                {
                     if let Some(action) =
                         crate::panel_overlay::handle_key(app, key.code, key.modifiers)
                     {
@@ -398,9 +400,7 @@ impl EventHandler {
                 }
                 // F1 Help dialog: Esc closes.
                 if app.help_dialog {
-                    if let Some(action) =
-                        crate::help_dialog::handle_key(key.code, key.modifiers)
-                    {
+                    if let Some(action) = crate::help_dialog::handle_key(key.code, key.modifiers) {
                         return Ok(Some(action));
                     }
                 }
@@ -438,7 +438,11 @@ impl EventHandler {
                     other => other,
                 };
                 if app.focus == Focus::CommandLine {
-                    return Ok(Some(Self::handle_command_line_key(app, code, key.modifiers)));
+                    return Ok(Some(Self::handle_command_line_key(
+                        app,
+                        code,
+                        key.modifiers,
+                    )));
                 }
                 // Panel height: outer frame, inner content; visible list rows = terminal - 4.
                 let panel_height = crate::util::compute_panel_height();
@@ -464,7 +468,8 @@ impl EventHandler {
                     }
                     KeyCode::Char(' ') => {
                         // Space = toggle mark on the current file, then move selection down.
-                        app.active_panel_mut().toggle_mark_and_move_next(panel_height);
+                        app.active_panel_mut()
+                            .toggle_mark_and_move_next(panel_height);
                     }
                     KeyCode::Char(c) => {
                         if c == '*' {
@@ -482,13 +487,18 @@ impl EventHandler {
                         let source = app.get_current_dir().to_string();
                         let target = app.get_opposite_panel_dir().to_string();
                         if source != target {
-                            let (items, restore_after, restore_before) =
-                                app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
+                            let (items, restore_after, restore_before) = app
+                                .active_panel_mut()
+                                .get_names_to_copy_with_restore_neighbors();
                             if !items.is_empty() {
                                 let opposite = app.get_opposite_panel_location();
                                 let (target_location, target_fs_path) = match &opposite {
-                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
-                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+                                    crate::core::location::PanelLocation::Zip { .. } => {
+                                        (Some(opposite), None)
+                                    }
+                                    crate::core::location::PanelLocation::Fs(_) => {
+                                        (None, Some(app.get_opposite_panel_target_fs_path()))
+                                    }
                                 };
                                 return Ok(Some(AppAction::Copy(CopyParams {
                                     source_dir: source,
@@ -507,13 +517,18 @@ impl EventHandler {
                         let source = app.get_current_dir().to_string();
                         let target = app.get_opposite_panel_dir().to_string();
                         if source != target {
-                            let (items, restore_after, restore_before) =
-                                app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
+                            let (items, restore_after, restore_before) = app
+                                .active_panel_mut()
+                                .get_names_to_copy_with_restore_neighbors();
                             if !items.is_empty() {
                                 let opposite = app.get_opposite_panel_location();
                                 let (target_location, target_fs_path) = match &opposite {
-                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
-                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+                                    crate::core::location::PanelLocation::Zip { .. } => {
+                                        (Some(opposite), None)
+                                    }
+                                    crate::core::location::PanelLocation::Fs(_) => {
+                                        (None, Some(app.get_opposite_panel_target_fs_path()))
+                                    }
                                 };
                                 return Ok(Some(AppAction::Move(CopyParams {
                                     source_dir: source,
@@ -539,13 +554,13 @@ impl EventHandler {
                     KeyCode::F(1) => return Ok(Some(AppAction::OpenHelpDialog)),
                     KeyCode::F(9) => return Ok(Some(AppAction::OpenSettingsDialog)),
                     KeyCode::F(7) => {
-                        if crate::panel_backend::supports_mkdir(&app.get_current_location()) {
+                        if crate::core::panel_backend::supports_mkdir(&app.get_current_location()) {
                             return Ok(Some(AppAction::OpenMkdirDialog));
                         }
                     }
                     KeyCode::F(2) => return Ok(Some(AppAction::OpenRenameAttrDialog)),
                     KeyCode::F(4) => {
-                        if crate::panel_backend::supports_edit(&app.get_current_location()) {
+                        if crate::core::panel_backend::supports_edit(&app.get_current_location()) {
                             if let Some(file) = app.active_panel_mut().get_selected_file() {
                                 if !file.is_dir && !file.is_parent_dir() {
                                     return Ok(Some(AppAction::OpenEditor));
@@ -554,8 +569,9 @@ impl EventHandler {
                         }
                     }
                     KeyCode::F(8) => {
-                        let (items, restore_after, restore_before) =
-                            app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
+                        let (items, restore_after, restore_before) = app
+                            .active_panel_mut()
+                            .get_names_to_copy_with_restore_neighbors();
                         if !items.is_empty() {
                             app.operation_confirm_pending = Some((
                                 crate::app_state::Operation::Delete,
@@ -605,7 +621,10 @@ impl EventHandler {
     }
 
     /// If a dialog text input or the command line has logical focus, insert `data` there and return true.
-    fn paste_into_focused_input(app: &mut AppState, data: &str) -> bool {
+    fn paste_into_focused_input(
+        app: &mut AppState,
+        data: &str,
+    ) -> bool {
         if let Some(d) = app.find_dialog.as_mut() {
             if d.focus <= 2 {
                 let input = match d.focus {
@@ -637,9 +656,7 @@ impl EventHandler {
             }
         }
         if let Some(RenameAttrDialogState::Single {
-            name_input,
-            focus,
-            ..
+            name_input, focus, ..
         }) = app.rename_attr_dialog.as_mut()
         {
             if *focus == RenameAttrField::Name {
@@ -715,7 +732,10 @@ impl EventHandler {
             KeyCode::F(12) => {
                 // F12: insert current file at cursor only (don't run). Works on all terminals and macOS
                 // where Ctrl+Enter and Option+Enter are often consumed or not reported.
-                let name = app.active_panel_ref().get_selected_file().map(|f| f.name.clone());
+                let name = app
+                    .active_panel_ref()
+                    .get_selected_file()
+                    .map(|f| f.name.clone());
                 if let Some(name) = name {
                     app.command_line_insert_str(&name);
                 }
@@ -741,13 +761,18 @@ impl EventHandler {
         }
     }
 
-    fn handle_ctrl_key(app: &mut AppState, c: char) -> AppAction {
+    fn handle_ctrl_key(
+        app: &mut AppState,
+        c: char,
+    ) -> AppAction {
         match c {
             'q' => AppAction::OpenLeftPanelSettings,
             'w' => AppAction::OpenRightPanelSettings,
             'o' => AppAction::Suspend,
             'g' => {
-                let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
+                let (items, ..) = app
+                    .active_panel_ref()
+                    .get_names_to_copy_with_restore_neighbors();
                 if !items.is_empty() {
                     AppAction::OpenSizeInfoDialog
                 } else {
@@ -769,7 +794,9 @@ impl EventHandler {
             'a' => {
                 let loc = app.get_current_location();
                 if loc.is_fs() {
-                    let (items, ..) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
+                    let (items, ..) = app
+                        .active_panel_ref()
+                        .get_names_to_copy_with_restore_neighbors();
                     if !items.is_empty() {
                         return AppAction::OpenArchiveDialog;
                     }
@@ -777,7 +804,7 @@ impl EventHandler {
                 AppAction::Continue
             }
             'n' => {
-                if crate::panel_backend::supports_new_file(&app.get_current_location()) {
+                if crate::core::panel_backend::supports_new_file(&app.get_current_location()) {
                     return AppAction::OpenNewFileDialog;
                 }
                 AppAction::Continue
@@ -791,7 +818,10 @@ impl EventHandler {
     }
 
     /// Returns Ok(Some(action)) when an action (e.g. RunCommand) should be handled by the main loop.
-    fn handle_mouse_event(app: &mut AppState, mouse_event: MouseEvent) -> io::Result<Option<AppAction>> {
+    fn handle_mouse_event(
+        app: &mut AppState,
+        mouse_event: MouseEvent,
+    ) -> io::Result<Option<AppAction>> {
         // Store pointer position from every mouse event (scroll, move, click) so Space can "select at pointer".
         app.last_mouse_position = Some((mouse_event.column, mouse_event.row));
 
@@ -839,7 +869,9 @@ impl EventHandler {
         // Mkdir dialog: handle clicks on Create and Cancel buttons.
         if app.mkdir_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some((create_rect, cancel_rect)) = crate::mkdir_dialog::mkdir_button_rects(area) {
+                if let Some((create_rect, cancel_rect)) =
+                    crate::mkdir_dialog::mkdir_button_rects(area)
+                {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
                         && col < create_rect.x + create_rect.width
@@ -862,7 +894,9 @@ impl EventHandler {
         // Archive dialog: handle clicks on Create and Cancel buttons.
         if app.archive_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some((create_rect, cancel_rect)) = crate::archive_dialog::archive_button_rects(area) {
+                if let Some((create_rect, cancel_rect)) =
+                    crate::archive_dialog::archive_button_rects(area)
+                {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
                         && col < create_rect.x + create_rect.width
@@ -901,7 +935,9 @@ impl EventHandler {
         // New file dialog: handle clicks on Create and Cancel buttons.
         if app.new_file_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some((create_rect, cancel_rect)) = crate::new_file_dialog::new_file_button_rects(area) {
+                if let Some((create_rect, cancel_rect)) =
+                    crate::new_file_dialog::new_file_button_rects(area)
+                {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
                         && col < create_rect.x + create_rect.width
@@ -963,7 +999,10 @@ impl EventHandler {
         // Operation confirm dialog: handle clicks on Yes/No buttons (mouse/touchpad friendly).
         if let Some((op, _)) = app.operation_confirm_pending.as_ref() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                let show_paths = matches!(op, crate::app_state::Operation::Copy | crate::app_state::Operation::Move);
+                let show_paths = matches!(
+                    op,
+                    crate::app_state::Operation::Copy | crate::app_state::Operation::Move
+                );
                 if let Some((_dialog_rect, yes_rect, no_rect)) =
                     Renderer::operation_confirm_button_rects(area, show_paths)
                 {
@@ -973,14 +1012,18 @@ impl EventHandler {
                         && row >= yes_rect.y
                         && row < yes_rect.y + yes_rect.height
                     {
-                        return Ok(Some(AppAction::DeleteConfirmChoice(DeleteConfirmChoice::Yes)));
+                        return Ok(Some(AppAction::DeleteConfirmChoice(
+                            DeleteConfirmChoice::Yes,
+                        )));
                     }
                     if col >= no_rect.x
                         && col < no_rect.x + no_rect.width
                         && row >= no_rect.y
                         && row < no_rect.y + no_rect.height
                     {
-                        return Ok(Some(AppAction::DeleteConfirmChoice(DeleteConfirmChoice::No)));
+                        return Ok(Some(AppAction::DeleteConfirmChoice(
+                            DeleteConfirmChoice::No,
+                        )));
                     }
                 }
             }
@@ -1011,9 +1054,13 @@ impl EventHandler {
                     }
                 }
                 if in_panels_view {
-                    if let Some((panel_index, file_index)) =
-                        Self::hit_test_panel(mouse_event.column, mouse_event.row, term_w, term_h, app)
-                    {
+                    if let Some((panel_index, file_index)) = Self::hit_test_panel(
+                        mouse_event.column,
+                        mouse_event.row,
+                        term_w,
+                        term_h,
+                        app,
+                    ) {
                         app.focus_panel();
                         app.set_active_panel(panel_index);
                         let panel = if panel_index == 0 {
@@ -1065,7 +1112,11 @@ impl EventHandler {
     /// Map mouse (col, row) to (panel_index, file_index) when clicking in a panel's file list.
     /// Layout must match ui::Renderer::draw_panels_view (frame border 1, inner, left/right split).
     /// Hit test menu bar (row 0). Returns AppAction for the clicked item.
-    fn hit_test_menu_bar(col: u16, term_w: u16, app: &mut AppState) -> Option<AppAction> {
+    fn hit_test_menu_bar(
+        col: u16,
+        term_w: u16,
+        app: &mut AppState,
+    ) -> Option<AppAction> {
         let items = Renderer::menu_bar_items();
         let n = items.len() as u16;
         if n == 0 {
@@ -1079,124 +1130,144 @@ impl EventHandler {
             return None;
         }
         match key {
-                    1 => Some(AppAction::OpenHelpDialog),
-                    2 => Some(AppAction::OpenRenameAttrDialog),
-                    3 => {
-                        if app.active_panel_ref().get_selected_file().map_or(false, |f| !f.is_dir && !f.is_parent_dir()) {
-                            Some(AppAction::OpenViewer)
-                        } else {
-                            None
-                        }
-                    }
-                    4 => {
-                        if crate::panel_backend::supports_edit(&app.get_current_location())
-                            && app.active_panel_ref().get_selected_file().map_or(false, |f| !f.is_dir && !f.is_parent_dir())
-                        {
-                            Some(AppAction::OpenEditor)
-                        } else {
-                            None
-                        }
-                    }
-                    5 => {
-                        let source = app.get_current_dir().to_string();
-                        let target = app.get_opposite_panel_dir().to_string();
-                        if source != target {
-                            let (names, restore_after, restore_before) =
-                                app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
-                            if !names.is_empty() {
-                                let opposite = app.get_opposite_panel_location();
-                                let (target_location, target_fs_path) = match &opposite {
-                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
-                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
-                                };
-                                let params = CopyParams {
-                                    source_dir: source,
-                                    target_dir: target,
-                                    source_location: Some(app.get_current_location()),
-                                    target_location,
-                                    target_fs_path,
-                                    items: names,
-                                    restore_selection_after: restore_after,
-                                    restore_selection_before: restore_before,
-                                };
-                                app.operation_confirm_pending = Some((crate::app_state::Operation::Copy, params));
-                                app.operation_confirm_focus_yes = true;
-                                Some(AppAction::Continue)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                    6 => {
-                        let source = app.get_current_dir().to_string();
-                        let target = app.get_opposite_panel_dir().to_string();
-                        if source != target {
-                            let (names, restore_after, restore_before) =
-                                app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
-                            if !names.is_empty() {
-                                let opposite = app.get_opposite_panel_location();
-                                let (target_location, target_fs_path) = match &opposite {
-                                    crate::location::PanelLocation::Zip { .. } => (Some(opposite), None),
-                                    crate::location::PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
-                                };
-                                let params = CopyParams {
-                                    source_dir: source,
-                                    target_dir: target,
-                                    source_location: Some(app.get_current_location()),
-                                    target_location,
-                                    target_fs_path,
-                                    items: names,
-                                    restore_selection_after: restore_after,
-                                    restore_selection_before: restore_before,
-                                };
-                                app.operation_confirm_pending = Some((crate::app_state::Operation::Move, params));
-                                app.operation_confirm_focus_yes = true;
-                                Some(AppAction::Continue)
-                            } else {
-                                app.focus_command_line();
-                                None
-                            }
-                        } else {
-                            app.focus_command_line();
-                            None
-                        }
-                    }
-                    7 => {
-                        if crate::panel_backend::supports_mkdir(&app.get_current_location()) {
-                            Some(AppAction::OpenMkdirDialog)
-                        } else {
-                            None
-                        }
-                    }
-                    8 => {
-                        let (names, restore_after, restore_before) =
-                            app.active_panel_mut().get_names_to_copy_with_restore_neighbors();
-                        if !names.is_empty() {
-                            app.operation_confirm_pending = Some((
-                                crate::app_state::Operation::Delete,
-                                CopyParams {
-                                    source_dir: app.get_current_dir().to_string(),
-                                    target_dir: String::new(),
-                                    source_location: Some(app.get_current_location()),
-                                    target_location: None,
-                                    target_fs_path: None,
-                                    items: names,
-                                    restore_selection_after: restore_after,
-                                    restore_selection_before: restore_before,
-                                },
-                            ));
-                            app.operation_confirm_focus_yes = true;
-                            Some(AppAction::Continue)
-                        } else {
-                            None
-                        }
-                    }
-                    9 => Some(AppAction::OpenSettingsDialog),
-                    10 => Some(AppAction::Quit),
-                    _ => None,
+            1 => Some(AppAction::OpenHelpDialog),
+            2 => Some(AppAction::OpenRenameAttrDialog),
+            3 => {
+                if app
+                    .active_panel_ref()
+                    .get_selected_file()
+                    .map_or(false, |f| !f.is_dir && !f.is_parent_dir())
+                {
+                    Some(AppAction::OpenViewer)
+                } else {
+                    None
                 }
+            }
+            4 => {
+                if crate::core::panel_backend::supports_edit(&app.get_current_location())
+                    && app
+                        .active_panel_ref()
+                        .get_selected_file()
+                        .map_or(false, |f| !f.is_dir && !f.is_parent_dir())
+                {
+                    Some(AppAction::OpenEditor)
+                } else {
+                    None
+                }
+            }
+            5 => {
+                let source = app.get_current_dir().to_string();
+                let target = app.get_opposite_panel_dir().to_string();
+                if source != target {
+                    let (names, restore_after, restore_before) = app
+                        .active_panel_mut()
+                        .get_names_to_copy_with_restore_neighbors();
+                    if !names.is_empty() {
+                        let opposite = app.get_opposite_panel_location();
+                        let (target_location, target_fs_path) = match &opposite {
+                            crate::core::location::PanelLocation::Zip { .. } => {
+                                (Some(opposite), None)
+                            }
+                            crate::core::location::PanelLocation::Fs(_) => {
+                                (None, Some(app.get_opposite_panel_target_fs_path()))
+                            }
+                        };
+                        let params = CopyParams {
+                            source_dir: source,
+                            target_dir: target,
+                            source_location: Some(app.get_current_location()),
+                            target_location,
+                            target_fs_path,
+                            items: names,
+                            restore_selection_after: restore_after,
+                            restore_selection_before: restore_before,
+                        };
+                        app.operation_confirm_pending =
+                            Some((crate::app_state::Operation::Copy, params));
+                        app.operation_confirm_focus_yes = true;
+                        Some(AppAction::Continue)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            6 => {
+                let source = app.get_current_dir().to_string();
+                let target = app.get_opposite_panel_dir().to_string();
+                if source != target {
+                    let (names, restore_after, restore_before) = app
+                        .active_panel_mut()
+                        .get_names_to_copy_with_restore_neighbors();
+                    if !names.is_empty() {
+                        let opposite = app.get_opposite_panel_location();
+                        let (target_location, target_fs_path) = match &opposite {
+                            crate::core::location::PanelLocation::Zip { .. } => {
+                                (Some(opposite), None)
+                            }
+                            crate::core::location::PanelLocation::Fs(_) => {
+                                (None, Some(app.get_opposite_panel_target_fs_path()))
+                            }
+                        };
+                        let params = CopyParams {
+                            source_dir: source,
+                            target_dir: target,
+                            source_location: Some(app.get_current_location()),
+                            target_location,
+                            target_fs_path,
+                            items: names,
+                            restore_selection_after: restore_after,
+                            restore_selection_before: restore_before,
+                        };
+                        app.operation_confirm_pending =
+                            Some((crate::app_state::Operation::Move, params));
+                        app.operation_confirm_focus_yes = true;
+                        Some(AppAction::Continue)
+                    } else {
+                        app.focus_command_line();
+                        None
+                    }
+                } else {
+                    app.focus_command_line();
+                    None
+                }
+            }
+            7 => {
+                if crate::core::panel_backend::supports_mkdir(&app.get_current_location()) {
+                    Some(AppAction::OpenMkdirDialog)
+                } else {
+                    None
+                }
+            }
+            8 => {
+                let (names, restore_after, restore_before) = app
+                    .active_panel_mut()
+                    .get_names_to_copy_with_restore_neighbors();
+                if !names.is_empty() {
+                    app.operation_confirm_pending = Some((
+                        crate::app_state::Operation::Delete,
+                        CopyParams {
+                            source_dir: app.get_current_dir().to_string(),
+                            target_dir: String::new(),
+                            source_location: Some(app.get_current_location()),
+                            target_location: None,
+                            target_fs_path: None,
+                            items: names,
+                            restore_selection_after: restore_after,
+                            restore_selection_before: restore_before,
+                        },
+                    ));
+                    app.operation_confirm_focus_yes = true;
+                    Some(AppAction::Continue)
+                } else {
+                    None
+                }
+            }
+            9 => Some(AppAction::OpenSettingsDialog),
+            10 => Some(AppAction::Quit),
+            _ => None,
+        }
     }
 
     fn hit_test_panel(

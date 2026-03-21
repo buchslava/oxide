@@ -18,7 +18,9 @@ fn uid_to_owner(uid: u32) -> String {
         if name.is_null() {
             return uid.to_string();
         }
-        std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -33,7 +35,9 @@ fn gid_to_group(gid: u32) -> String {
         if name.is_null() {
             return gid.to_string();
         }
-        std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -67,7 +71,10 @@ fn format_permissions(mode: u32) -> String {
     let r3 = if mode & 0o4 != 0 { 'r' } else { '-' };
     let w3 = if mode & 0o2 != 0 { 'w' } else { '-' };
     let x3 = if mode & 0o1 != 0 { 'x' } else { '-' };
-    format!("{}{}{}{}{}{}{}{}{}{}", kind, r, w, x, r2, w2, x2, r3, w3, x3)
+    format!(
+        "{}{}{}{}{}{}{}{}{}{}",
+        kind, r, w, x, r2, w2, x2, r3, w3, x3
+    )
 }
 
 #[cfg(not(unix))]
@@ -94,7 +101,11 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    pub fn new(name: String, is_dir: bool, is_executable: bool) -> Self {
+    pub fn new(
+        name: String,
+        is_dir: bool,
+        is_executable: bool,
+    ) -> Self {
         Self {
             name,
             is_dir,
@@ -147,11 +158,36 @@ pub const SORT_MODES: [&str; 6] = [
     "mtime_desc",
 ];
 
+/// Next entry in [`SORT_MODES`]. Unknown `current` is treated as the first mode.
+pub fn cycle_sort_mode(
+    current: &str,
+    forward: bool,
+) -> String {
+    let idx = SORT_MODES.iter().position(|s| *s == current).unwrap_or(0);
+    let len = SORT_MODES.len();
+    let next = if forward {
+        (idx + 1) % len
+    } else {
+        (idx + len - 1) % len
+    };
+    SORT_MODES[next].to_string()
+}
+
 /// Compare two entries by sort_mode (no special ".." handling). Used for ordering within dirs or files.
-fn cmp_by_sort_mode(a: &FileInfo, b: &FileInfo, sort_mode: &str) -> std::cmp::Ordering {
+fn cmp_by_sort_mode(
+    a: &FileInfo,
+    b: &FileInfo,
+    sort_mode: &str,
+) -> std::cmp::Ordering {
     match sort_mode {
-        "name_asc" => a.name.trim_end_matches('/').cmp(b.name.trim_end_matches('/')),
-        "name_desc" => b.name.trim_end_matches('/').cmp(a.name.trim_end_matches('/')),
+        "name_asc" => a
+            .name
+            .trim_end_matches('/')
+            .cmp(b.name.trim_end_matches('/')),
+        "name_desc" => b
+            .name
+            .trim_end_matches('/')
+            .cmp(a.name.trim_end_matches('/')),
         "size_asc" => a.size.cmp(&b.size).then_with(|| a.name.cmp(&b.name)),
         "size_desc" => b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)),
         "mtime_asc" => {
@@ -164,12 +200,19 @@ fn cmp_by_sort_mode(a: &FileInfo, b: &FileInfo, sort_mode: &str) -> std::cmp::Or
             let tb = b.mtime.unwrap_or(std::time::UNIX_EPOCH);
             tb.cmp(&ta).then_with(|| a.name.cmp(&b.name))
         }
-        _ => a.name.trim_end_matches('/').cmp(b.name.trim_end_matches('/')),
+        _ => a
+            .name
+            .trim_end_matches('/')
+            .cmp(b.name.trim_end_matches('/')),
     }
 }
 
 /// Sort file list: ".." always first. If dirs_first then directories next (sorted by sort_mode), then files (sorted by sort_mode); else unified by sort_mode.
-pub fn apply_sort_mode(files: &mut [FileInfo], sort_mode: &str, dirs_first: bool) {
+pub fn apply_sort_mode(
+    files: &mut [FileInfo],
+    sort_mode: &str,
+    dirs_first: bool,
+) {
     files.sort_by(|a, b| {
         if a.is_parent_dir() && !b.is_parent_dir() {
             return std::cmp::Ordering::Less;
@@ -194,7 +237,12 @@ impl FileOperations {
     /// Read directory contents. When show_hidden is false, entries starting with "." are excluded.
     /// sort_mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
     /// dirs_first: when true, directories appear before files; when false, unified sort.
-    pub fn read_directory<P: AsRef<Path>>(path: P, show_hidden: bool, sort_mode: &str, dirs_first: bool) -> io::Result<Vec<FileInfo>> {
+    pub fn read_directory<P: AsRef<Path>>(
+        path: P,
+        show_hidden: bool,
+        sort_mode: &str,
+        dirs_first: bool,
+    ) -> io::Result<Vec<FileInfo>> {
         let mut files = Vec::new();
         let path_ref = path.as_ref();
 
@@ -256,7 +304,10 @@ impl FileOperations {
         Ok(files)
     }
 
-    pub fn join_path<P: AsRef<Path>>(base: P, name: &str) -> PathBuf {
+    pub fn join_path<P: AsRef<Path>>(
+        base: P,
+        name: &str,
+    ) -> PathBuf {
         let name_clean = name.trim_start_matches('/').trim_end_matches('/');
         base.as_ref().join(name_clean)
     }
@@ -271,12 +322,18 @@ impl FileOperations {
 
     #[cfg(not(unix))]
     pub fn get_file_mode<P: AsRef<Path>>(_path: P) -> io::Result<u32> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "get_file_mode not supported"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "get_file_mode not supported",
+        ))
     }
 
     /// Set file permissions (chmod). On Unix, preserves file type bits (0o170000) and sets 0o7777 (suid, sgid, sticky + rwx).
     #[cfg(unix)]
-    pub fn set_permissions<P: AsRef<Path>>(path: P, mode_bits: u32) -> io::Result<()> {
+    pub fn set_permissions<P: AsRef<Path>>(
+        path: P,
+        mode_bits: u32,
+    ) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let path = path.as_ref();
         let meta = fs::metadata(path)?;
@@ -286,8 +343,14 @@ impl FileOperations {
     }
 
     #[cfg(not(unix))]
-    pub fn set_permissions<P: AsRef<Path>>(_path: P, _mode_bits: u32) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "chmod not supported"))
+    pub fn set_permissions<P: AsRef<Path>>(
+        _path: P,
+        _mode_bits: u32,
+    ) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "chmod not supported",
+        ))
     }
 
     /// Load list of user names from /etc/passwd (Unix). First field of each line.
@@ -338,18 +401,36 @@ impl FileOperations {
 
     /// Change owner and group of a file (chown). Unix only; looks up uid/gid by name.
     #[cfg(unix)]
-    pub fn chown<P: AsRef<Path>>(path: P, user: &str, group: &str) -> io::Result<()> {
+    pub fn chown<P: AsRef<Path>>(
+        path: P,
+        user: &str,
+        group: &str,
+    ) -> io::Result<()> {
         let uid = unsafe {
-            let pw = libc::getpwnam(std::ffi::CString::new(user).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid user"))?.as_ptr());
+            let pw = libc::getpwnam(
+                std::ffi::CString::new(user)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid user"))?
+                    .as_ptr(),
+            );
             if pw.is_null() {
-                return Err(io::Error::new(io::ErrorKind::NotFound, format!("user '{}' not found", user)));
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("user '{}' not found", user),
+                ));
             }
             (*pw).pw_uid
         };
         let gid = unsafe {
-            let gr = libc::getgrnam(std::ffi::CString::new(group).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid group"))?.as_ptr());
+            let gr = libc::getgrnam(
+                std::ffi::CString::new(group)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid group"))?
+                    .as_ptr(),
+            );
             if gr.is_null() {
-                return Err(io::Error::new(io::ErrorKind::NotFound, format!("group '{}' not found", group)));
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("group '{}' not found", group),
+                ));
             }
             (*gr).gr_gid
         };
@@ -363,8 +444,15 @@ impl FileOperations {
     }
 
     #[cfg(not(unix))]
-    pub fn chown<P: AsRef<Path>>(_path: P, _user: &str, _group: &str) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "chown not supported"))
+    pub fn chown<P: AsRef<Path>>(
+        _path: P,
+        _user: &str,
+        _group: &str,
+    ) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "chown not supported",
+        ))
     }
 
     /// Compute total size of a path: file size for files; recursively sum for directories.

@@ -52,9 +52,9 @@ pub enum ViewerMode {
     Text,
     Hex,
 }
+use crate::core::panel_backend;
 use crate::events::AppAction;
 use crate::panel::PanelOperations;
-use crate::panel_backend;
 
 /// Default bytes per line when width unknown; also minimum.
 const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;
@@ -103,7 +103,11 @@ pub fn open_viewer(app: &mut AppState) -> bool {
 }
 
 /// Open a file by path in the viewer (e.g. from Find file results). Optionally scroll to 1-based line.
-pub fn open_viewer_path(app: &mut AppState, path: std::path::PathBuf, line: Option<u64>) -> bool {
+pub fn open_viewer_path(
+    app: &mut AppState,
+    path: std::path::PathBuf,
+    line: Option<u64>,
+) -> bool {
     let path_clone = path.clone();
     let file_path_str = path.display().to_string();
     let (tx, rx) = mpsc::channel();
@@ -168,7 +172,11 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
 /// Use full area width; we don't draw borders, so subtracting would leave right columns undrawn.
 fn content_width(v: &ViewerScreenState) -> usize {
     let w = v.area.width;
-    if w > 0 { w as usize } else { 80 }
+    if w > 0 {
+        w as usize
+    } else {
+        80
+    }
 }
 
 /// Visible lines in viewer (area minus header and bottom bar).
@@ -177,7 +185,10 @@ fn visible_lines(v: &ViewerScreenState) -> usize {
 }
 
 /// Split a single line into display lines of at most `width` chars (wrap long lines).
-fn wrap_line(line: &str, width: usize) -> Vec<String> {
+fn wrap_line(
+    line: &str,
+    width: usize,
+) -> Vec<String> {
     if width == 0 {
         return vec![line.to_string()];
     }
@@ -202,7 +213,10 @@ fn wrap_line(line: &str, width: usize) -> Vec<String> {
 
 /// Handle key when viewer is open. Returns Some(action) when handled, None if not in viewer.
 /// ESC closes immediately (also when file is still loading); also accept raw 0x1b.
-pub fn handle_viewer_key(app: &mut AppState, key: crossterm::event::KeyEvent) -> Option<AppAction> {
+pub fn handle_viewer_key(
+    app: &mut AppState,
+    key: crossterm::event::KeyEvent,
+) -> Option<AppAction> {
     use crossterm::event::KeyCode;
     match app.viewer_screen.as_mut()? {
         ViewerState::Loading { .. } => {
@@ -232,11 +246,8 @@ pub fn handle_viewer_key(app: &mut AppState, key: crossterm::event::KeyEvent) ->
                     width: v.area.width,
                     height: v.area.height.saturating_sub(2).max(1),
                 };
-                let chunks = Layout::horizontal([
-                    Constraint::Percentage(70),
-                    Constraint::Min(0),
-                ])
-                .split(content_rect);
+                let chunks = Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
+                    .split(content_rect);
                 let bpl = hex_bpl_two_columns(chunks[0].width, chunks[1].width).max(1);
                 let len = v.content.len();
                 let total_lines = (len + bpl - 1) / bpl;
@@ -246,9 +257,12 @@ pub fn handle_viewer_key(app: &mut AppState, key: crossterm::event::KeyEvent) ->
                     KeyCode::Right => v.hex_cursor = (v.hex_cursor + 1).min(len.saturating_sub(1)),
                     KeyCode::Up => v.hex_cursor = v.hex_cursor.saturating_sub(bpl),
                     KeyCode::Down => v.hex_cursor = (v.hex_cursor + bpl).min(len.saturating_sub(1)),
-                    KeyCode::PageUp => v.hex_cursor = v.hex_cursor.saturating_sub(bpl * height as usize),
+                    KeyCode::PageUp => {
+                        v.hex_cursor = v.hex_cursor.saturating_sub(bpl * height as usize)
+                    }
                     KeyCode::PageDown => {
-                        v.hex_cursor = (v.hex_cursor + bpl * height as usize).min(len.saturating_sub(1))
+                        v.hex_cursor =
+                            (v.hex_cursor + bpl * height as usize).min(len.saturating_sub(1))
                     }
                     KeyCode::Home => v.hex_cursor = 0,
                     KeyCode::End => v.hex_cursor = len.saturating_sub(1),
@@ -259,7 +273,9 @@ pub fn handle_viewer_key(app: &mut AppState, key: crossterm::event::KeyEvent) ->
                 if cursor_line < v.scroll {
                     v.scroll = cursor_line;
                 } else if cursor_line >= v.scroll + height as usize {
-                    v.scroll = cursor_line.saturating_sub(height as usize).saturating_add(1);
+                    v.scroll = cursor_line
+                        .saturating_sub(height as usize)
+                        .saturating_add(1);
                 }
                 return Some(AppAction::Continue);
             }
@@ -295,11 +311,9 @@ fn line_count(v: &mut ViewerScreenState) -> usize {
                 width: v.area.width,
                 height: 1,
             };
-            let chunks = Layout::horizontal([
-                Constraint::Percentage(70),
-                Constraint::Percentage(30),
-            ])
-            .split(area);
+            let chunks =
+                Layout::horizontal([Constraint::Percentage(70), Constraint::Percentage(30)])
+                    .split(area);
             hex_line_count_two_columns(v, chunks[0].width, chunks[1].width)
         }
     }
@@ -406,7 +420,11 @@ fn text_line_count_cached(v: &ViewerScreenState) -> usize {
 }
 
 /// Visible display lines for text mode: only wrap the window that fits on screen (MC-style fast paging).
-fn text_visible_lines_cached(v: &mut ViewerScreenState, scroll: usize, height: usize) -> (Vec<String>, usize) {
+fn text_visible_lines_cached(
+    v: &mut ViewerScreenState,
+    scroll: usize,
+    height: usize,
+) -> (Vec<String>, usize) {
     ensure_text_cache(v);
     let line_starts = match &v.text_line_starts {
         Some(s) => s,
@@ -436,9 +454,15 @@ fn text_visible_lines_cached(v: &mut ViewerScreenState, scroll: usize, height: u
     if num_logical == 0 {
         return (vec![], total);
     }
-    let prev_cum = |i: usize| if i == 0 { 0 } else { cumulative.get(i - 1).copied().unwrap_or(0) };
+    let prev_cum = |i: usize| {
+        if i == 0 {
+            0
+        } else {
+            cumulative.get(i - 1).copied().unwrap_or(0)
+        }
+    };
     let (logical_line, segment_in_line) = match cumulative.binary_search(&scroll) {
-        Ok(i) => (i + 1, 0),           // scroll at end of line i → start at line i+1, segment 0
+        Ok(i) => (i + 1, 0), // scroll at end of line i → start at line i+1, segment 0
         Err(i) => (i, scroll - prev_cum(i)), // scroll inside line i
     };
     let logical_line = logical_line.min(num_logical.saturating_sub(1));
@@ -448,7 +472,10 @@ fn text_visible_lines_cached(v: &mut ViewerScreenState, scroll: usize, height: u
     let mut segment_skip = segment_in_line;
     while out.len() < height && line_idx < num_logical {
         let start = line_starts[line_idx];
-        let end = line_starts.get(line_idx + 1).copied().unwrap_or(content.len());
+        let end = line_starts
+            .get(line_idx + 1)
+            .copied()
+            .unwrap_or(content.len());
         let line_bytes = &content[start..end];
         let s = sanitize_line_bytes_for_display(line_bytes);
         let wrapped = wrap_line(&s, width);
@@ -469,7 +496,10 @@ fn text_visible_lines_cached(v: &mut ViewerScreenState, scroll: usize, height: u
 }
 
 /// Total hex lines (one per row). Single-column: from content_width; two-column: from left/right widths.
-fn hex_line_count(v: &ViewerScreenState, content_width: u16) -> usize {
+fn hex_line_count(
+    v: &ViewerScreenState,
+    content_width: u16,
+) -> usize {
     let len = v.content.len();
     if len == 0 {
         return 0;
@@ -479,7 +509,11 @@ fn hex_line_count(v: &ViewerScreenState, content_width: u16) -> usize {
 }
 
 /// Total hex lines when using two-column layout (responsive left/right).
-fn hex_line_count_two_columns(v: &ViewerScreenState, left_width: u16, right_width: u16) -> usize {
+fn hex_line_count_two_columns(
+    v: &ViewerScreenState,
+    left_width: u16,
+    right_width: u16,
+) -> usize {
     let len = v.content.len();
     if len == 0 {
         return 0;
@@ -489,7 +523,10 @@ fn hex_line_count_two_columns(v: &ViewerScreenState, left_width: u16, right_widt
 }
 
 /// Bytes per line for two-column layout: left (address+hex) and right (ASCII, no pipes).
-fn hex_bpl_two_columns(left_width: u16, right_width: u16) -> usize {
+fn hex_bpl_two_columns(
+    left_width: u16,
+    right_width: u16,
+) -> usize {
     let l = left_width as usize;
     let r = right_width as usize;
     if l < 19 || r < 8 {
@@ -520,11 +557,7 @@ fn hex_visible_lines_two_columns_styled(
     let bytes = &v.content;
     let cursor_byte = v.hex_cursor;
     if bytes.is_empty() {
-        return (
-            vec![Line::from("(empty file)")],
-            vec![Line::from("")],
-            0,
-        );
+        return (vec![Line::from("(empty file)")], vec![Line::from("")], 0);
     }
     let bpl = hex_bpl_two_columns(left_width, right_width);
     let total_lines = (bytes.len() + bpl - 1) / bpl;
@@ -547,7 +580,13 @@ fn hex_visible_lines_two_columns_styled(
             .join("  ");
         let ascii: String = chunk
             .iter()
-            .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
+            .map(|&b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         let padding = bpl - chunk.len();
         let pad_hex = "   ".repeat(padding);
@@ -562,14 +601,16 @@ fn hex_visible_lines_two_columns_styled(
         if right_line_str.len() > rw {
             right_line_str.truncate(rw);
         }
-        let cursor_in_this_line =
-            cursor_byte >= offset && cursor_byte < offset + chunk.len();
+        let cursor_in_this_line = cursor_byte >= offset && cursor_byte < offset + chunk.len();
         let local_cursor = cursor_byte.saturating_sub(offset);
         let left_line = if cursor_in_this_line && local_cursor < chunk.len() {
             let hex_start = addr_len + hex_byte_column_in_line(local_cursor);
             let hex_end = (hex_start + 2).min(left_line_str.len());
             let before = left_line_str.get(..hex_start).unwrap_or("").to_string();
-            let sel = left_line_str.get(hex_start..hex_end).unwrap_or("").to_string();
+            let sel = left_line_str
+                .get(hex_start..hex_end)
+                .unwrap_or("")
+                .to_string();
             let after = left_line_str.get(hex_end..).unwrap_or("").to_string();
             Line::from(vec![
                 Span::raw(before),
@@ -583,7 +624,10 @@ fn hex_visible_lines_two_columns_styled(
             let ch_start = local_cursor;
             let ch_end = (ch_start + 1).min(right_line_str.len());
             let before = right_line_str.get(..ch_start).unwrap_or("").to_string();
-            let sel = right_line_str.get(ch_start..ch_end).unwrap_or("").to_string();
+            let sel = right_line_str
+                .get(ch_start..ch_end)
+                .unwrap_or("")
+                .to_string();
             let after = right_line_str.get(ch_end..).unwrap_or("").to_string();
             Line::from(vec![
                 Span::raw(before),
@@ -605,7 +649,10 @@ fn hex_visible_lines_two_columns_styled(
 }
 
 /// Draw the viewer (text or hex) with scroll and status.
-pub fn draw(f: &mut Frame, app: &mut AppState) {
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
     if let Some(state) = app.viewer_screen.as_mut() {
         let area = f.area();
         let dark_bg = Color::Rgb(30, 30, 35);
@@ -681,8 +728,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                     ViewerMode::Text => {
                         let (lines, total) =
                             text_visible_lines_cached(v, v.scroll, content_height_usize);
-                        let text_lines: Vec<Line> =
-                            lines.into_iter().map(Line::from).collect();
+                        let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
                         let para = Paragraph::new(ratatui::text::Text::from(text_lines))
                             .style(content_style);
                         f.render_widget(para, content_rect);
@@ -692,11 +738,9 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                         // Use Min(0) for right column so it takes all remaining space;
                         // Percentage(70)+Percentage(30) can leave 1–2 columns undrawn when
                         // width doesn't divide evenly, leaving text-mode leftovers visible.
-                        let chunks = Layout::horizontal([
-                            Constraint::Percentage(70),
-                            Constraint::Min(0),
-                        ])
-                        .split(content_rect);
+                        let chunks =
+                            Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
+                                .split(content_rect);
                         let (left_lines, right_lines, total) = hex_visible_lines_two_columns_styled(
                             v,
                             v.scroll,
@@ -749,7 +793,10 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                     Span::styled(" ↑↓ ", content_style.fg(Color::DarkGray)),
                     Span::raw("PgUp/PgDn scroll"),
                 ]);
-                f.render_widget(Paragraph::new(bar).style(content_style.fg(Color::DarkGray)), bottom_rect);
+                f.render_widget(
+                    Paragraph::new(bar).style(content_style.fg(Color::DarkGray)),
+                    bottom_rect,
+                );
             }
         }
     }

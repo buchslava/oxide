@@ -10,8 +10,8 @@ use ratatui::{
 };
 
 use crate::app_state::AppState;
+use crate::core::file_ops::SORT_MODES;
 use crate::events::{AppAction, SettingChange};
-use crate::file_ops::SORT_MODES;
 
 /// State for F9 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
 #[derive(Debug, Clone)]
@@ -35,12 +35,7 @@ impl Default for SettingsDialogState {
 }
 
 /// Section indices for the Settings dialog sidebar (Help is in F1 dialog).
-pub const SETTINGS_SECTIONS: [&str; 4] = [
-    "General settings",
-    "Left panel",
-    "Right panel",
-    "Info",
-];
+pub const SETTINGS_SECTIONS: [&str; 4] = ["General settings", "Left panel", "Right panel", "Info"];
 
 const VIEW_OPTS: [&str; 2] = ["Two columns", "One column"];
 
@@ -199,21 +194,33 @@ pub fn handle_key(
             let action = match state.selected_section {
                 0 => match state.content_focus {
                     0 => Some(AppAction::SettingChange(SettingChange::AutosaveToggle)),
-                    1 => Some(AppAction::SettingChange(SettingChange::SyncPanelToShellCwdToggle)),
-                    2 => Some(AppAction::SettingChange(SettingChange::AutoReopenPanelsAfterCommandToggle)),
-                    _ => Some(AppAction::SettingChange(SettingChange::AutoReopenPanelsAfterCommandDelayCycle)),
+                    1 => Some(AppAction::SettingChange(
+                        SettingChange::SyncPanelToShellCwdToggle,
+                    )),
+                    2 => Some(AppAction::SettingChange(
+                        SettingChange::AutoReopenPanelsAfterCommandToggle,
+                    )),
+                    _ => Some(AppAction::SettingChange(
+                        SettingChange::AutoReopenPanelsAfterCommandDelayCycle,
+                    )),
                 },
                 1 => match state.content_focus {
                     0 => Some(AppAction::SettingChange(SettingChange::LeftViewCycle)),
                     1 => Some(AppAction::SettingChange(SettingChange::LeftSortCycle)),
                     2 => Some(AppAction::SettingChange(SettingChange::LeftDirsFirstToggle)),
-                    _ => Some(AppAction::SettingChange(SettingChange::LeftShowHiddenToggle)),
+                    _ => Some(AppAction::SettingChange(
+                        SettingChange::LeftShowHiddenToggle,
+                    )),
                 },
                 2 => match state.content_focus {
                     0 => Some(AppAction::SettingChange(SettingChange::RightViewCycle)),
                     1 => Some(AppAction::SettingChange(SettingChange::RightSortCycle)),
-                    2 => Some(AppAction::SettingChange(SettingChange::RightDirsFirstToggle)),
-                    _ => Some(AppAction::SettingChange(SettingChange::RightShowHiddenToggle)),
+                    2 => Some(AppAction::SettingChange(
+                        SettingChange::RightDirsFirstToggle,
+                    )),
+                    _ => Some(AppAction::SettingChange(
+                        SettingChange::RightShowHiddenToggle,
+                    )),
                 },
                 _ => None,
             };
@@ -243,7 +250,10 @@ fn info_lines() -> Vec<Line<'static>> {
 }
 
 /// Draw the Settings dialog: two-column layout.
-pub fn draw(f: &mut Frame, app: &mut AppState) {
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
     let state = match &app.settings_dialog {
         Some(s) => s,
         None => return,
@@ -256,14 +266,22 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let h = MIN_H.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let grey_bg = Color::Rgb(60, 60, 60);
     let right_bg = Color::Rgb(50, 52, 58); // slightly darker tint for column 2
     let fill_style = Style::default().bg(grey_bg).fg(Color::White);
     let right_fill_style = Style::default().bg(right_bg).fg(Color::White);
     let border_style = fill_style.fg(Color::Cyan);
-    let highlight_style = Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD);
+    let highlight_style = Style::default()
+        .bg(Color::Blue)
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
 
     f.render_widget(Clear, rect);
     let block = Block::default()
@@ -272,7 +290,10 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
         .style(border_style);
     f.render_widget(block, rect);
 
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let hint_h = 1u16;
     let content_rect = Rect {
         x: inner.x,
@@ -303,7 +324,10 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     f.render_stateful_widget(list, left_area, &mut list_state);
 
     // Right column: different background, then content by section
-    let right_inner = right_area.inner(Margin { horizontal: 1, vertical: 1 });
+    let right_inner = right_area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let fill_right = Paragraph::new(
         std::iter::repeat(Line::from(Span::raw(" ".repeat(right_area.width as usize))))
             .take(right_area.height as usize)
@@ -315,30 +339,70 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let p = &app.persisted_settings;
     let left_view_index = if p.left_view.as_str() == "one" { 1 } else { 0 };
     let right_view_index = if p.right_view.as_str() == "one" { 1 } else { 0 };
-    let left_sort_index = SORT_MODES.iter().position(|s| *s == p.left_sort.as_str()).unwrap_or(0);
-    let right_sort_index = SORT_MODES.iter().position(|s| *s == p.right_sort.as_str()).unwrap_or(0);
+    let left_sort_index = SORT_MODES
+        .iter()
+        .position(|s| *s == p.left_sort.as_str())
+        .unwrap_or(0);
+    let right_sort_index = SORT_MODES
+        .iter()
+        .position(|s| *s == p.right_sort.as_str())
+        .unwrap_or(0);
     match state.selected_section {
         0 => {
             let view_highlight = Style::default().bg(Color::Blue).fg(Color::White);
             let line_h = 1u16;
             let chk0 = if p.autosave { "[x]" } else { "[ ]" };
-            let style0 = if state.content_focus == 0 { view_highlight } else { right_fill_style };
+            let style0 = if state.content_focus == 0 {
+                view_highlight
+            } else {
+                right_fill_style
+            };
             f.render_widget(
-                Paragraph::new(Line::from(vec![Span::raw(chk0), Span::raw(" Autosave latest state")])).style(style0),
-                Rect { x: right_inner.x, y: right_inner.y, width: right_inner.width, height: line_h },
+                Paragraph::new(Line::from(vec![
+                    Span::raw(chk0),
+                    Span::raw(" Autosave latest state"),
+                ]))
+                .style(style0),
+                Rect {
+                    x: right_inner.x,
+                    y: right_inner.y,
+                    width: right_inner.width,
+                    height: line_h,
+                },
             );
-            let chk1 = if p.sync_panel_to_shell_cwd { "[x]" } else { "[ ]" };
-            let style1 = if state.content_focus == 1 { view_highlight } else { right_fill_style };
+            let chk1 = if p.sync_panel_to_shell_cwd {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let style1 = if state.content_focus == 1 {
+                view_highlight
+            } else {
+                right_fill_style
+            };
             f.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::raw(chk1),
                     Span::raw(" Sync panel to shell dir when returning (Ctrl+O)"),
                 ]))
                 .style(style1),
-                Rect { x: right_inner.x, y: right_inner.y + line_h, width: right_inner.width, height: line_h },
+                Rect {
+                    x: right_inner.x,
+                    y: right_inner.y + line_h,
+                    width: right_inner.width,
+                    height: line_h,
+                },
             );
-            let chk2 = if p.auto_reopen_panels_after_command { "[x]" } else { "[ ]" };
-            let style2 = if state.content_focus == 2 { view_highlight } else { right_fill_style };
+            let chk2 = if p.auto_reopen_panels_after_command {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let style2 = if state.content_focus == 2 {
+                view_highlight
+            } else {
+                right_fill_style
+            };
             f.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::raw(chk2),
@@ -352,12 +416,15 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                     height: line_h,
                 },
             );
-            let delay_style = if state.content_focus == 3 { view_highlight } else { right_fill_style };
+            let delay_style = if state.content_focus == 3 {
+                view_highlight
+            } else {
+                right_fill_style
+            };
             let delay_secs = p.auto_reopen_panels_after_command_delay_secs;
             let delay_label = format!(" Delay (sec): {delay_secs}");
             f.render_widget(
-                Paragraph::new(Line::from(delay_label))
-                    .style(delay_style),
+                Paragraph::new(Line::from(delay_label)).style(delay_style),
                 Rect {
                     x: right_inner.x,
                     y: right_inner.y + 3 * line_h,
@@ -366,8 +433,26 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                 },
             );
         }
-        1 => draw_panel_section(f, right_inner, right_fill_style, left_view_index, left_sort_index, p.left_dirs_first, p.left_show_hidden, state.content_focus),
-        2 => draw_panel_section(f, right_inner, right_fill_style, right_view_index, right_sort_index, p.right_dirs_first, p.right_show_hidden, state.content_focus),
+        1 => draw_panel_section(
+            f,
+            right_inner,
+            right_fill_style,
+            left_view_index,
+            left_sort_index,
+            p.left_dirs_first,
+            p.left_show_hidden,
+            state.content_focus,
+        ),
+        2 => draw_panel_section(
+            f,
+            right_inner,
+            right_fill_style,
+            right_view_index,
+            right_sort_index,
+            p.right_dirs_first,
+            p.right_show_hidden,
+            state.content_focus,
+        ),
         3 => {
             let para = Paragraph::new(info_lines())
                 .style(right_fill_style)
@@ -408,17 +493,40 @@ pub(crate) fn draw_panel_section(
 
     // View: listbox
     let view_label = Line::from(Span::raw("View:"));
-    f.render_widget(Paragraph::new(view_label).style(fill_style), Rect { x: area.x, y, width: area.width, height: line_h });
+    f.render_widget(
+        Paragraph::new(view_label).style(fill_style),
+        Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: line_h,
+        },
+    );
     y += line_h;
 
     for (i, opt) in VIEW_OPTS.iter().enumerate() {
         let (sym, style) = if i == view_index {
-            ("◉ ", if content_focus == 0 { view_highlight } else { fill_style })
+            (
+                "◉ ",
+                if content_focus == 0 {
+                    view_highlight
+                } else {
+                    fill_style
+                },
+            )
         } else {
             ("○ ", fill_style)
         };
         let line = Line::from(vec![Span::raw(sym), Span::raw(*opt)]);
-        f.render_widget(Paragraph::new(line).style(style), Rect { x: area.x, y, width: area.width, height: line_h });
+        f.render_widget(
+            Paragraph::new(line).style(style),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: line_h,
+            },
+        );
         y += line_h;
     }
 
@@ -426,17 +534,40 @@ pub(crate) fn draw_panel_section(
 
     // Sort: listbox
     let sort_label = Line::from(Span::raw("Sort:"));
-    f.render_widget(Paragraph::new(sort_label).style(fill_style), Rect { x: area.x, y, width: area.width, height: line_h });
+    f.render_widget(
+        Paragraph::new(sort_label).style(fill_style),
+        Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: line_h,
+        },
+    );
     y += line_h;
 
     for (i, opt) in SORT_OPTIONS.iter().enumerate() {
         let (sym, style) = if i == sort_index {
-            ("◉ ", if content_focus == 1 { view_highlight } else { fill_style })
+            (
+                "◉ ",
+                if content_focus == 1 {
+                    view_highlight
+                } else {
+                    fill_style
+                },
+            )
         } else {
             ("○ ", fill_style)
         };
         let line = Line::from(vec![Span::raw(sym), Span::raw(*opt)]);
-        f.render_widget(Paragraph::new(line).style(style), Rect { x: area.x, y, width: area.width, height: line_h });
+        f.render_widget(
+            Paragraph::new(line).style(style),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: line_h,
+            },
+        );
         y += line_h;
     }
 
@@ -444,13 +575,37 @@ pub(crate) fn draw_panel_section(
 
     // Folders first (directories listed before files)
     let dirs_first_chk = if dirs_first { "[x]" } else { "[ ]" };
-    let dirs_first_style = if content_focus == 2 { view_highlight } else { fill_style };
+    let dirs_first_style = if content_focus == 2 {
+        view_highlight
+    } else {
+        fill_style
+    };
     let dirs_first_line = Line::from(vec![Span::raw(dirs_first_chk), Span::raw(" Folders first")]);
-    f.render_widget(Paragraph::new(dirs_first_line).style(dirs_first_style), Rect { x: area.x, y, width: area.width, height: line_h });
+    f.render_widget(
+        Paragraph::new(dirs_first_line).style(dirs_first_style),
+        Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: line_h,
+        },
+    );
     y += line_h;
 
     let checkbox = if show_hidden { "[x]" } else { "[ ]" };
-    let chk_style = if content_focus == 3 { view_highlight } else { fill_style };
+    let chk_style = if content_focus == 3 {
+        view_highlight
+    } else {
+        fill_style
+    };
     let chk_line = Line::from(vec![Span::raw(checkbox), Span::raw(" Show hidden files")]);
-    f.render_widget(Paragraph::new(chk_line).style(chk_style), Rect { x: area.x, y, width: area.width, height: line_h });
+    f.render_widget(
+        Paragraph::new(chk_line).style(chk_style),
+        Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: line_h,
+        },
+    );
 }

@@ -24,7 +24,10 @@ impl PanelLocation {
     pub fn display_string(&self) -> String {
         match self {
             PanelLocation::Fs(p) => p.to_string_lossy().to_string(),
-            PanelLocation::Zip { archive, path_inside } => {
+            PanelLocation::Zip {
+                archive,
+                path_inside,
+            } => {
                 let a = archive.to_string_lossy();
                 if path_inside.is_empty() {
                     a.to_string()
@@ -44,7 +47,10 @@ impl PanelLocation {
     pub fn parent(&self) -> Option<PanelLocation> {
         match self {
             PanelLocation::Fs(p) => p.parent().map(PanelLocation::fs),
-            PanelLocation::Zip { archive, path_inside } => {
+            PanelLocation::Zip {
+                archive,
+                path_inside,
+            } => {
                 let trimmed = path_inside.trim_end_matches('/');
                 if trimmed.is_empty() {
                     // Top of archive: parent is the directory containing the archive
@@ -64,7 +70,11 @@ impl PanelLocation {
     }
 
     /// Enter a child: directory or (when in Fs) a .zip file. Returns new location or None if not enterable.
-    pub fn enter(&self, name: &str, is_dir: bool) -> Option<PanelLocation> {
+    pub fn enter(
+        &self,
+        name: &str,
+        is_dir: bool,
+    ) -> Option<PanelLocation> {
         let name = name.trim_end_matches('/');
         if name.is_empty() {
             return None;
@@ -87,7 +97,10 @@ impl PanelLocation {
                     }
                 }
             }
-            PanelLocation::Zip { archive, path_inside } => {
+            PanelLocation::Zip {
+                archive,
+                path_inside,
+            } => {
                 if !is_dir {
                     return None;
                 }

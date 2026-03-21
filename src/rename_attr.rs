@@ -14,10 +14,12 @@ use ratatui::{
 
 use crate::app_state::AppState;
 use crate::clipboard;
+use crate::core::file_ops::FileOperations;
 use crate::events::AppAction;
-use crate::file_ops::FileOperations;
 use crate::panel::PanelOperations;
-use crate::styles::{DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG};
+use crate::styles::{
+    DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG,
+};
 use crate::text_input::{self, TextInputState};
 
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
@@ -83,24 +85,34 @@ const PERM_LABELS: [&str; 12] = [
     "execute/search by others",
 ];
 
-fn mode_has_bit(mode: u32, bit: u32) -> bool {
+fn mode_has_bit(
+    mode: u32,
+    bit: u32,
+) -> bool {
     (mode & bit) != 0
 }
 
-fn toggle_perm_bit(mode: u32, bit: u32) -> u32 {
+fn toggle_perm_bit(
+    mode: u32,
+    bit: u32,
+) -> u32 {
     mode ^ bit
 }
 
 /// Open F2 dialog: single file (name + attrs) or group (attrs only). No-op if no selection.
 pub fn open(app: &mut AppState) {
-    let (items, _, _) = app.active_panel_ref().get_names_to_copy_with_restore_neighbors();
+    let (items, _, _) = app
+        .active_panel_ref()
+        .get_names_to_copy_with_restore_neighbors();
     if items.is_empty() {
         return;
     }
     let files = app.active_panel_ref().get_files();
     let cwd = app.get_current_dir().to_string();
     let first_name = items[0].0.trim_end_matches('/');
-    let first_file = files.iter().find(|f| f.name.trim_end_matches('/') == first_name);
+    let first_file = files
+        .iter()
+        .find(|f| f.name.trim_end_matches('/') == first_name);
 
     let path_first = Path::new(&cwd).join(first_name);
     let mode = FileOperations::get_file_mode(&path_first).unwrap_or(0o644) & 0o7777;
@@ -224,7 +236,11 @@ pub fn apply(app: &mut AppState) -> bool {
                     return false;
                 }
             }
-            let path = Path::new(&cwd).join(if name_trimmed.is_empty() { old_name_trim } else { name_trimmed.as_str() });
+            let path = Path::new(&cwd).join(if name_trimmed.is_empty() {
+                old_name_trim
+            } else {
+                name_trimmed.as_str()
+            });
             if let Err(e) = FileOperations::set_permissions(&path, mode) {
                 app.rename_attr_dialog = Some(RenameAttrDialogState::Single {
                     name_input,
@@ -262,7 +278,11 @@ pub fn apply(app: &mut AppState) -> bool {
                 }
             }
             let _ = app.active_panel_mut().refresh_files_restore_selection(
-                Some(if name_trimmed.is_empty() { old_name_trim } else { &name_trimmed }),
+                Some(if name_trimmed.is_empty() {
+                    old_name_trim
+                } else {
+                    &name_trimmed
+                }),
                 None,
                 Some(panel_height),
             );
@@ -300,7 +320,8 @@ pub fn apply(app: &mut AppState) -> bool {
                         current_name: current_name.clone(),
                         focus,
                     });
-                    app.rename_attr_error = Some(format!("Set permissions failed: {}: {}", name, e));
+                    app.rename_attr_error =
+                        Some(format!("Set permissions failed: {}: {}", name, e));
                     return false;
                 }
                 if let Some((u, g)) = u_g {
@@ -372,9 +393,7 @@ pub fn handle_key(
             if modifiers.contains(KeyModifiers::CONTROL) {
                 if c == 'v' {
                     if let RenameAttrDialogState::Single {
-                        name_input,
-                        focus,
-                        ..
+                        name_input, focus, ..
                     } = d
                     {
                         if *focus == RenameAttrField::Name {
@@ -387,13 +406,13 @@ pub fn handle_key(
                 }
                 if c == 'c' {
                     if let RenameAttrDialogState::Single {
-                        name_input,
-                        focus,
-                        ..
+                        name_input, focus, ..
                     } = d
                     {
                         if *focus == RenameAttrField::Name {
-                            let text = name_input.get_selected_text().unwrap_or_else(|| name_input.text.clone());
+                            let text = name_input
+                                .get_selected_text()
+                                .unwrap_or_else(|| name_input.text.clone());
                             if !text.is_empty() {
                                 clipboard::set(&text);
                                 return Some(AppAction::Continue);
@@ -405,9 +424,7 @@ pub fn handle_key(
                 }
                 if c == 'a' {
                     if let RenameAttrDialogState::Single {
-                        name_input,
-                        focus,
-                        ..
+                        name_input, focus, ..
                     } = d
                     {
                         if *focus == RenameAttrField::Name && !name_input.text.is_empty() {
@@ -422,14 +439,24 @@ pub fn handle_key(
             }
             if c == ' ' {
                 let is_perm = match d {
-                    RenameAttrDialogState::Single { focus, mode, perm_focus, .. } => {
+                    RenameAttrDialogState::Single {
+                        focus,
+                        mode,
+                        perm_focus,
+                        ..
+                    } => {
                         if *focus == RenameAttrField::Permissions && *perm_focus < 12 {
                             let bit = PERM_BITS[*perm_focus];
                             *mode = toggle_perm_bit(*mode, bit);
                         }
                         *focus == RenameAttrField::Permissions
                     }
-                    RenameAttrDialogState::Group { focus, mode, perm_focus, .. } => {
+                    RenameAttrDialogState::Group {
+                        focus,
+                        mode,
+                        perm_focus,
+                        ..
+                    } => {
                         if *focus == RenameAttrField::Permissions && *perm_focus < 12 {
                             let bit = PERM_BITS[*perm_focus];
                             *mode = toggle_perm_bit(*mode, bit);
@@ -442,9 +469,7 @@ pub fn handle_key(
                 }
             } else if c.is_ascii() && !c.is_control() {
                 if let RenameAttrDialogState::Single {
-                    name_input,
-                    focus,
-                    ..
+                    name_input, focus, ..
                 } = d
                 {
                     if *focus == RenameAttrField::Name {
@@ -455,9 +480,7 @@ pub fn handle_key(
         }
         KeyCode::Backspace => {
             if let RenameAttrDialogState::Single {
-                name_input,
-                focus,
-                ..
+                name_input, focus, ..
             } = d
             {
                 if *focus == RenameAttrField::Name {
@@ -467,9 +490,7 @@ pub fn handle_key(
         }
         KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
             if let RenameAttrDialogState::Single {
-                name_input,
-                focus,
-                ..
+                name_input, focus, ..
             } = d
             {
                 if *focus == RenameAttrField::Name {
@@ -493,14 +514,20 @@ pub fn handle_key(
                 user_list,
                 group_list,
                 ..
-            } => {
-                match focus {
-                    RenameAttrField::Permissions => *perm_focus = perm_focus.saturating_sub(1),
-                    RenameAttrField::User => *user_index = user_index.saturating_sub(1).min(user_list.len().saturating_sub(1).max(0)),
-                    RenameAttrField::Group => *group_index = group_index.saturating_sub(1).min(group_list.len().saturating_sub(1).max(0)),
-                    RenameAttrField::Name => {}
+            } => match focus {
+                RenameAttrField::Permissions => *perm_focus = perm_focus.saturating_sub(1),
+                RenameAttrField::User => {
+                    *user_index = user_index
+                        .saturating_sub(1)
+                        .min(user_list.len().saturating_sub(1).max(0))
                 }
-            }
+                RenameAttrField::Group => {
+                    *group_index = group_index
+                        .saturating_sub(1)
+                        .min(group_list.len().saturating_sub(1).max(0))
+                }
+                RenameAttrField::Name => {}
+            },
             RenameAttrDialogState::Group {
                 perm_focus,
                 user_index,
@@ -509,14 +536,20 @@ pub fn handle_key(
                 user_list,
                 group_list,
                 ..
-            } => {
-                match focus {
-                    RenameAttrField::Permissions => *perm_focus = perm_focus.saturating_sub(1),
-                    RenameAttrField::User => *user_index = user_index.saturating_sub(1).min(user_list.len().saturating_sub(1).max(0)),
-                    RenameAttrField::Group => *group_index = group_index.saturating_sub(1).min(group_list.len().saturating_sub(1).max(0)),
-                    RenameAttrField::Name => {}
+            } => match focus {
+                RenameAttrField::Permissions => *perm_focus = perm_focus.saturating_sub(1),
+                RenameAttrField::User => {
+                    *user_index = user_index
+                        .saturating_sub(1)
+                        .min(user_list.len().saturating_sub(1).max(0))
                 }
-            }
+                RenameAttrField::Group => {
+                    *group_index = group_index
+                        .saturating_sub(1)
+                        .min(group_list.len().saturating_sub(1).max(0))
+                }
+                RenameAttrField::Name => {}
+            },
         },
         KeyCode::Down => match d {
             RenameAttrDialogState::Single {
@@ -527,14 +560,16 @@ pub fn handle_key(
                 user_list,
                 group_list,
                 ..
-            } => {
-                match focus {
-                    RenameAttrField::Permissions => *perm_focus = (*perm_focus + 1).min(11),
-                    RenameAttrField::User => *user_index = (*user_index + 1).min(user_list.len().saturating_sub(1)),
-                    RenameAttrField::Group => *group_index = (*group_index + 1).min(group_list.len().saturating_sub(1)),
-                    RenameAttrField::Name => {}
+            } => match focus {
+                RenameAttrField::Permissions => *perm_focus = (*perm_focus + 1).min(11),
+                RenameAttrField::User => {
+                    *user_index = (*user_index + 1).min(user_list.len().saturating_sub(1))
                 }
-            }
+                RenameAttrField::Group => {
+                    *group_index = (*group_index + 1).min(group_list.len().saturating_sub(1))
+                }
+                RenameAttrField::Name => {}
+            },
             RenameAttrDialogState::Group {
                 perm_focus,
                 user_index,
@@ -543,14 +578,16 @@ pub fn handle_key(
                 user_list,
                 group_list,
                 ..
-            } => {
-                match focus {
-                    RenameAttrField::Permissions => *perm_focus = (*perm_focus + 1).min(11),
-                    RenameAttrField::User => *user_index = (*user_index + 1).min(user_list.len().saturating_sub(1)),
-                    RenameAttrField::Group => *group_index = (*group_index + 1).min(group_list.len().saturating_sub(1)),
-                    RenameAttrField::Name => {}
+            } => match focus {
+                RenameAttrField::Permissions => *perm_focus = (*perm_focus + 1).min(11),
+                RenameAttrField::User => {
+                    *user_index = (*user_index + 1).min(user_list.len().saturating_sub(1))
                 }
-            }
+                RenameAttrField::Group => {
+                    *group_index = (*group_index + 1).min(group_list.len().saturating_sub(1))
+                }
+                RenameAttrField::Name => {}
+            },
         },
         KeyCode::Enter => {
             // Enter runs the operation (confirm). Space toggles the permission checkbox.
@@ -563,7 +600,10 @@ pub fn handle_key(
 }
 
 /// Draw the F2 dialog. Order left to right: 1 File name, 2 Permissions (in File section), 3 User name, 4 Group name.
-pub fn draw(f: &mut Frame, app: &mut AppState) {
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
     let d = match app.rename_attr_dialog.as_mut() {
         Some(x) => x,
         None => return,
@@ -574,7 +614,12 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let h = 22u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
     let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
     let cyan = Style::default().fg(Color::Cyan);
     let focus_border = Style::default().fg(Color::Yellow);
@@ -584,7 +629,10 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
         .title(" Rename / Attributes ")
         .style(fill_style.fg(Color::Cyan));
     f.render_widget(block, rect);
-    let inner = rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner = rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     // Order: 1 File name (top left), 2 Permission (under File name), 3 Owner name (right), 4 Group name (right)
     let left_w = (inner.width / 2).max(32);
     let right_w = inner.width.saturating_sub(left_w).saturating_sub(1);
@@ -597,8 +645,16 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
 
     // 1. File name (top left) — no "Name" label
     let name_block_h = 1u16 + 2; // 1 content row + border
-    let name_rect = Rect { x: inner.x, y: inner.y, width: left_w, height: name_block_h };
-    let name_inner = name_rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let name_rect = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: left_w,
+        height: name_block_h,
+    };
+    let name_inner = name_rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
 
     match d {
         RenameAttrDialogState::Single {
@@ -618,7 +674,9 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                 height: 1,
             };
             let base_style = fill_style.bg(name_input_bg).fg(Color::White);
-            let selection_style = Style::default().bg(DIALOG_INPUT_SELECTION_BG).fg(Color::White);
+            let selection_style = Style::default()
+                .bg(DIALOG_INPUT_SELECTION_BG)
+                .fg(Color::White);
             let line = text_input::input_line_with_selection(
                 name_input,
                 name_rect.width as usize,
@@ -632,44 +690,140 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
             }
         }
         RenameAttrDialogState::Group { count, .. } => {
-            f.render_widget(Paragraph::new(format!("{} files selected", count)).style(fill_style), Rect { x: name_inner.x, y: name_inner.y, width: name_inner.width, height: 1 });
+            f.render_widget(
+                Paragraph::new(format!("{} files selected", count)).style(fill_style),
+                Rect {
+                    x: name_inner.x,
+                    y: name_inner.y,
+                    width: name_inner.width,
+                    height: 1,
+                },
+            );
         }
     }
 
-    let name_block_style = if focus == RenameAttrField::Name { focus_border } else { cyan };
-    f.render_widget(Block::default().borders(Borders::ALL).title(" File name ").style(name_block_style), name_rect);
+    let name_block_style = if focus == RenameAttrField::Name {
+        focus_border
+    } else {
+        cyan
+    };
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" File name ")
+            .style(name_block_style),
+        name_rect,
+    );
 
     // 2. Permission (under File name, same column)
     let perm_block_h = 12 + 1 + 2; // 12 checkboxes + 1 octal line + border
     let perm_top = name_rect.y + name_rect.height + gap;
-    let perm_rect = Rect { x: inner.x, y: perm_top, width: left_w, height: perm_block_h.min(inner.height.saturating_sub(perm_top - inner.y)) };
-    let perm_inner = perm_rect.inner(Margin { horizontal: 1, vertical: 1 });
+    let perm_rect = Rect {
+        x: inner.x,
+        y: perm_top,
+        width: left_w,
+        height: perm_block_h.min(inner.height.saturating_sub(perm_top - inner.y)),
+    };
+    let perm_inner = perm_rect.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
 
-    let (mode, perm_focus, _owner, _group, user_list, group_list, user_index, group_index) = match d {
-        RenameAttrDialogState::Single { mode, perm_focus, owner, group, user_list, group_list, user_index, group_index, .. }
-        | RenameAttrDialogState::Group { mode, perm_focus, owner, group, user_list, group_list, user_index, group_index, .. }
-        => (mode, perm_focus, owner, group, user_list, group_list, user_index, group_index),
+    let (mode, perm_focus, _owner, _group, user_list, group_list, user_index, group_index) = match d
+    {
+        RenameAttrDialogState::Single {
+            mode,
+            perm_focus,
+            owner,
+            group,
+            user_list,
+            group_list,
+            user_index,
+            group_index,
+            ..
+        }
+        | RenameAttrDialogState::Group {
+            mode,
+            perm_focus,
+            owner,
+            group,
+            user_list,
+            group_list,
+            user_index,
+            group_index,
+            ..
+        } => (
+            mode,
+            perm_focus,
+            owner,
+            group,
+            user_list,
+            group_list,
+            user_index,
+            group_index,
+        ),
     };
 
     for (i, label) in PERM_LABELS.iter().enumerate() {
         let checked = mode_has_bit(*mode, PERM_BITS[i]);
         let mark = if checked { "[x]" } else { "[ ]" };
-        let style = if i == *perm_focus { fill_style.bg(Color::Blue).fg(Color::White) } else { fill_style };
-        f.render_widget(Paragraph::new(format!("{} {}", mark, label)).style(style), Rect { x: perm_inner.x, y: perm_inner.y + i as u16, width: perm_inner.width, height: 1 });
+        let style = if i == *perm_focus {
+            fill_style.bg(Color::Blue).fg(Color::White)
+        } else {
+            fill_style
+        };
+        f.render_widget(
+            Paragraph::new(format!("{} {}", mark, label)).style(style),
+            Rect {
+                x: perm_inner.x,
+                y: perm_inner.y + i as u16,
+                width: perm_inner.width,
+                height: 1,
+            },
+        );
     }
     let octal = format!("{:o}", *mode & 0o7777);
-    f.render_widget(Paragraph::new(format!("Permissions (octal): {}", octal)).style(Style::default().fg(Color::DarkGray)), Rect { x: perm_inner.x, y: perm_inner.y + 12, width: perm_inner.width, height: 1 });
+    f.render_widget(
+        Paragraph::new(format!("Permissions (octal): {}", octal))
+            .style(Style::default().fg(Color::DarkGray)),
+        Rect {
+            x: perm_inner.x,
+            y: perm_inner.y + 12,
+            width: perm_inner.width,
+            height: 1,
+        },
+    );
 
-    let perm_block_style = if focus == RenameAttrField::Permissions { focus_border } else { cyan };
-    f.render_widget(Block::default().borders(Borders::ALL).title(" Permission ").style(perm_block_style), perm_rect);
+    let perm_block_style = if focus == RenameAttrField::Permissions {
+        focus_border
+    } else {
+        cyan
+    };
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Permission ")
+            .style(perm_block_style),
+        perm_rect,
+    );
 
     // 3. Owner name (right top), 4. Group name (right bottom)
     let list_rect_h = (inner.height / 2).saturating_sub(1);
     let list_h = (list_rect_h.saturating_sub(2) as usize).max(1);
     let half_h = inner.height / 2;
 
-    let user_rect = Rect { x: inner.x + left_w + gap, y: inner.y, width: right_w, height: list_rect_h };
-    let group_rect = Rect { x: inner.x + left_w + gap, y: inner.y + half_h, width: right_w, height: list_rect_h };
+    let user_rect = Rect {
+        x: inner.x + left_w + gap,
+        y: inner.y,
+        width: right_w,
+        height: list_rect_h,
+    };
+    let group_rect = Rect {
+        x: inner.x + left_w + gap,
+        y: inner.y + half_h,
+        width: right_w,
+        height: list_rect_h,
+    };
 
     let ulen = user_list.len();
     let glen = group_list.len();
@@ -679,22 +833,77 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
     let max_start_g = glen.saturating_sub(list_h).max(0);
     let user_start = (ui + 1).saturating_sub(list_h).min(max_start_u);
     let group_start = (gi + 1).saturating_sub(list_h).min(max_start_g);
-    let user_visible: Vec<_> = user_list.iter().skip(user_start).take(list_h).enumerate().map(|(i, u)| {
-        let style = if user_start + i == ui { fill_style.bg(Color::Blue).fg(Color::White) } else { fill_style };
-        ListItem::new(u.as_str()).style(style)
-    }).collect();
-    let group_visible: Vec<_> = group_list.iter().skip(group_start).take(list_h).enumerate().map(|(i, g)| {
-        let style = if group_start + i == gi { fill_style.bg(Color::Blue).fg(Color::White) } else { fill_style };
-        ListItem::new(g.as_str()).style(style)
-    }).collect();
+    let user_visible: Vec<_> = user_list
+        .iter()
+        .skip(user_start)
+        .take(list_h)
+        .enumerate()
+        .map(|(i, u)| {
+            let style = if user_start + i == ui {
+                fill_style.bg(Color::Blue).fg(Color::White)
+            } else {
+                fill_style
+            };
+            ListItem::new(u.as_str()).style(style)
+        })
+        .collect();
+    let group_visible: Vec<_> = group_list
+        .iter()
+        .skip(group_start)
+        .take(list_h)
+        .enumerate()
+        .map(|(i, g)| {
+            let style = if group_start + i == gi {
+                fill_style.bg(Color::Blue).fg(Color::White)
+            } else {
+                fill_style
+            };
+            ListItem::new(g.as_str()).style(style)
+        })
+        .collect();
 
-    let user_block_style = if focus == RenameAttrField::User { focus_border } else { cyan };
-    let group_block_style = if focus == RenameAttrField::Group { focus_border } else { cyan };
-    f.render_widget(List::new(user_visible).block(Block::default().borders(Borders::ALL).title(" Owner name ").style(user_block_style)), user_rect);
-    f.render_widget(List::new(group_visible).block(Block::default().borders(Borders::ALL).title(" Group name ").style(group_block_style)), group_rect);
+    let user_block_style = if focus == RenameAttrField::User {
+        focus_border
+    } else {
+        cyan
+    };
+    let group_block_style = if focus == RenameAttrField::Group {
+        focus_border
+    } else {
+        cyan
+    };
+    f.render_widget(
+        List::new(user_visible).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Owner name ")
+                .style(user_block_style),
+        ),
+        user_rect,
+    );
+    f.render_widget(
+        List::new(group_visible).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Group name ")
+                .style(group_block_style),
+        ),
+        group_rect,
+    );
 
-    let hint_rect = Rect { x: inner.x, y: inner.y + inner.height.saturating_sub(1), width: inner.width, height: 1 };
-    f.render_widget(Paragraph::new("Tab: switch area   Space: toggle perm   Enter: run   ↑↓: move   Esc: Cancel").style(Style::default().fg(Color::DarkGray)), hint_rect);
+    let hint_rect = Rect {
+        x: inner.x,
+        y: inner.y + inner.height.saturating_sub(1),
+        width: inner.width,
+        height: 1,
+    };
+    f.render_widget(
+        Paragraph::new(
+            "Tab: switch area   Space: toggle perm   Enter: run   ↑↓: move   Esc: Cancel",
+        )
+        .style(Style::default().fg(Color::DarkGray)),
+        hint_rect,
+    );
 
     if let Some(msg) = app.rename_attr_error.as_ref() {
         let area = f.area();
@@ -702,7 +911,12 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
         let ah = 6u16;
         let ax = area.x + (area.width.saturating_sub(aw)) / 2;
         let ay = area.y + (area.height.saturating_sub(ah)) / 2;
-        let alert_rect = Rect { x: ax, y: ay, width: aw, height: ah };
+        let alert_rect = Rect {
+            x: ax,
+            y: ay,
+            width: aw,
+            height: ah,
+        };
         let err_bg = Color::Rgb(60, 60, 60);
         let err_style = Style::default().bg(err_bg).fg(Color::White);
         let red = Style::default().fg(Color::Red);
@@ -714,16 +928,33 @@ pub fn draw(f: &mut Frame, app: &mut AppState) {
                 .style(red),
             alert_rect,
         );
-        let inner = alert_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let inner = alert_rect.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
         let lines: Vec<_> = msg.lines().take(3).map(|s| s.to_string()).collect();
-        let text = if lines.is_empty() { "Error".to_string() } else { lines.join("\n") };
+        let text = if lines.is_empty() {
+            "Error".to_string()
+        } else {
+            lines.join("\n")
+        };
         f.render_widget(
             Paragraph::new(text).style(err_style),
-            Rect { x: inner.x, y: inner.y, width: inner.width, height: inner.height.saturating_sub(1) },
+            Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width,
+                height: inner.height.saturating_sub(1),
+            },
         );
         f.render_widget(
             Paragraph::new("Press any key to close").style(Style::default().fg(Color::DarkGray)),
-            Rect { x: inner.x, y: inner.y + inner.height.saturating_sub(1), width: inner.width, height: 1 },
+            Rect {
+                x: inner.x,
+                y: inner.y + inner.height.saturating_sub(1),
+                width: inner.width,
+                height: 1,
+            },
         );
     }
 }
