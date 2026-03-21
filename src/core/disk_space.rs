@@ -6,7 +6,7 @@ pub fn disk_space_summary(path: &str) -> String {
     {
         use nix::sys::statvfs::statvfs;
         if let Ok(st) = statvfs(path) {
-            let bsize = st.block_size() as u64;
+            let bsize = st.block_size();
             let total = (st.blocks() as u64).saturating_mul(bsize);
             let free = (st.blocks_free() as u64).saturating_mul(bsize);
             let used = total.saturating_sub(free);

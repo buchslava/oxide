@@ -81,37 +81,35 @@ impl Subshell {
         chunk: &[u8],
     ) -> io::Result<bool> {
         carry.extend_from_slice(chunk);
-        loop {
-            let plain_pos = carry.iter().position(|&b| b == CTRL_O).map(|p| (p, 1usize));
-            let kitty_pos =
-                Self::find_subsequence(carry, CTRL_O_KITTY).map(|p| (p, CTRL_O_KITTY.len()));
-            let mok_pos = Self::find_subsequence(carry, CTRL_O_MODIFY_OTHER_KEYS)
-                .map(|p| (p, CTRL_O_MODIFY_OTHER_KEYS.len()));
+        let plain_pos = carry.iter().position(|&b| b == CTRL_O).map(|p| (p, 1usize));
+        let kitty_pos =
+            Self::find_subsequence(carry, CTRL_O_KITTY).map(|p| (p, CTRL_O_KITTY.len()));
+        let mok_pos = Self::find_subsequence(carry, CTRL_O_MODIFY_OTHER_KEYS)
+            .map(|p| (p, CTRL_O_MODIFY_OTHER_KEYS.len()));
 
-            let mut found: Option<(usize, usize)> = None;
-            for cand in [plain_pos, kitty_pos, mok_pos].into_iter().flatten() {
-                found = match found {
-                    None => Some(cand),
-                    Some(curr) => Some(if cand.0 < curr.0 { cand } else { curr }),
-                };
-            }
-
-            if let Some((pos, len)) = found {
-                if pos > 0 {
-                    Self::write_all_fd(self.master_fd, &carry[..pos])?;
-                }
-                carry.drain(..pos + len);
-                return Ok(true);
-            }
-
-            let keep = Self::trailing_ctrl_o_prefix_len(carry);
-            let forward_len = carry.len().saturating_sub(keep);
-            if forward_len > 0 {
-                Self::write_all_fd(self.master_fd, &carry[..forward_len])?;
-                carry.drain(..forward_len);
-            }
-            return Ok(false);
+        let mut found: Option<(usize, usize)> = None;
+        for cand in [plain_pos, kitty_pos, mok_pos].into_iter().flatten() {
+            found = match found {
+                None => Some(cand),
+                Some(curr) => Some(if cand.0 < curr.0 { cand } else { curr }),
+            };
         }
+
+        if let Some((pos, len)) = found {
+            if pos > 0 {
+                Self::write_all_fd(self.master_fd, &carry[..pos])?;
+            }
+            carry.drain(..pos + len);
+            return Ok(true);
+        }
+
+        let keep = Self::trailing_ctrl_o_prefix_len(carry);
+        let forward_len = carry.len().saturating_sub(keep);
+        if forward_len > 0 {
+            Self::write_all_fd(self.master_fd, &carry[..forward_len])?;
+            carry.drain(..forward_len);
+        }
+        Ok(false)
     }
 
     /// Read from PTY in non-blocking mode (MC: read_nonblock). Avoids lockup when slave tcflush() revokes data between poll and read.
@@ -734,7 +732,7 @@ extern "C" {
 fn get_cwd_macos(pid: u32) -> Option<PathBuf> {
     const PROC_PIDVNODEPATHINFO: libc::c_int = 9;
     let mut buf = [0u8; 4096];
-    let n = unsafe {
+    let bytes_read = unsafe {
         proc_pidinfo(
             pid as libc::c_int,
             PROC_PIDVNODEPATHINFO,
@@ -743,14 +741,14 @@ fn get_cwd_macos(pid: u32) -> Option<PathBuf> {
             buf.len() as libc::c_int,
         )
     };
-    if n <= 0 {
+    if bytes_read <= 0 {
         return None;
     }
     // proc_vnodepathinfo contains pvi_rdir (root) and pvi_cdir (cwd). Layout varies by OS version.
     // Scan the buffer for null-terminated absolute paths; prefer the longest that exists and is a directory (cwd).
     let mut best: Option<PathBuf> = None;
     let mut i = 0;
-    let len = n as usize;
+    let len = bytes_read as usize;
     while i < len {
         if buf[i] != b'/' {
             i += 1;
@@ -764,13 +762,13 @@ fn get_cwd_macos(pid: u32) -> Option<PathBuf> {
             if let Ok(s) = std::str::from_utf8(&buf[start..i]) {
                 let s = s.trim();
                 if !s.is_empty() {
-                    let p = PathBuf::from(s);
-                    if p.is_dir()
-                        && best
-                            .as_ref()
-                            .map_or(true, |b| p.as_os_str().len() > b.as_os_str().len())
+                    let candidate_path = PathBuf::from(s);
+                    if candidate_path.is_dir()
+                        && best.as_ref().map_or(true, |b| {
+                            candidate_path.as_os_str().len() > b.as_os_str().len()
+                        })
                     {
-                        best = Some(p);
+                        best = Some(candidate_path);
                     }
                 }
             }

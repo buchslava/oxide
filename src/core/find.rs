@@ -167,7 +167,7 @@ pub fn run_find_search(
             }
             let path = entry.path().to_path_buf();
             if let Some(parent) = path.parent() {
-                if current_dir_sent.as_ref().map(PathBuf::as_path) != Some(parent) {
+                if current_dir_sent.as_deref() != Some(parent) {
                     current_dir_sent = Some(parent.to_path_buf());
                     let _ = tx.send(FindMessage::CurrentDir(parent.display().to_string()));
                 }

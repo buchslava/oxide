@@ -40,10 +40,11 @@ impl TextInputState {
 
     /// Selection range (start, end) with start < end, or None if no selection.
     pub fn selection_bounds(&self) -> Option<(usize, usize)> {
-        let a = self.anchor?;
-        let (s, e) = (a.min(self.cursor), a.max(self.cursor));
-        if s < e {
-            Some((s, e))
+        let anchor_pos = self.anchor?;
+        let (selection_start, selection_end) =
+            (anchor_pos.min(self.cursor), anchor_pos.max(self.cursor));
+        if selection_start < selection_end {
+            Some((selection_start, selection_end))
         } else {
             None
         }

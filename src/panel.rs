@@ -564,12 +564,16 @@ impl PanelOperations for Panel {
                 return (Vec::new(), None, None);
             }
         } else {
-            let mut it = self.marked_indices.iter().copied();
-            let first = it
-                .next()
+            let first_index = *self
+                .marked_indices
+                .iter()
+                .min()
                 .expect("marked_indices non-empty in get_names_to_copy");
-            let (first_index, last_index) =
-                it.fold((first, first), |(min, max), i| (min.min(i), max.max(i)));
+            let last_index = *self
+                .marked_indices
+                .iter()
+                .max()
+                .expect("marked_indices non-empty in get_names_to_copy");
             let mut items = Vec::new();
             for &idx in &self.marked_indices {
                 if let Some(f) = files.get(idx) {
@@ -584,9 +588,9 @@ impl PanelOperations for Panel {
             return (Vec::new(), None, None);
         }
         let name_before = if first_index > 0 {
-            let f = &files[first_index - 1];
-            if !f.is_parent_dir() {
-                Some(f.name.clone())
+            let file_before = &files[first_index - 1];
+            if !file_before.is_parent_dir() {
+                Some(file_before.name.clone())
             } else {
                 None
             }
@@ -596,9 +600,9 @@ impl PanelOperations for Panel {
         // Prefer the file immediately after the last deleted item (or after the block for single selection).
         let after_index = last_index + 1;
         let name_after = if after_index < files.len() {
-            let f = &files[after_index];
-            if !f.is_parent_dir() {
-                Some(f.name.clone())
+            let file_after = &files[after_index];
+            if !file_after.is_parent_dir() {
+                Some(file_after.name.clone())
             } else {
                 None
             }

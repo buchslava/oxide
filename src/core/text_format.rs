@@ -18,8 +18,8 @@ pub fn truncate_str(
     mode: TruncateMode,
 ) -> String {
     let chars: Vec<char> = s.chars().collect();
-    let n = chars.len();
-    if n <= max_width {
+    let char_count = chars.len();
+    if char_count <= max_width {
         return s.to_string();
     }
     match mode {
@@ -40,7 +40,7 @@ pub fn truncate_str(
                 return s.to_string();
             }
             let take = max_width.saturating_sub(1);
-            let start = n.saturating_sub(take);
+            let start = char_count.saturating_sub(take);
             format!("…{}", chars.iter().skip(start).collect::<String>())
         }
         TruncateMode::CompactMiddle => {

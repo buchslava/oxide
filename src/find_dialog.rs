@@ -95,8 +95,8 @@ pub fn open(app: &mut AppState) {
 /// If a search was in progress, signals it to stop so the background thread exits.
 pub fn close(app: &mut AppState) {
     use crate::app_state::Focus;
-    if let Some(c) = app.find_search_cancel.take() {
-        c.store(true, Ordering::Relaxed);
+    if let Some(cancel_flag) = app.find_search_cancel.take() {
+        cancel_flag.store(true, Ordering::Relaxed);
     }
     app.find_dialog = None;
     app.find_search_rx = None;
@@ -105,29 +105,28 @@ pub fn close(app: &mut AppState) {
 
 /// Start the find search in a background thread; app.find_dialog must be Some.
 pub fn start_search(app: &mut AppState) {
-    let d = match app.find_dialog.as_mut() {
-        Some(d) => d,
-        None => return,
+    let Some(dialog) = app.find_dialog.as_mut() else {
+        return;
     };
-    d.phase = FindDialogPhase::Searching;
-    d.results.clear();
-    d.status_message = "Searching...".to_string();
-    d.search_current_dir.clear();
-    d.selected_index = 0;
-    d.scroll_offset = 0;
+    dialog.phase = FindDialogPhase::Searching;
+    dialog.results.clear();
+    dialog.status_message = "Searching...".to_string();
+    dialog.search_current_dir.clear();
+    dialog.selected_index = 0;
+    dialog.scroll_offset = 0;
 
     // Move strings into Arc<str> (no clone); pass Arc::clone to thread (cheap). Restore from stored Arc when Done.
-    let start_dir = Arc::from(std::mem::take(&mut d.start_dir_input.text));
-    let file_pattern = Arc::from(std::mem::take(&mut d.file_pattern_input.text));
-    let content_pattern = Arc::from(std::mem::take(&mut d.content_pattern_input.text));
-    d.search_start_dir = Some(Arc::clone(&start_dir));
-    d.search_file_pattern = Some(Arc::clone(&file_pattern));
-    d.search_content_pattern = Some(Arc::clone(&content_pattern));
+    let start_dir = Arc::from(std::mem::take(&mut dialog.start_dir_input.text));
+    let file_pattern = Arc::from(std::mem::take(&mut dialog.file_pattern_input.text));
+    let content_pattern = Arc::from(std::mem::take(&mut dialog.content_pattern_input.text));
+    dialog.search_start_dir = Some(Arc::clone(&start_dir));
+    dialog.search_file_pattern = Some(Arc::clone(&file_pattern));
+    dialog.search_content_pattern = Some(Arc::clone(&content_pattern));
 
-    let recursive = d.recursive;
-    let file_case_sens = d.file_case_sens;
-    let content_case_sens = d.content_case_sens;
-    let skip_hidden = d.skip_hidden;
+    let recursive = dialog.recursive;
+    let file_case_sens = dialog.file_case_sens;
+    let content_case_sens = dialog.content_case_sens;
+    let skip_hidden = dialog.skip_hidden;
 
     let cancel = Arc::new(AtomicBool::new(false));
     app.find_search_cancel = Some(Arc::clone(&cancel));
@@ -156,37 +155,40 @@ pub fn poll_search(app: &mut AppState) {
     while let Ok(msg) = rx.try_recv() {
         match msg {
             FindMessage::Match(path, line) => {
-                if let Some(ref mut d) = app.find_dialog {
-                    d.results.push(FindResult { path, line });
+                if let Some(ref mut find_dialog) = app.find_dialog {
+                    find_dialog.results.push(FindResult { path, line });
                 }
             }
             FindMessage::CurrentDir(s) => {
-                if let Some(ref mut d) = app.find_dialog {
-                    d.search_current_dir = s;
+                if let Some(ref mut find_dialog) = app.find_dialog {
+                    find_dialog.search_current_dir = s;
                 }
             }
             FindMessage::Done => {
-                if let Some(ref mut d) = app.find_dialog {
-                    d.phase = FindDialogPhase::Results;
-                    let n = d.results.len();
-                    d.status_message = format!("Search complete. {} match(es).", n);
-                    d.search_current_dir.clear();
+                if let Some(ref mut find_dialog) = app.find_dialog {
+                    find_dialog.phase = FindDialogPhase::Results;
+                    let match_count = find_dialog.results.len();
+                    find_dialog.status_message =
+                        format!("Search complete. {} match(es).", match_count);
+                    find_dialog.search_current_dir.clear();
                     // Restore search params from Arc into input fields (one copy per field when done).
-                    if let Some(arc) = d.search_start_dir.take() {
-                        d.start_dir_input.text = arc.to_string();
-                        d.start_dir_input.cursor = d.start_dir_input.text.chars().count();
-                        d.start_dir_input.anchor = None;
+                    if let Some(arc) = find_dialog.search_start_dir.take() {
+                        find_dialog.start_dir_input.text = arc.to_string();
+                        find_dialog.start_dir_input.cursor =
+                            find_dialog.start_dir_input.text.chars().count();
+                        find_dialog.start_dir_input.anchor = None;
                     }
-                    if let Some(arc) = d.search_file_pattern.take() {
-                        d.file_pattern_input.text = arc.to_string();
-                        d.file_pattern_input.cursor = d.file_pattern_input.text.chars().count();
-                        d.file_pattern_input.anchor = None;
+                    if let Some(arc) = find_dialog.search_file_pattern.take() {
+                        find_dialog.file_pattern_input.text = arc.to_string();
+                        find_dialog.file_pattern_input.cursor =
+                            find_dialog.file_pattern_input.text.chars().count();
+                        find_dialog.file_pattern_input.anchor = None;
                     }
-                    if let Some(arc) = d.search_content_pattern.take() {
-                        d.content_pattern_input.text = arc.to_string();
-                        d.content_pattern_input.cursor =
-                            d.content_pattern_input.text.chars().count();
-                        d.content_pattern_input.anchor = None;
+                    if let Some(arc) = find_dialog.search_content_pattern.take() {
+                        find_dialog.content_pattern_input.text = arc.to_string();
+                        find_dialog.content_pattern_input.cursor =
+                            find_dialog.content_pattern_input.text.chars().count();
+                        find_dialog.content_pattern_input.anchor = None;
                     }
                 }
                 app.find_search_rx = None;
@@ -204,17 +206,21 @@ pub fn handle_key(
     modifiers: KeyModifiers,
 ) -> Option<crate::events::AppAction> {
     use crate::events::AppAction;
-    let phase = app.find_dialog.as_ref().map(|d| d.phase)?;
+    let phase = app
+        .find_dialog
+        .as_ref()
+        .map(|find_dialog| find_dialog.phase)?;
     match phase {
         FindDialogPhase::Parameter => handle_key_parameter(app, code, modifiers),
         FindDialogPhase::Searching | FindDialogPhase::Results => {
             // ESC while searching: stop the search but keep the dialog open with results so far.
             if phase == FindDialogPhase::Searching && code == KeyCode::Esc {
-                if let Some(ref mut d) = app.find_dialog {
-                    d.phase = FindDialogPhase::Results;
-                    let n = d.results.len();
-                    d.status_message = format!("Stopped. {} match(es).", n);
-                    d.search_current_dir.clear();
+                if let Some(ref mut find_dialog) = app.find_dialog {
+                    find_dialog.phase = FindDialogPhase::Results;
+                    let match_count = find_dialog.results.len();
+                    find_dialog.status_message =
+                        format!("Stopped. {} match(es).", match_count);
+                    find_dialog.search_current_dir.clear();
                 }
                 app.find_search_rx = None;
                 return Some(AppAction::Continue);
@@ -231,13 +237,13 @@ fn handle_key_parameter(
     modifiers: KeyModifiers,
 ) -> Option<crate::events::AppAction> {
     use crate::events::AppAction;
-    let d = app.find_dialog.as_mut()?;
+    let dialog = app.find_dialog.as_mut()?;
     if modifiers.contains(KeyModifiers::CONTROL) {
-        if code == KeyCode::Char('a') && d.focus <= 2 {
-            let input = match d.focus {
-                0 => &mut d.start_dir_input,
-                1 => &mut d.file_pattern_input,
-                2 => &mut d.content_pattern_input,
+        if code == KeyCode::Char('a') && dialog.focus <= 2 {
+            let input = match dialog.focus {
+                0 => &mut dialog.start_dir_input,
+                1 => &mut dialog.file_pattern_input,
+                2 => &mut dialog.content_pattern_input,
                 _ => return Some(AppAction::Continue),
             };
             if !input.text.is_empty() {
@@ -245,11 +251,11 @@ fn handle_key_parameter(
             }
             return Some(AppAction::Continue);
         }
-        if code == KeyCode::Char('v') && d.focus <= 2 {
-            let input = match d.focus {
-                0 => &mut d.start_dir_input,
-                1 => &mut d.file_pattern_input,
-                2 => &mut d.content_pattern_input,
+        if code == KeyCode::Char('v') && dialog.focus <= 2 {
+            let input = match dialog.focus {
+                0 => &mut dialog.start_dir_input,
+                1 => &mut dialog.file_pattern_input,
+                2 => &mut dialog.content_pattern_input,
                 _ => return Some(AppAction::Continue),
             };
             if let Some(s) = clipboard::get() {
@@ -258,20 +264,20 @@ fn handle_key_parameter(
             return Some(AppAction::Continue);
         }
         if code == KeyCode::Char('c') {
-            if d.focus <= 2 {
-                let text = match d.focus {
-                    0 => d
+            if dialog.focus <= 2 {
+                let text = match dialog.focus {
+                    0 => dialog
                         .start_dir_input
                         .get_selected_text()
-                        .unwrap_or_else(|| d.start_dir_input.text.clone()),
-                    1 => d
+                        .unwrap_or_else(|| dialog.start_dir_input.text.clone()),
+                    1 => dialog
                         .file_pattern_input
                         .get_selected_text()
-                        .unwrap_or_else(|| d.file_pattern_input.text.clone()),
-                    2 => d
+                        .unwrap_or_else(|| dialog.file_pattern_input.text.clone()),
+                    2 => dialog
                         .content_pattern_input
                         .get_selected_text()
-                        .unwrap_or_else(|| d.content_pattern_input.text.clone()),
+                        .unwrap_or_else(|| dialog.content_pattern_input.text.clone()),
                     _ => String::new(),
                 };
                 if !text.is_empty() {
@@ -286,97 +292,97 @@ fn handle_key_parameter(
     match code {
         KeyCode::Esc => return Some(AppAction::FindClose),
         KeyCode::Tab | KeyCode::Down => {
-            d.focus = (d.focus + 1) % 9;
+            dialog.focus = (dialog.focus + 1) % 9;
             return Some(AppAction::Continue);
         }
         KeyCode::BackTab | KeyCode::Up => {
-            d.focus = (d.focus + 8) % 9;
+            dialog.focus = (dialog.focus + 8) % 9;
             return Some(AppAction::Continue);
         }
         KeyCode::Enter => {
-            if d.focus == 8 {
+            if dialog.focus == 8 {
                 return Some(AppAction::FindClose);
             }
             // Enter from any other widget (inputs 0–2, options 3–6, Find 7) starts the search
             return Some(AppAction::FindStartSearch);
         }
         KeyCode::Char(' ') => {
-            if d.focus >= 3 && d.focus <= 6 {
-                match d.focus {
-                    3 => d.recursive = !d.recursive,
-                    4 => d.file_case_sens = !d.file_case_sens,
-                    5 => d.content_case_sens = !d.content_case_sens,
-                    6 => d.skip_hidden = !d.skip_hidden,
+            if dialog.focus >= 3 && dialog.focus <= 6 {
+                match dialog.focus {
+                    3 => dialog.recursive = !dialog.recursive,
+                    4 => dialog.file_case_sens = !dialog.file_case_sens,
+                    5 => dialog.content_case_sens = !dialog.content_case_sens,
+                    6 => dialog.skip_hidden = !dialog.skip_hidden,
                     _ => {}
                 }
                 return Some(AppAction::Continue);
             }
         }
         KeyCode::Char(c) => {
-            if c.is_ascii() && !c.is_control() && d.focus <= 2 {
-                let input = match d.focus {
-                    0 => &mut d.start_dir_input,
-                    1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+            if c.is_ascii() && !c.is_control() && dialog.focus <= 2 {
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).insert_char(c);
             }
         }
         KeyCode::Backspace => {
-            if d.focus <= 2 {
-                let input = match d.focus {
-                    0 => &mut d.start_dir_input,
-                    1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+            if dialog.focus <= 2 {
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).backspace();
             }
         }
         KeyCode::Left => {
-            if d.focus <= 2 {
+            if dialog.focus <= 2 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
-                let input = match d.focus {
-                    0 => &mut d.start_dir_input,
-                    1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_left(shift);
             }
         }
         KeyCode::Right => {
-            if d.focus <= 2 {
+            if dialog.focus <= 2 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
-                let input = match d.focus {
-                    0 => &mut d.start_dir_input,
-                    1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_right(shift);
             }
         }
         KeyCode::Home => {
-            if d.focus <= 2 {
+            if dialog.focus <= 2 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
-                let input = match d.focus {
-                    0 => &mut d.start_dir_input,
-                    1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_home(shift);
             }
         }
         KeyCode::End => {
-            if d.focus <= 2 {
+            if dialog.focus <= 2 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
-                let input = match d.focus {
-                    0 => &mut d.start_dir_input,
-                    1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_end(shift);
@@ -393,72 +399,75 @@ fn handle_key_results(
     _modifiers: KeyModifiers,
 ) -> Option<crate::events::AppAction> {
     use crate::events::AppAction;
-    let d = app.find_dialog.as_mut()?;
-    let display_rows = build_display_rows(&d.results);
+    let dialog = app.find_dialog.as_mut()?;
+    let display_rows = build_display_rows(&dialog.results);
     let len = display_rows.len();
-    if len > 0 && d.selected_index >= len {
-        d.selected_index = len - 1;
+    if len > 0 && dialog.selected_index >= len {
+        dialog.selected_index = len - 1;
     }
     match code {
         KeyCode::Esc => return Some(AppAction::FindClose),
         KeyCode::Enter => return Some(AppAction::FindChdir),
         KeyCode::F(3) => {
             if len > 0 {
-                if let Some(FindDisplayRow::File(_)) = display_rows.get(d.selected_index) {
+                if let Some(FindDisplayRow::File(_)) = display_rows.get(dialog.selected_index) {
                     return Some(AppAction::FindView);
                 }
             }
         }
         KeyCode::F(4) => {
             if len > 0 {
-                if let Some(FindDisplayRow::File(_)) = display_rows.get(d.selected_index) {
+                if let Some(FindDisplayRow::File(_)) = display_rows.get(dialog.selected_index) {
                     return Some(AppAction::FindEdit);
                 }
             }
         }
         KeyCode::Up => {
             if len > 0 {
-                d.selected_index = d.selected_index.saturating_sub(1);
-                if d.selected_index < d.scroll_offset {
-                    d.scroll_offset = d.selected_index;
+                dialog.selected_index = dialog.selected_index.saturating_sub(1);
+                if dialog.selected_index < dialog.scroll_offset {
+                    dialog.scroll_offset = dialog.selected_index;
                 }
             }
         }
         KeyCode::Down => {
             if len > 0 {
-                d.selected_index = (d.selected_index + 1).min(len - 1);
-                let max_visible = d.visible_list_rows.max(1);
-                if d.selected_index >= d.scroll_offset + max_visible {
-                    d.scroll_offset = d.selected_index - max_visible + 1;
+                dialog.selected_index = (dialog.selected_index + 1).min(len - 1);
+                let max_visible = dialog.visible_list_rows.max(1);
+                if dialog.selected_index >= dialog.scroll_offset + max_visible {
+                    dialog.scroll_offset = dialog.selected_index - max_visible + 1;
                 }
             }
         }
         KeyCode::PageUp => {
             if len > 0 {
-                let n = d.visible_list_rows.max(1);
-                d.selected_index = d.selected_index.saturating_sub(n).max(0);
-                if d.selected_index < d.scroll_offset {
-                    d.scroll_offset = d.selected_index;
+                let visible_rows = dialog.visible_list_rows.max(1);
+                dialog.selected_index = dialog
+                    .selected_index
+                    .saturating_sub(visible_rows)
+                    .max(0);
+                if dialog.selected_index < dialog.scroll_offset {
+                    dialog.scroll_offset = dialog.selected_index;
                 }
             }
         }
         KeyCode::PageDown => {
             if len > 0 {
-                let n = d.visible_list_rows.max(1);
-                d.selected_index = (d.selected_index + n).min(len - 1);
-                if d.selected_index >= d.scroll_offset + n {
-                    d.scroll_offset = d.selected_index - n + 1;
+                let visible_rows = dialog.visible_list_rows.max(1);
+                dialog.selected_index = (dialog.selected_index + visible_rows).min(len - 1);
+                if dialog.selected_index >= dialog.scroll_offset + visible_rows {
+                    dialog.scroll_offset = dialog.selected_index - visible_rows + 1;
                 }
             }
         }
         KeyCode::Home => {
-            d.selected_index = 0;
-            d.scroll_offset = 0;
+            dialog.selected_index = 0;
+            dialog.scroll_offset = 0;
         }
         KeyCode::End => {
             if len > 0 {
-                d.selected_index = len - 1;
-                d.scroll_offset = len.saturating_sub(d.visible_list_rows.max(1));
+                dialog.selected_index = len - 1;
+                dialog.scroll_offset = len.saturating_sub(dialog.visible_list_rows.max(1));
             }
         }
         _ => {}
@@ -478,12 +487,11 @@ pub fn draw(
     app: &mut AppState,
 ) {
     poll_search(app);
-    let d = match app.find_dialog.as_mut() {
-        Some(d) => d,
-        None => return,
+    let Some(dialog) = app.find_dialog.as_mut() else {
+        return;
     };
     let area = f.area();
-    let (w, h) = match d.phase {
+    let (w, h) = match dialog.phase {
         FindDialogPhase::Parameter => (FIND_DIALOG_W, FIND_DIALOG_H_PARAM),
         FindDialogPhase::Searching | FindDialogPhase::Results => {
             (FIND_DIALOG_W, FIND_DIALOG_H_RESULTS)
@@ -500,7 +508,7 @@ pub fn draw(
     let grey_bg = Color::Rgb(60, 60, 60);
     let fill_style = Style::default().bg(grey_bg).fg(Color::White);
     f.render_widget(Clear, rect);
-    let title = match d.phase {
+    let title = match dialog.phase {
         FindDialogPhase::Parameter => " Find file ",
         FindDialogPhase::Searching => " Find file (searching...) ",
         FindDialogPhase::Results => " Find file (results) ",
@@ -516,22 +524,22 @@ pub fn draw(
     });
     let content_w = inner.width.saturating_sub(2);
 
-    match d.phase {
+    match dialog.phase {
         FindDialogPhase::Parameter => {
-            draw_parameter_form(f, d, inner, content_w, fill_style);
+            draw_parameter_form(f, dialog, inner, content_w, fill_style);
         }
         FindDialogPhase::Searching => {
-            draw_status_and_list(f, d, inner, content_w, fill_style, true);
+            draw_status_and_list(f, dialog, inner, content_w, fill_style, true);
         }
         FindDialogPhase::Results => {
-            draw_status_and_list(f, d, inner, content_w, fill_style, false);
+            draw_status_and_list(f, dialog, inner, content_w, fill_style, false);
         }
     }
 }
 
 fn draw_parameter_form(
     f: &mut Frame,
-    d: &FindDialogState,
+    dialog: &FindDialogState,
     inner: Rect,
     content_w: u16,
     fill_style: Style,
@@ -542,12 +550,12 @@ fn draw_parameter_form(
     const LABEL_W: u16 = 18;
 
     for (focus_idx, label, input) in [
-        (0, "Start directory:", &d.start_dir_input),
-        (1, "File pattern:", &d.file_pattern_input),
-        (2, "Content pattern:", &d.content_pattern_input),
+        (0, "Start directory:", &dialog.start_dir_input),
+        (1, "File pattern:", &dialog.file_pattern_input),
+        (2, "Content pattern:", &dialog.content_pattern_input),
     ] {
         let cursor_char = input.cursor_column();
-        let focused = d.focus == focus_idx;
+        let focused = dialog.focus == focus_idx;
         let bg = if focused {
             DIALOG_INPUT_BG_FOCUSED
         } else {
@@ -602,14 +610,14 @@ fn draw_parameter_form(
     row += 1;
 
     let opts = [
-        (3, "Recursive", d.recursive),
-        (4, "File name case sensitive", d.file_case_sens),
-        (5, "Content case sensitive", d.content_case_sens),
-        (6, "Skip hidden files", d.skip_hidden),
+        (3, "Recursive", dialog.recursive),
+        (4, "File name case sensitive", dialog.file_case_sens),
+        (5, "Content case sensitive", dialog.content_case_sens),
+        (6, "Skip hidden files", dialog.skip_hidden),
     ];
     for (idx, label, on) in opts {
         let mark = if on { "[x]" } else { "[ ]" };
-        let style = if d.focus == idx {
+        let style = if dialog.focus == idx {
             Style::default().bg(Color::Cyan).fg(Color::Black)
         } else {
             fill_style
@@ -628,7 +636,7 @@ fn draw_parameter_form(
     row += 1;
 
     let btn_style = |idx: usize| {
-        if d.focus == idx {
+        if dialog.focus == idx {
             Style::default().bg(Color::Cyan).fg(Color::Black)
         } else {
             fill_style
@@ -656,7 +664,7 @@ fn draw_parameter_form(
 
 fn draw_status_and_list(
     f: &mut Frame,
-    d: &mut FindDialogState,
+    dialog: &mut FindDialogState,
     inner: Rect,
     content_w: u16,
     fill_style: Style,
@@ -664,41 +672,41 @@ fn draw_status_and_list(
 ) {
     let cx = inner.x + 1;
     let mut row = inner.y;
-    let show_hint = !searching && !d.results.is_empty();
+    let show_hint = !searching && !dialog.results.is_empty();
     let list_height = inner
         .height
         .saturating_sub(STATUS_ROWS)
         .saturating_sub(if show_hint { HINT_ROWS } else { 0 })
         .max(1);
-    d.visible_list_rows = list_height as usize;
-    let v = d.visible_list_rows.max(1);
-    let display_rows = build_display_rows(&d.results);
+    dialog.visible_list_rows = list_height as usize;
+    let visible_row_count = dialog.visible_list_rows.max(1);
+    let display_rows = build_display_rows(&dialog.results);
     let len = display_rows.len();
     if len > 0 {
-        if d.selected_index >= len {
-            d.selected_index = len - 1;
+        if dialog.selected_index >= len {
+            dialog.selected_index = len - 1;
         }
-        if d.scroll_offset + v > len {
-            d.scroll_offset = len.saturating_sub(v);
+        if dialog.scroll_offset + visible_row_count > len {
+            dialog.scroll_offset = len.saturating_sub(visible_row_count);
         }
-        if d.selected_index < d.scroll_offset {
-            d.scroll_offset = d.selected_index;
+        if dialog.selected_index < dialog.scroll_offset {
+            dialog.scroll_offset = dialog.selected_index;
         }
-        if d.selected_index >= d.scroll_offset + v {
-            d.scroll_offset = d.selected_index - v + 1;
+        if dialog.selected_index >= dialog.scroll_offset + visible_row_count {
+            dialog.scroll_offset = dialog.selected_index - visible_row_count + 1;
         }
     }
 
     if searching {
         // One line: current directory (or "Scanning...") and number of found items; suffix fixed so it doesn't jump.
-        let n = d.results.len();
-        let suffix = format!("  {} found", n);
+        let found_count = dialog.results.len();
+        let suffix = format!("  {} found", found_count);
         let suffix_len = suffix.chars().count();
         let path_w = (content_w as usize).saturating_sub(suffix_len).max(0);
-        let path_display = if d.search_current_dir.is_empty() {
+        let path_display = if dialog.search_current_dir.is_empty() {
             "Scanning...".to_string()
         } else {
-            truncate_path(&d.search_current_dir, path_w)
+            truncate_path(&dialog.search_current_dir, path_w)
         };
         let line = format!("{:<path_w$}{}", path_display, suffix);
         f.render_widget(
@@ -713,7 +721,7 @@ fn draw_status_and_list(
     } else {
         // Search complete: show status only.
         f.render_widget(
-            Paragraph::new(d.status_message.as_str()).style(fill_style),
+            Paragraph::new(dialog.status_message.as_str()).style(fill_style),
             Rect {
                 x: cx,
                 y: row,
@@ -732,11 +740,11 @@ fn draw_status_and_list(
     };
     let visible: Vec<ListItem> = display_rows
         .iter()
-        .skip(d.scroll_offset)
-        .take(d.visible_list_rows)
+        .skip(dialog.scroll_offset)
+        .take(dialog.visible_list_rows)
         .enumerate()
         .map(|(i, row)| {
-            let idx = d.scroll_offset + i;
+            let idx = dialog.scroll_offset + i;
             let (line_str, is_folder) = match row {
                 FindDisplayRow::Folder(path) => (path.display().to_string(), true),
                 FindDisplayRow::File(r) => {
@@ -752,7 +760,7 @@ fn draw_status_and_list(
                     (s, false)
                 }
             };
-            let style = if idx == d.selected_index {
+            let style = if idx == dialog.selected_index {
                 Style::default().bg(Color::Cyan).fg(Color::Black)
             } else {
                 fill_style

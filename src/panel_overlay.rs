@@ -84,30 +84,38 @@ fn draw_overlay(
         height: inner.height.saturating_sub(HINT_H),
     };
 
-    let p = &app.persisted_settings;
+    let persisted = &app.persisted_settings;
     let (view_index, sort_index, dirs_first, show_hidden) = if is_left {
-        let view_index = if p.left_view.as_str() == "one" { 1 } else { 0 };
+        let view_index = if persisted.left_view.as_str() == "one" {
+            1
+        } else {
+            0
+        };
         let sort_index = crate::core::file_ops::SORT_MODES
             .iter()
-            .position(|s| *s == p.left_sort.as_str())
+            .position(|s| *s == persisted.left_sort.as_str())
             .unwrap_or(0);
         (
             view_index,
             sort_index,
-            p.left_dirs_first,
-            p.left_show_hidden,
+            persisted.left_dirs_first,
+            persisted.left_show_hidden,
         )
     } else {
-        let view_index = if p.right_view.as_str() == "one" { 1 } else { 0 };
+        let view_index = if persisted.right_view.as_str() == "one" {
+            1
+        } else {
+            0
+        };
         let sort_index = crate::core::file_ops::SORT_MODES
             .iter()
-            .position(|s| *s == p.right_sort.as_str())
+            .position(|s| *s == persisted.right_sort.as_str())
             .unwrap_or(0);
         (
             view_index,
             sort_index,
-            p.right_dirs_first,
-            p.right_show_hidden,
+            persisted.right_dirs_first,
+            persisted.right_show_hidden,
         )
     };
 
@@ -182,7 +190,7 @@ pub fn handle_key(
         return None;
     };
 
-    let p = app.persisted_settings.clone();
+    let persisted_snapshot = app.persisted_settings.clone();
 
     match code {
         KeyCode::Esc => {
@@ -220,8 +228,8 @@ pub fn handle_key(
         }
         KeyCode::Down => {
             if state.content_focus == 0 {
-                if (is_left && p.left_view.as_str() == "two")
-                    || (!is_left && p.right_view.as_str() == "two")
+                if (is_left && persisted_snapshot.left_view.as_str() == "two")
+                    || (!is_left && persisted_snapshot.right_view.as_str() == "two")
                 {
                     return Some(AppAction::SettingChange(if is_left {
                         SettingChange::LeftViewCycle

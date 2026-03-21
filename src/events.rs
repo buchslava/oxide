@@ -299,8 +299,8 @@ impl EventHandler {
                         }),
                         _ => None,
                     };
-                    if let Some(c) = choice {
-                        return Ok(Some(AppAction::DeleteConfirmChoice(c)));
+                    if let Some(confirm_choice) = choice {
+                        return Ok(Some(AppAction::DeleteConfirmChoice(confirm_choice)));
                     }
                     return Ok(Some(AppAction::Continue));
                 }
@@ -334,17 +334,17 @@ impl EventHandler {
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Enter => {
-                            let c = match app.copy_error_focus {
+                            let error_choice = match app.copy_error_focus {
                                 0 => CopyErrorChoice::Ignore,
                                 1 => CopyErrorChoice::Cancel,
                                 _ => CopyErrorChoice::IgnoreAll,
                             };
-                            return Ok(Some(AppAction::CopyErrorChoice(c)));
+                            return Ok(Some(AppAction::CopyErrorChoice(error_choice)));
                         }
                         _ => None,
                     };
-                    if let Some(c) = choice {
-                        return Ok(Some(AppAction::CopyErrorChoice(c)));
+                    if let Some(error_choice) = choice {
+                        return Ok(Some(AppAction::CopyErrorChoice(error_choice)));
                     }
                     return Ok(Some(AppAction::Continue));
                 }
@@ -855,12 +855,12 @@ impl EventHandler {
                 if col >= content.x && col < content.x + content.width && row >= content.y + 2 {
                     let opt_row = (row - content.y - 2) as usize;
                     if opt_row < 3 {
-                        let c = match opt_row {
+                        let error_choice = match opt_row {
                             0 => CopyErrorChoice::Ignore,
                             1 => CopyErrorChoice::Cancel,
                             _ => CopyErrorChoice::IgnoreAll,
                         };
-                        return Ok(Some(AppAction::CopyErrorChoice(c)));
+                        return Ok(Some(AppAction::CopyErrorChoice(error_choice)));
                     }
                 }
             }
@@ -1118,12 +1118,12 @@ impl EventHandler {
         app: &mut AppState,
     ) -> Option<AppAction> {
         let items = Renderer::menu_bar_items();
-        let n = items.len() as u16;
-        if n == 0 {
+        let menu_item_count = items.len() as u16;
+        if menu_item_count == 0 {
             return None;
         }
-        let slot_w = term_w / n;
-        let slot_index = (col / slot_w).min(n - 1) as usize;
+        let slot_w = term_w / menu_item_count;
+        let slot_index = (col / slot_w).min(menu_item_count - 1) as usize;
         let (_, key) = items.get(slot_index)?;
         // In command prompt mode only F10 (Quit) is active.
         if app.focus == Focus::CommandLine && *key != 10 {

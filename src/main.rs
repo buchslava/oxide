@@ -412,10 +412,14 @@ fn get_or_create_subshell<'a>(
     subshell: &'a mut Option<subshell::Subshell>,
     cwd: &str,
 ) -> io::Result<&'a subshell::Subshell> {
-    if subshell.is_none() {
-        *subshell = Some(subshell::Subshell::spawn(cwd)?);
+    loop {
+        match subshell {
+            Some(s) => return Ok(s),
+            None => {
+                *subshell = Some(subshell::Subshell::spawn(cwd)?);
+            }
+        }
     }
-    Ok(subshell.as_ref().expect("subshell initialized above"))
 }
 
 /// When setting is on, sync active panel to shell's cwd if it changed (after Ctrl+O or RunCommand return).
@@ -538,14 +542,14 @@ fn run_copy_step_into_archive(
 
 /// Advance the in-progress copy/move by one item. If target exists and no overwrite_all/skip_all, shows overwrite dialog.
 fn run_copy_step(app: &mut AppState) {
-    let Some(c0) = app.copy_in_progress.as_ref() else {
+    let Some(active_copy) = app.copy_in_progress.as_ref() else {
         return;
     };
-    let total = c0.params.items.len();
-    if c0.current_index >= total {
-        let source_dir = c0.params.source_dir.clone();
-        let restore_after = c0.params.restore_selection_after.clone();
-        let restore_before = c0.params.restore_selection_before.clone();
+    let total = active_copy.params.items.len();
+    if active_copy.current_index >= total {
+        let source_dir = active_copy.params.source_dir.clone();
+        let restore_after = active_copy.params.restore_selection_after.clone();
+        let restore_before = active_copy.params.restore_selection_before.clone();
         app.copy_in_progress = None;
         app.copy_progress = None;
         app.delete_pending_rx = None;
@@ -553,18 +557,23 @@ fn run_copy_step(app: &mut AppState) {
         return;
     }
 
-    let (name, is_dir, current_path) = {
-        let c = app.copy_in_progress.as_ref().unwrap();
+    let (name, is_dir, current_path, use_panel_backend) = {
+        let Some(c) = app.copy_in_progress.as_ref() else {
+            return;
+        };
         let (name, is_dir) = &c.params.items[c.current_index];
         (
             name.clone(),
             *is_dir,
             source_item_display_path(&c.params, name),
+            c.params.source_location.is_some(),
         )
     };
 
     {
-        let c = app.copy_in_progress.as_ref().unwrap();
+        let Some(c) = app.copy_in_progress.as_ref() else {
+            return;
+        };
         app.copy_progress = Some(CopyProgress {
             operation: c.operation,
             current_path: current_path.clone(),
@@ -574,19 +583,14 @@ fn run_copy_step(app: &mut AppState) {
         });
     }
 
-    let use_panel_backend = app
-        .copy_in_progress
-        .as_ref()
-        .is_some_and(|c| c.params.source_location.is_some());
-
     if use_panel_backend {
         let (advance, overwrite_name, error_msg) = {
-            let c = app.copy_in_progress.as_ref().unwrap();
-            let source_loc = c
-                .params
-                .source_location
-                .as_ref()
-                .expect("use_panel_backend");
+            let Some(c) = app.copy_in_progress.as_ref() else {
+                return;
+            };
+            let Some(source_loc) = c.params.source_location.as_ref() else {
+                return;
+            };
             apply_panel_location_copy_step(c, source_loc, &name, is_dir, &current_path)
         };
         let Some(c) = app.copy_in_progress.as_mut() else {
@@ -697,7 +701,9 @@ fn finish_copy_if_no_items_left(app: &mut AppState) {
         return;
     }
     let (source_dir, restore_after, restore_before) = {
-        let c = app.copy_in_progress.as_ref().unwrap();
+        let Some(c) = app.copy_in_progress.as_ref() else {
+            return;
+        };
         (
             c.params.source_dir.clone(),
             c.params.restore_selection_after.clone(),
@@ -1385,14 +1391,14 @@ fn main() -> Result<(), io::Error> {
                 }
                 let shell_cwd =
                     if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
-                        let r = sub.run_command_then_relay(
+                        let relay_outcome = sub.run_command_then_relay(
                             &cwd,
                             &cmd,
                             Some(prepared),
                             auto_exit_after_idle,
                         );
                         let cwd_opt = sub.get_cwd();
-                        let _ = r;
+                        let _ = relay_outcome;
                         cwd_opt
                     } else {
                         eprintln!("Subshell error");

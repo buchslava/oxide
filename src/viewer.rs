@@ -195,9 +195,13 @@ fn wrap_line(
     let mut out = Vec::new();
     let mut s = line;
     while !s.is_empty() {
-        let n = s.chars().take(width).count();
-        let (chunk, rest) = if n < s.chars().count() {
-            let idx = s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len());
+        let chunk_char_count = s.chars().take(width).count();
+        let (chunk, rest) = if chunk_char_count < s.chars().count() {
+            let idx = s
+                .char_indices()
+                .nth(chunk_char_count)
+                .map(|(i, _)| i)
+                .unwrap_or(s.len());
             s.split_at(idx)
         } else {
             (s, "")
@@ -527,13 +531,13 @@ fn hex_bpl_two_columns(
     left_width: u16,
     right_width: u16,
 ) -> usize {
-    let l = left_width as usize;
-    let r = right_width as usize;
-    if l < 19 || r < 8 {
+    let left_cols = left_width as usize;
+    let right_cols = right_width as usize;
+    if left_cols < 19 || right_cols < 8 {
         return HEX_BYTES_PER_LINE_DEFAULT;
     }
-    let bpl_left = (l - 10) / 3;
-    let bpl_right = r;
+    let bpl_left = (left_cols - 10) / 3;
+    let bpl_right = right_cols;
     let bpl = bpl_left.min(bpl_right).max(8);
     let bpl = (bpl / 8).max(1) * 8;
     bpl.min(HEX_BYTES_PER_LINE_MAX)

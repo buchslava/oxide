@@ -250,8 +250,8 @@ pub fn handle_editor_key(
                 return Some(AppAction::Continue);
             }
             KeyCode::Enter => {
-                let q = query.clone();
-                find_next(ed, &q);
+                let query_snapshot = query.clone();
+                find_next(ed, &query_snapshot);
                 return Some(AppAction::Continue);
             }
             KeyCode::Left => {
@@ -754,14 +754,17 @@ fn draw_search_bar(
         horizontal: 1,
         vertical: 1,
     });
-    let line0 = Rect {
+    let query_display_row = Rect {
         x: inner.x,
         y: inner.y,
         width: inner.width,
         height: 1,
     };
-    let text = format!("  {}", query);
-    f.render_widget(Paragraph::new(text.as_str()).style(style), line0);
+    let padded_query = format!("  {}", query);
+    f.render_widget(
+        Paragraph::new(padded_query.as_str()).style(style),
+        query_display_row,
+    );
     let hint_row = Rect {
         x: inner.x,
         y: inner.y + 2,

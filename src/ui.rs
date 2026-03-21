@@ -864,11 +864,11 @@ impl Renderer {
             area,
         );
         let items = Self::menu_bar_items();
-        let n = items.len() as u16;
-        if n == 0 {
+        let menu_item_count = items.len() as u16;
+        if menu_item_count == 0 {
             return;
         }
-        let slot_w = area.width / n;
+        let slot_w = area.width / menu_item_count;
         let num_style = Style::default().fg(Color::Rgb(255, 180, 80)).bg(dark_bg);
         let label_style = Style::default().fg(Color::Rgb(180, 180, 180)).bg(dark_bg);
         let unavailable_style = Style::default().fg(Color::DarkGray).bg(dark_bg);
@@ -1139,8 +1139,8 @@ impl Renderer {
         let is_focused = app.focus == Focus::CommandLine;
         let base = Style::default().bg(MAIN_DARK_BG);
         let style = base.fg(Color::White);
-        let p = Paragraph::new(line.clone()).style(style);
-        f.render_widget(p, area);
+        let command_line_paragraph = Paragraph::new(line.clone()).style(style);
+        f.render_widget(command_line_paragraph, area);
         if is_focused {
             let cursor_x =
                 (prompt.len() + app.command_line_cursor.min(app.command_line.len())) as u16;

@@ -123,7 +123,7 @@ pub fn open(app: &mut AppState) {
         .unwrap_or_else(|| (String::new(), String::new()));
     // Ensure file's owner/group are in the lists (e.g. numeric uid/gid when not in passwd/group)
     let user_index = if owner.is_empty() {
-        0.min(user_list.len().saturating_sub(1).max(0))
+        0
     } else if let Some(i) = user_list.iter().position(|u| u == &owner) {
         i
     } else {
@@ -131,7 +131,7 @@ pub fn open(app: &mut AppState) {
         0
     };
     let group_index = if group.is_empty() {
-        0.min(group_list.len().saturating_sub(1).max(0))
+        0
     } else if let Some(i) = group_list.iter().position(|g| g == &group) {
         i
     } else {

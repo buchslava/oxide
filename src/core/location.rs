@@ -28,11 +28,11 @@ impl PanelLocation {
                 archive,
                 path_inside,
             } => {
-                let a = archive.to_string_lossy();
+                let archive_display = archive.to_string_lossy();
                 if path_inside.is_empty() {
-                    a.to_string()
+                    archive_display.to_string()
                 } else {
-                    format!("{}/{}", a, path_inside.trim_end_matches('/'))
+                    format!("{}/{}", archive_display, path_inside.trim_end_matches('/'))
                 }
             }
         }

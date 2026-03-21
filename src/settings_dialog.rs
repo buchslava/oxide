@@ -67,7 +67,7 @@ pub fn handle_key(
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
     let state = app.settings_dialog.as_mut()?;
-    let p = app.persisted_settings.clone();
+    let persisted_snapshot = app.persisted_settings.clone();
     match code {
         KeyCode::Esc => {
             close(app);
@@ -110,8 +110,9 @@ pub fn handle_key(
         }
         KeyCode::Up => {
             if state.focus_left {
-                let n = SETTINGS_SECTIONS.len();
-                state.selected_section = (state.selected_section + n - 1) % n;
+                let section_count = SETTINGS_SECTIONS.len();
+                state.selected_section =
+                    (state.selected_section + section_count - 1) % section_count;
                 return Some(AppAction::Continue);
             }
             // Right column: Up = previous item or move focus up
@@ -145,8 +146,8 @@ pub fn handle_key(
         }
         KeyCode::Down => {
             if state.focus_left {
-                let n = SETTINGS_SECTIONS.len();
-                state.selected_section = (state.selected_section + 1) % n;
+                let section_count = SETTINGS_SECTIONS.len();
+                state.selected_section = (state.selected_section + 1) % section_count;
                 return Some(AppAction::Continue);
             }
             // Right column: Down = next item or move focus down
@@ -156,7 +157,7 @@ pub fn handle_key(
                 }
                 1 => {
                     if state.content_focus == 0 {
-                        if p.left_view.as_str() == "two" {
+                        if persisted_snapshot.left_view.as_str() == "two" {
                             return Some(AppAction::SettingChange(SettingChange::LeftViewCycle));
                         }
                         state.content_focus = 1;
@@ -170,7 +171,7 @@ pub fn handle_key(
                 }
                 2 => {
                     if state.content_focus == 0 {
-                        if p.right_view.as_str() == "two" {
+                        if persisted_snapshot.right_view.as_str() == "two" {
                             return Some(AppAction::SettingChange(SettingChange::RightViewCycle));
                         }
                         state.content_focus = 1;
@@ -336,22 +337,30 @@ pub fn draw(
     .style(right_fill_style);
     f.render_widget(fill_right, right_area);
 
-    let p = &app.persisted_settings;
-    let left_view_index = if p.left_view.as_str() == "one" { 1 } else { 0 };
-    let right_view_index = if p.right_view.as_str() == "one" { 1 } else { 0 };
+    let persisted = &app.persisted_settings;
+    let left_view_index = if persisted.left_view.as_str() == "one" {
+        1
+    } else {
+        0
+    };
+    let right_view_index = if persisted.right_view.as_str() == "one" {
+        1
+    } else {
+        0
+    };
     let left_sort_index = SORT_MODES
         .iter()
-        .position(|s| *s == p.left_sort.as_str())
+        .position(|s| *s == persisted.left_sort.as_str())
         .unwrap_or(0);
     let right_sort_index = SORT_MODES
         .iter()
-        .position(|s| *s == p.right_sort.as_str())
+        .position(|s| *s == persisted.right_sort.as_str())
         .unwrap_or(0);
     match state.selected_section {
         0 => {
             let view_highlight = Style::default().bg(Color::Blue).fg(Color::White);
             let line_h = 1u16;
-            let chk0 = if p.autosave { "[x]" } else { "[ ]" };
+            let chk0 = if persisted.autosave { "[x]" } else { "[ ]" };
             let style0 = if state.content_focus == 0 {
                 view_highlight
             } else {
@@ -370,7 +379,7 @@ pub fn draw(
                     height: line_h,
                 },
             );
-            let chk1 = if p.sync_panel_to_shell_cwd {
+            let chk1 = if persisted.sync_panel_to_shell_cwd {
                 "[x]"
             } else {
                 "[ ]"
@@ -393,7 +402,7 @@ pub fn draw(
                     height: line_h,
                 },
             );
-            let chk2 = if p.auto_reopen_panels_after_command {
+            let chk2 = if persisted.auto_reopen_panels_after_command {
                 "[x]"
             } else {
                 "[ ]"
@@ -421,7 +430,7 @@ pub fn draw(
             } else {
                 right_fill_style
             };
-            let delay_secs = p.auto_reopen_panels_after_command_delay_secs;
+            let delay_secs = persisted.auto_reopen_panels_after_command_delay_secs;
             let delay_label = format!(" Delay (sec): {delay_secs}");
             f.render_widget(
                 Paragraph::new(Line::from(delay_label)).style(delay_style),
@@ -439,8 +448,8 @@ pub fn draw(
             right_fill_style,
             left_view_index,
             left_sort_index,
-            p.left_dirs_first,
-            p.left_show_hidden,
+            persisted.left_dirs_first,
+            persisted.left_show_hidden,
             state.content_focus,
         ),
         2 => draw_panel_section(
@@ -449,8 +458,8 @@ pub fn draw(
             right_fill_style,
             right_view_index,
             right_sort_index,
-            p.right_dirs_first,
-            p.right_show_hidden,
+            persisted.right_dirs_first,
+            persisted.right_show_hidden,
             state.content_focus,
         ),
         3 => {

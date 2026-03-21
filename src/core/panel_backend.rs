@@ -689,28 +689,26 @@ fn zip_remove_items(
     let to_remove: std::collections::HashSet<String> = items
         .iter()
         .map(|(name, is_dir)| {
-            let n = name.trim_end_matches('/');
+            let trimmed_name = name.trim_end_matches('/');
             if *is_dir {
                 if prefix.is_empty() {
-                    format!("{}/", n)
+                    format!("{}/", trimmed_name)
                 } else {
-                    format!("{}/{}", prefix, n)
+                    format!("{}/{}", prefix, trimmed_name)
                 }
+            } else if prefix.is_empty() {
+                trimmed_name.to_string()
             } else {
-                if prefix.is_empty() {
-                    n.to_string()
-                } else {
-                    format!("{}/{}", prefix, n)
-                }
+                format!("{}/{}", prefix, trimmed_name)
             }
         })
         .chain(items.iter().map(|(name, is_dir)| {
-            let n = name.trim_end_matches('/');
+            let trimmed_name = name.trim_end_matches('/');
             if *is_dir {
                 if prefix.is_empty() {
-                    n.to_string()
+                    trimmed_name.to_string()
                 } else {
-                    format!("{}/{}", prefix, n)
+                    format!("{}/{}", prefix, trimmed_name)
                 }
             } else {
                 String::new()
