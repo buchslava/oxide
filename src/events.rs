@@ -475,7 +475,7 @@ impl EventHandler {
                         if c == '*' {
                             app.active_panel_mut().invert_selection();
                         } else if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            return Ok(Some(Self::handle_ctrl_key(app, c)));
+                            return Ok(Some(Self::handle_ctrl_key(app, c, panel_height)));
                         } else if c.is_ascii() && !c.is_control() {
                             app.focus_command_line();
                             app.command_line_insert(c);
@@ -764,6 +764,7 @@ impl EventHandler {
     fn handle_ctrl_key(
         app: &mut AppState,
         c: char,
+        panel_height: usize,
     ) -> AppAction {
         match c {
             'q' => AppAction::OpenLeftPanelSettings,
@@ -810,7 +811,11 @@ impl EventHandler {
                 AppAction::Continue
             }
             'r' => {
-                let _ = app.active_panel_mut().refresh_files();
+                let _ = app.active_panel_mut().refresh_files_restore_selection(
+                    None,
+                    None,
+                    Some(panel_height),
+                );
                 AppAction::Continue
             }
             _ => AppAction::Continue,
