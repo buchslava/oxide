@@ -10,9 +10,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::clipboard;
-use crate::dialog_layout::{self, single_input_button_rects};
-use crate::styles::{
+use crate::browser::clipboard;
+use crate::ui::dialog_layout::{self, single_input_button_rects};
+use crate::ui::styles::{
     DIALOG_BG, DIALOG_FOCUS, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED,
     DIALOG_INPUT_SELECTION_BG,
 };

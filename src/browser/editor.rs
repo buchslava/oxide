@@ -14,10 +14,11 @@ use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::selection::Selection;
 use ratatui_code_editor::theme::vesper;
 
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 use crate::core::location::PanelLocation;
-use crate::events::AppAction;
-use crate::panel::PanelOperations;
+use crate::app::events::AppAction;
+use crate::browser::panel::PanelOperations;
+use crate::ui::toast;
 
 /// State when the embedded code editor is open (F4).
 pub struct EditorScreenState {
@@ -140,6 +141,7 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 edit_name,
             });
             app.editor_confirm_pending = false;
+            app.clear_timed_toast();
             return true;
         }
     }
@@ -171,6 +173,7 @@ pub fn open_editor_path(
         edit_name: None,
     });
     app.editor_confirm_pending = false;
+    app.clear_timed_toast();
     true
 }
 
@@ -573,6 +576,19 @@ pub fn handle_editor_mouse(
     false
 }
 
+/// Display name for save confirmation toast (zip entry name or file basename).
+fn editor_saved_display_name(ed: &EditorScreenState) -> String {
+    if let Some(name) = &ed.edit_name {
+        name.trim_end_matches('/').to_string()
+    } else {
+        std::path::Path::new(&ed.file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| ed.file_path.clone())
+    }
+}
+
 /// F2 save: write content to file and update initial_content. Works for FS and files inside ZIP.
 pub fn save(app: &mut AppState) {
     if let Some(ref mut ed) = app.editor_screen {
@@ -587,6 +603,11 @@ pub fn save(app: &mut AppState) {
             eprintln!("Save failed: {}", e);
         } else {
             ed.initial_content = content;
+            let name = editor_saved_display_name(ed);
+            app.set_timed_toast(
+                std::time::Duration::from_secs(3),
+                format!("\"{}\" has been saved.", name),
+            );
         }
     }
 }
@@ -632,8 +653,9 @@ fn refresh_panels_after_editor_close(app: &mut AppState) {
 pub fn close(app: &mut AppState) {
     app.editor_screen = None;
     app.editor_confirm_pending = false;
+    app.clear_timed_toast();
     if app.find_dialog.is_some() {
-        app.focus = crate::app_state::Focus::FindDialog;
+        app.focus = crate::app::state::Focus::FindDialog;
     }
     refresh_panels_after_editor_close(app);
 }
@@ -657,15 +679,17 @@ pub fn apply_confirm_choice(
                 ed.initial_content = content;
             }
             app.editor_screen = None;
+            app.clear_timed_toast();
             if app.find_dialog.is_some() {
-                app.focus = crate::app_state::Focus::FindDialog;
+                app.focus = crate::app::state::Focus::FindDialog;
             }
             refresh_panels_after_editor_close(app);
         }
         EditorConfirmChoice::Discard => {
             app.editor_screen = None;
+            app.clear_timed_toast();
             if app.find_dialog.is_some() {
-                app.focus = crate::app_state::Focus::FindDialog;
+                app.focus = crate::app::state::Focus::FindDialog;
             }
             refresh_panels_after_editor_close(app);
         }
@@ -680,6 +704,7 @@ pub fn draw(
     f: &mut Frame,
     app: &mut AppState,
 ) {
+    crate::ui::toast::TimedToast::clear_if_expired(&mut app.timed_toast);
     if let Some(ref mut ed) = app.editor_screen {
         let area = f.area();
         let content_height = area.height.saturating_sub(1);
@@ -714,6 +739,9 @@ pub fn draw(
         if let Some(ref query) = ed.search_query {
             let cursor = ed.search_query_cursor.min(query.chars().count());
             draw_search_bar(f, area, query, cursor);
+        }
+        if let Some(ref t) = app.timed_toast {
+            toast::draw_timed_bottom_left(f, area, t);
         }
         if app.editor_confirm_pending {
             draw_confirm_dialog(f, app);

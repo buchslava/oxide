@@ -5,875 +5,44 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc;
+use std::sync::atomic::Ordering;
 
-mod app_state;
-mod archive_dialog;
-mod clipboard;
+mod app;
+mod browser;
 mod core;
-mod dialog_layout;
-mod editor;
-mod events;
-mod find_dialog;
-mod help_dialog;
-mod mkdir_dialog;
-mod new_file_dialog;
-mod panel;
-mod panel_overlay;
-mod panel_overlay_state;
-mod rename_attr;
-mod settings_dialog;
-mod size_info_dialog;
-mod styles;
-mod subshell;
-mod text_input;
+mod dialogs;
+mod shell;
 mod ui;
 mod util;
-mod viewer;
 
-use crate::core::file_ops::FileOperations;
-use app_state::{
-    AppState, ArchiveMessage, CopyInProgress, CopyProgress, Focus, Operation,
-    RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
+use app::copy_runner::{handle_copy_overwrite_choice, run_copy_step, start_copy_operation};
+use app::events::{AppAction, CopyErrorChoice, DeleteConfirmChoice, EventHandler};
+use app::panel_refresh::{
+    refresh_both_panels_full, refresh_both_panels_restore_selection, restore_source_panel_and_refresh,
 };
-use editor::{apply_confirm_choice, close, open_editor, save};
-use events::{AppAction, CopyErrorChoice, DeleteConfirmChoice, EventHandler, SettingChange};
-use panel::{Panel, PanelOperations, ViewMode};
-use std::sync::atomic::Ordering;
+use app::settings_apply::{
+    apply_persisted_setting_change, setting_change_skips_panel_resync, toggle_show_hidden_on_active_panel,
+};
+use app::state::{
+    AppState, ArchiveMessage, Focus, Operation, PostCommandCountdown, RenameAttrDialogState,
+    RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
+};
+use app::subshell_helpers::{get_or_create_subshell, maybe_sync_panel_to_shell_cwd};
+use browser::editor::{apply_confirm_choice, close, open_editor, open_editor_path, save};
+use browser::panel::{PanelOperations, ViewMode};
+use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
+use dialogs::find_dialog::FindDisplayRow;
+use dialogs::{
+    archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
+    settings_dialog, size_info_dialog,
+};
+use dialogs::rename_attr;
+use shell::subshell::{RelayExit, Subshell};
+use ui::post_command_overlay;
 use ui::Renderer;
-use viewer::{close_viewer, open_viewer, poll_viewer_loading};
-
-/// Log to stderr if the result is an error; otherwise ignore. Use for non-fatal I/O (e.g. save settings, refresh).
-fn log_if_err(
-    context: &str,
-    res: io::Result<()>,
-) {
-    if let Err(e) = res {
-        eprintln!("{}: {}", context, e);
-    }
-}
-
-fn reset_terminal_character_set_and_modes<W: Write>(out: &mut W) -> io::Result<()> {
-    // Defensive terminal reset after shell relay/commands:
-    // - ESC ( B / ESC ) B: ASCII G0/G1 (undo DEC special graphics)
-    // - SGR reset + ensure wrap is enabled
-    out.write_all(b"\x1b(B\x1b)B\x1b[0m\x1b[?7h")?;
-    out.flush()?;
-    Ok(())
-}
-
-fn log_refresh_panel_restore(
-    panel: &mut Panel,
-    context: &str,
-    preferred_after: Option<&str>,
-    preferred_before: Option<&str>,
-    panel_height: Option<usize>,
-) {
-    log_if_err(
-        context,
-        panel.refresh_files_restore_selection(preferred_after, preferred_before, panel_height),
-    );
-}
-
-/// Restore source panel selection after copy/move/delete and refresh both panels.
-fn restore_source_panel_and_refresh(
-    app: &mut AppState,
-    source_dir: &str,
-    restore_after: Option<&str>,
-    restore_before: Option<&str>,
-) {
-    let panel_height = Some(util::compute_panel_height());
-    let is_left_source = app.left_panel().get_current_dir() == source_dir;
-    if is_left_source {
-        log_refresh_panel_restore(
-            app.left_panel_mut(),
-            "Refresh left panel",
-            restore_after,
-            restore_before,
-            panel_height,
-        );
-        log_refresh_panel_restore(
-            app.right_panel_mut(),
-            "Refresh right panel",
-            None,
-            None,
-            panel_height,
-        );
-    } else {
-        log_refresh_panel_restore(
-            app.right_panel_mut(),
-            "Refresh right panel",
-            restore_after,
-            restore_before,
-            panel_height,
-        );
-        log_refresh_panel_restore(
-            app.left_panel_mut(),
-            "Refresh left panel",
-            None,
-            None,
-            panel_height,
-        );
-    }
-}
-
-fn refresh_both_panels_restore_selection(
-    app: &mut AppState,
-    left_preferred: Option<&str>,
-    right_preferred: Option<&str>,
-) {
-    log_if_err(
-        "Refresh panels",
-        app.left_panel_mut()
-            .refresh_files_restore_selection(left_preferred, None, None),
-    );
-    log_if_err(
-        "Refresh panels",
-        app.right_panel_mut()
-            .refresh_files_restore_selection(right_preferred, None, None),
-    );
-}
-
-fn refresh_both_panels_full(app: &mut AppState) {
-    refresh_both_panels_restore_selection(app, None, None);
-}
-
-fn cycle_view_one_two(view: &mut String) {
-    *view = if view.as_str() == "one" {
-        "two".to_string()
-    } else {
-        "one".to_string()
-    };
-}
-
-fn target_fs_dir_for_copy_params(params: &app_state::CopyParams) -> &Path {
-    params
-        .target_fs_path
-        .as_deref()
-        .unwrap_or_else(|| Path::new(&params.target_dir))
-}
-
-fn source_item_display_path(
-    params: &app_state::CopyParams,
-    name: &str,
-) -> String {
-    params
-        .source_location
-        .as_ref()
-        .map(|loc| crate::core::panel_backend::join_path_display(loc, name))
-        .unwrap_or_else(|| {
-            FileOperations::join_path(&params.source_dir, name)
-                .to_string_lossy()
-                .to_string()
-        })
-}
-
-fn target_display_for_copy_progress(
-    operation: Operation,
-    params: &app_state::CopyParams,
-) -> String {
-    match operation {
-        Operation::Copy | Operation::Move => params
-            .target_location
-            .as_ref()
-            .map(|loc| loc.display_string())
-            .unwrap_or_else(|| params.target_dir.trim_end_matches('/').to_string()),
-        Operation::Delete => String::new(),
-    }
-}
-
-fn apply_panel_location_copy_step(
-    c: &CopyInProgress,
-    source_loc: &crate::core::location::PanelLocation,
-    name: &str,
-    is_dir: bool,
-    current_path: &str,
-) -> (bool, Option<String>, Option<String>) {
-    match c.params.target_location.as_ref() {
-        Some(crate::core::location::PanelLocation::Zip {
-            archive,
-            path_inside,
-        }) => run_copy_step_into_archive(
-            source_loc,
-            name,
-            is_dir,
-            current_path,
-            archive,
-            path_inside,
-            c.operation,
-            c.ignore_all_errors,
-        ),
-        _ => {
-            let target_dir = target_fs_dir_for_copy_params(&c.params);
-            run_copy_step_backend(
-                source_loc,
-                name,
-                is_dir,
-                current_path,
-                target_dir,
-                c.operation,
-                c.overwrite_all,
-                c.skip_all,
-                c.ignore_all_errors,
-            )
-        }
-    }
-}
-
-fn poll_pending_directory_delete(
-    app: &mut AppState,
-    c: &mut CopyInProgress,
-    current_path: &str,
-) -> bool {
-    let Some(rx) = app.delete_pending_rx.take() else {
-        return false;
-    };
-    match rx.try_recv() {
-        Ok(Ok(())) => {
-            c.current_index += 1;
-            true
-        }
-        Ok(Err(e)) => {
-            if c.ignore_all_errors {
-                c.current_index += 1;
-            } else {
-                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
-                    c.operation,
-                    format!("{}: {}", current_path, e),
-                ));
-                app.copy_error_focus = 0;
-            }
-            true
-        }
-        Err(mpsc::TryRecvError::Empty) => {
-            app.delete_pending_rx = Some(rx);
-            true
-        }
-        Err(mpsc::TryRecvError::Disconnected) => {
-            if !c.ignore_all_errors {
-                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
-                    c.operation,
-                    format!("{}: delete failed", current_path),
-                ));
-                app.copy_error_focus = 0;
-            } else {
-                c.current_index += 1;
-            }
-            true
-        }
-    }
-}
-
-fn spawn_background_directory_delete(
-    app: &mut AppState,
-    source_dir: String,
-    entry_name: String,
-) {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(crate::core::copy_ops::delete_item(
-            &source_dir,
-            &entry_name,
-            true,
-        ));
-    });
-    app.delete_pending_rx = Some(rx);
-}
-
-fn run_copy_step_legacy_copy_move(
-    app: &mut AppState,
-    c: &mut CopyInProgress,
-    name: &str,
-    is_dir: bool,
-) {
-    let target_path = FileOperations::join_path(&c.params.target_dir, name);
-    if target_path.exists() && !c.overwrite_all && !c.skip_all {
-        app.copy_overwrite_dialog = Some(name.to_string());
-        app.copy_overwrite_focus = 0;
-        return;
-    }
-    let do_op = |op: Operation| {
-        if op == Operation::Move {
-            crate::core::copy_ops::move_item(
-                &c.params.source_dir,
-                &c.params.target_dir,
-                name,
-                is_dir,
-            )
-        } else {
-            crate::core::copy_ops::copy_item(
-                &c.params.source_dir,
-                &c.params.target_dir,
-                name,
-                is_dir,
-            )
-        }
-    };
-    if target_path.exists() && c.skip_all {
-        c.current_index += 1;
-        return;
-    }
-    if target_path.exists() && c.overwrite_all {
-        let result = do_op(c.operation);
-        if apply_copy_item_io_outcome(app, c, name, result) {
-            c.current_index += 1;
-        }
-        return;
-    }
-    if !target_path.exists() {
-        let result = do_op(c.operation);
-        if apply_copy_item_io_outcome(app, c, name, result) {
-            c.current_index += 1;
-        }
-    }
-}
-
-fn run_copy_step_legacy_delete(
-    app: &mut AppState,
-    c: &mut CopyInProgress,
-    name: &str,
-    is_dir: bool,
-    current_path: &str,
-) {
-    if poll_pending_directory_delete(app, c, current_path) {
-        return;
-    }
-    if is_dir {
-        spawn_background_directory_delete(app, c.params.source_dir.clone(), name.to_string());
-        return;
-    }
-    match crate::core::copy_ops::delete_item(&c.params.source_dir, name, is_dir) {
-        Ok(()) => c.current_index += 1,
-        Err(e) => {
-            if c.ignore_all_errors {
-                c.current_index += 1;
-            } else {
-                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
-                    c.operation,
-                    format!("{}: {}", current_path, e),
-                ));
-                app.copy_error_focus = 0;
-            }
-        }
-    }
-}
-
-/// Start a copy/move operation and clear overwrite/error dialogs.
-fn start_copy_operation(
-    app: &mut AppState,
-    operation: Operation,
-    params: app_state::CopyParams,
-) {
-    let total = params.items.len();
-    let initial_path = params
-        .items
-        .first()
-        .map(|(name, _)| {
-            if let Some(loc) = params.source_location.as_ref() {
-                crate::core::panel_backend::join_path_display(loc, name)
-            } else {
-                FileOperations::join_path(&params.source_dir, name)
-                    .to_string_lossy()
-                    .to_string()
-            }
-        })
-        .unwrap_or_default();
-
-    let target_path = match operation {
-        Operation::Copy | Operation::Move => params
-            .target_location
-            .as_ref()
-            .map(|loc| loc.display_string())
-            .unwrap_or_else(|| params.target_dir.trim_end_matches('/').to_string()),
-        Operation::Delete => String::new(),
-    };
-
-    app.copy_in_progress = Some(CopyInProgress {
-        operation,
-        params,
-        current_index: 0,
-        overwrite_all: false,
-        skip_all: false,
-        ignore_all_errors: false,
-    });
-    app.copy_progress = Some(CopyProgress {
-        operation,
-        current_path: initial_path,
-        target_path,
-        current: 1,
-        total,
-    });
-    app.copy_overwrite_dialog = None;
-    app.copy_error_dialog = None;
-}
-
-fn get_or_create_subshell<'a>(
-    subshell: &'a mut Option<subshell::Subshell>,
-    cwd: &str,
-) -> io::Result<&'a subshell::Subshell> {
-    loop {
-        match subshell {
-            Some(s) => return Ok(s),
-            None => {
-                *subshell = Some(subshell::Subshell::spawn(cwd)?);
-            }
-        }
-    }
-}
-
-/// When setting is on, sync active panel to shell's cwd if it changed (after Ctrl+O or RunCommand return).
-fn maybe_sync_panel_to_shell_cwd(
-    app: &mut AppState,
-    shell_cwd: Option<PathBuf>,
-) {
-    if !app.persisted_settings.sync_panel_to_shell_cwd {
-        return;
-    }
-    let cwd = match shell_cwd {
-        Some(c) => c,
-        None => return,
-    };
-    if !app.get_current_location().is_fs() {
-        return;
-    }
-    let path = std::path::Path::new(&cwd);
-    if !path.is_dir() {
-        return;
-    }
-    let shell_canonical = path.canonicalize().unwrap_or(cwd);
-    let panel_canonical = app
-        .get_current_location()
-        .as_fs_path()
-        .and_then(|p| std::fs::canonicalize(p).ok());
-    if panel_canonical.as_ref() != Some(&shell_canonical) {
-        let _ = app
-            .active_panel_mut()
-            .navigate_to_location(crate::core::location::PanelLocation::fs(shell_canonical));
-    }
-}
-
-/// One step of copy/move/delete when source is PanelLocation (Fs or Zip). Returns (advance, overwrite_name, error_message).
-fn run_copy_step_backend(
-    source_loc: &crate::core::location::PanelLocation,
-    name: &str,
-    is_dir: bool,
-    current_path: &str,
-    target_dir: &std::path::Path,
-    operation: Operation,
-    overwrite_all: bool,
-    skip_all: bool,
-    ignore_all_errors: bool,
-) -> (bool, Option<String>, Option<String>) {
-    let target_path = target_dir.join(name.trim_end_matches('/'));
-
-    if operation == Operation::Delete {
-        let items = &[(name.to_string(), is_dir)];
-        return match crate::core::panel_backend::delete_items(source_loc, items) {
-            Ok(()) => (true, None, None),
-            Err(e) => (
-                ignore_all_errors,
-                None,
-                Some(format!("{}: {}", current_path, e)),
-            ),
-        };
-    }
-
-    if target_path.exists() && !overwrite_all && !skip_all {
-        return (false, Some(name.to_string()), None);
-    }
-    if target_path.exists() && skip_all {
-        return (true, None, None);
-    }
-
-    let items = &[(name.to_string(), is_dir)];
-    let result = if operation == Operation::Move {
-        crate::core::panel_backend::move_items_to_fs(source_loc, items, target_dir)
-    } else {
-        crate::core::panel_backend::copy_items_to_fs(source_loc, items, target_dir)
-    };
-
-    match result {
-        Ok(()) => (true, None, None),
-        Err(e) => (
-            ignore_all_errors,
-            None,
-            Some(format!("{} -> {}: {}", current_path, name, e)),
-        ),
-    }
-}
-
-/// One step of copy/move when target is inside a ZIP. No overwrite dialog; existing entries are overwritten.
-fn run_copy_step_into_archive(
-    source_loc: &crate::core::location::PanelLocation,
-    name: &str,
-    is_dir: bool,
-    current_path: &str,
-    archive_path: &std::path::Path,
-    path_inside: &str,
-    operation: Operation,
-    ignore_all_errors: bool,
-) -> (bool, Option<String>, Option<String>) {
-    let items = &[(name.to_string(), is_dir)];
-    let result = if operation == Operation::Move {
-        crate::core::panel_backend::move_items_into_archive(
-            source_loc,
-            items,
-            archive_path,
-            path_inside,
-        )
-    } else {
-        crate::core::panel_backend::copy_items_into_archive(
-            source_loc,
-            items,
-            archive_path,
-            path_inside,
-        )
-    };
-    match result {
-        Ok(()) => (true, None, None),
-        Err(e) => (
-            ignore_all_errors,
-            None,
-            Some(format!("{} -> (archive): {}", current_path, e)),
-        ),
-    }
-}
-
-/// Advance the in-progress copy/move by one item. If target exists and no overwrite_all/skip_all, shows overwrite dialog.
-fn run_copy_step(app: &mut AppState) {
-    let Some(active_copy) = app.copy_in_progress.as_ref() else {
-        return;
-    };
-    let total = active_copy.params.items.len();
-    if active_copy.current_index >= total {
-        let source_dir = active_copy.params.source_dir.clone();
-        let restore_after = active_copy.params.restore_selection_after.clone();
-        let restore_before = active_copy.params.restore_selection_before.clone();
-        app.copy_in_progress = None;
-        app.copy_progress = None;
-        app.delete_pending_rx = None;
-        app.source_panel_restore = Some((source_dir, restore_after, restore_before));
-        return;
-    }
-
-    let (name, is_dir, current_path, use_panel_backend) = {
-        let Some(c) = app.copy_in_progress.as_ref() else {
-            return;
-        };
-        let (name, is_dir) = &c.params.items[c.current_index];
-        (
-            name.clone(),
-            *is_dir,
-            source_item_display_path(&c.params, name),
-            c.params.source_location.is_some(),
-        )
-    };
-
-    {
-        let Some(c) = app.copy_in_progress.as_ref() else {
-            return;
-        };
-        app.copy_progress = Some(CopyProgress {
-            operation: c.operation,
-            current_path: current_path.clone(),
-            target_path: target_display_for_copy_progress(c.operation, &c.params),
-            current: c.current_index + 1,
-            total,
-        });
-    }
-
-    if use_panel_backend {
-        let (advance, overwrite_name, error_msg) = {
-            let Some(c) = app.copy_in_progress.as_ref() else {
-                return;
-            };
-            let Some(source_loc) = c.params.source_location.as_ref() else {
-                return;
-            };
-            apply_panel_location_copy_step(c, source_loc, &name, is_dir, &current_path)
-        };
-        let Some(c) = app.copy_in_progress.as_mut() else {
-            return;
-        };
-        if let Some(n) = overwrite_name {
-            app.copy_overwrite_dialog = Some(n);
-            app.copy_overwrite_focus = 0;
-            return;
-        }
-        if let Some(msg) = error_msg {
-            if !advance {
-                app.copy_error_dialog = Some(app_state::CopyErrorState::new(c.operation, msg));
-                app.copy_error_focus = 0;
-            }
-        }
-        if advance {
-            c.current_index += 1;
-        }
-        return;
-    }
-
-    let mut c = match app.copy_in_progress.take() {
-        Some(c) => c,
-        None => return,
-    };
-    if c.operation == Operation::Delete {
-        run_copy_step_legacy_delete(app, &mut c, &name, is_dir, &current_path);
-    } else {
-        run_copy_step_legacy_copy_move(app, &mut c, &name, is_dir);
-    }
-    app.copy_in_progress = Some(c);
-}
-
-fn perform_copy_overwrite_item_io(
-    c: &mut CopyInProgress,
-    name: &str,
-    is_dir: bool,
-) -> io::Result<()> {
-    if let Some(ref loc) = c.params.source_location {
-        let items = &[(name.to_string(), is_dir)];
-        match c.params.target_location.as_ref() {
-            Some(crate::core::location::PanelLocation::Zip {
-                archive,
-                path_inside,
-            }) => {
-                if c.operation == Operation::Move {
-                    crate::core::panel_backend::move_items_into_archive(
-                        loc,
-                        items,
-                        archive,
-                        path_inside,
-                    )
-                } else {
-                    crate::core::panel_backend::copy_items_into_archive(
-                        loc,
-                        items,
-                        archive,
-                        path_inside,
-                    )
-                }
-            }
-            _ => {
-                let target = target_fs_dir_for_copy_params(&c.params);
-                if c.operation == Operation::Move {
-                    crate::core::panel_backend::move_items_to_fs(loc, items, target)
-                } else {
-                    crate::core::panel_backend::copy_items_to_fs(loc, items, target)
-                }
-            }
-        }
-    } else if c.operation == Operation::Move {
-        crate::core::copy_ops::move_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
-    } else {
-        crate::core::copy_ops::copy_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
-    }
-}
-
-fn apply_copy_item_io_outcome(
-    app: &mut AppState,
-    progress: &CopyInProgress,
-    name: &str,
-    result: io::Result<()>,
-) -> bool {
-    match result {
-        Ok(()) => true,
-        Err(e) => {
-            if progress.ignore_all_errors {
-                true
-            } else {
-                app.copy_error_dialog = Some(app_state::CopyErrorState::new(
-                    progress.operation,
-                    format!("{} -> {}: {}", progress.params.source_dir, name, e),
-                ));
-                app.copy_error_focus = 0;
-                false
-            }
-        }
-    }
-}
-
-fn finish_copy_if_no_items_left(app: &mut AppState) {
-    let should_finish = match app.copy_in_progress.as_ref() {
-        Some(c) => c.current_index >= c.params.items.len(),
-        None => return,
-    };
-    if !should_finish {
-        return;
-    }
-    let (source_dir, restore_after, restore_before) = {
-        let Some(c) = app.copy_in_progress.as_ref() else {
-            return;
-        };
-        (
-            c.params.source_dir.clone(),
-            c.params.restore_selection_after.clone(),
-            c.params.restore_selection_before.clone(),
-        )
-    };
-    app.copy_in_progress = None;
-    app.copy_progress = None;
-    app.delete_pending_rx = None;
-    restore_source_panel_and_refresh(
-        app,
-        &source_dir,
-        restore_after.as_deref(),
-        restore_before.as_deref(),
-    );
-}
-
-fn handle_copy_overwrite_choice(
-    app: &mut AppState,
-    n: usize,
-) {
-    if n == 5 {
-        app.copy_in_progress = None;
-        app.copy_progress = None;
-        app.delete_pending_rx = None;
-        refresh_both_panels_full(app);
-    } else if let Some(mut c) = app.copy_in_progress.take() {
-        let idx = c.current_index;
-        if idx < c.params.items.len() {
-            let (name, is_dir) = c.params.items[idx].clone();
-            let mut advance = false;
-            match n {
-                1 => {
-                    let result = perform_copy_overwrite_item_io(&mut c, &name, is_dir);
-                    advance = apply_copy_item_io_outcome(app, &c, &name, result);
-                }
-                2 => {
-                    c.overwrite_all = true;
-                    let result = perform_copy_overwrite_item_io(&mut c, &name, is_dir);
-                    advance = apply_copy_item_io_outcome(app, &c, &name, result);
-                }
-                3 => advance = true,
-                4 => {
-                    c.skip_all = true;
-                    advance = true;
-                }
-                _ => {}
-            }
-            if advance {
-                c.current_index += 1;
-            }
-        }
-        app.copy_in_progress = Some(c);
-    }
-    app.copy_overwrite_dialog = None;
-    finish_copy_if_no_items_left(app);
-}
-
-fn apply_persisted_setting_change(
-    app: &mut AppState,
-    change: SettingChange,
-) {
-    match change {
-        SettingChange::AutosaveToggle => {
-            app.persisted_settings.autosave = !app.persisted_settings.autosave;
-        }
-        SettingChange::SyncPanelToShellCwdToggle => {
-            app.persisted_settings.sync_panel_to_shell_cwd =
-                !app.persisted_settings.sync_panel_to_shell_cwd;
-        }
-        SettingChange::AutoReopenPanelsAfterCommandToggle => {
-            app.persisted_settings.auto_reopen_panels_after_command =
-                !app.persisted_settings.auto_reopen_panels_after_command;
-        }
-        SettingChange::AutoReopenPanelsAfterCommandDelayCycle => {
-            let cur = app
-                .persisted_settings
-                .auto_reopen_panels_after_command_delay_secs
-                .max(1);
-            let max = 30u64;
-            let next = if cur >= max { 1 } else { cur + 1 };
-            app.persisted_settings
-                .auto_reopen_panels_after_command_delay_secs = next;
-        }
-        SettingChange::LeftViewCycle => cycle_view_one_two(&mut app.persisted_settings.left_view),
-        SettingChange::RightViewCycle => cycle_view_one_two(&mut app.persisted_settings.right_view),
-        SettingChange::LeftShowHiddenToggle => {
-            app.persisted_settings.left_show_hidden = !app.persisted_settings.left_show_hidden;
-        }
-        SettingChange::RightShowHiddenToggle => {
-            app.persisted_settings.right_show_hidden = !app.persisted_settings.right_show_hidden;
-        }
-        SettingChange::LeftSortCycle => {
-            app.persisted_settings.left_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.left_sort, true);
-        }
-        SettingChange::RightSortCycle => {
-            app.persisted_settings.right_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.right_sort, true);
-        }
-        SettingChange::LeftSortCyclePrev => {
-            app.persisted_settings.left_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.left_sort, false);
-        }
-        SettingChange::RightSortCyclePrev => {
-            app.persisted_settings.right_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.right_sort, false);
-        }
-        SettingChange::LeftDirsFirstToggle => {
-            app.persisted_settings.left_dirs_first = !app.persisted_settings.left_dirs_first;
-        }
-        SettingChange::RightDirsFirstToggle => {
-            app.persisted_settings.right_dirs_first = !app.persisted_settings.right_dirs_first;
-        }
-    }
-}
-
-fn setting_change_skips_panel_resync(change: SettingChange) -> bool {
-    matches!(
-        change,
-        SettingChange::AutosaveToggle
-            | SettingChange::SyncPanelToShellCwdToggle
-            | SettingChange::AutoReopenPanelsAfterCommandToggle
-            | SettingChange::AutoReopenPanelsAfterCommandDelayCycle
-    )
-}
-
-fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
-    let panel_height = util::compute_panel_height();
-    if app.active_panel() == 0 {
-        let new_show = !app.left_panel().get_show_hidden();
-        app.left_panel_mut().set_show_hidden(new_show);
-        app.persisted_settings.left_show_hidden = new_show;
-        app.show_hidden_files = new_show;
-        let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
-        log_if_err(
-            "Save settings",
-            crate::core::settings::save(&app.persisted_settings),
-        );
-        log_if_err(
-            "Refresh panel",
-            app.left_panel_mut().refresh_files_restore_selection(
-                left_name.as_deref(),
-                None,
-                Some(panel_height),
-            ),
-        );
-    } else {
-        let new_show = !app.right_panel().get_show_hidden();
-        app.right_panel_mut().set_show_hidden(new_show);
-        app.persisted_settings.right_show_hidden = new_show;
-        app.show_hidden_files = new_show;
-        let right_name = app
-            .right_panel()
-            .get_selected_file()
-            .map(|f| f.name.clone());
-        log_if_err(
-            "Save settings",
-            crate::core::settings::save(&app.persisted_settings),
-        );
-        log_if_err(
-            "Refresh panel",
-            app.right_panel_mut().refresh_files_restore_selection(
-                right_name.as_deref(),
-                None,
-                Some(panel_height),
-            ),
-        );
-    }
-}
+use util::{log_if_err, reset_terminal_character_set_and_modes};
 
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
@@ -904,7 +73,7 @@ fn main() -> Result<(), io::Error> {
         .clone()
         .unwrap_or_else(|| home_str.clone());
     let mut app = AppState::new_with_initial(left_cwd, right_cwd, &home_str, app_settings)?;
-    let mut subshell: Option<subshell::Subshell> = None;
+    let mut subshell: Option<Subshell> = None;
 
     // Process any events from EnterAlternateScreen (never discard keys).
     if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
@@ -941,10 +110,33 @@ fn main() -> Result<(), io::Error> {
     let mut cmd_cursor_blink_last_toggle = std::time::Instant::now();
 
     loop {
-        terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+        // Auto-reopen countdown finished: leave main buffer (shell output) and restore panel TUI.
+        let mut drew_this_frame = false;
+        if let Some(cd) = app.post_command_countdown.as_ref() {
+            if cd.overlay_on_main_buffer && std::time::Instant::now() >= cd.reveal_at {
+                app.post_command_countdown = None;
+                execute!(
+                    terminal.backend_mut(),
+                    EnterAlternateScreen,
+                    crossterm::cursor::Hide,
+                    crossterm::event::EnableMouseCapture
+                )?;
+                terminal.clear()?;
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                drew_this_frame = true;
+            }
+        }
+
+        if !drew_this_frame {
+            if app.post_command_countdown_on_main_buffer() {
+                post_command_overlay::paint_main_buffer_countdown(&app)?;
+            } else {
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            }
+        }
 
         let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
-            use crate::app_state::FindDialogPhase;
+            use crate::app::state::FindDialogPhase;
             d.phase == FindDialogPhase::Parameter && d.focus <= 2
         });
         let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
@@ -962,15 +154,17 @@ fn main() -> Result<(), io::Error> {
             || archive_input_focused
             || new_file_input_focused
             || rename_name_focused;
-        let show_cursor = app.editor_screen.is_some()
-            || mkdir_input_focused
-            || archive_input_focused
-            || new_file_input_focused
-            || rename_name_focused
-            || (app.focus == Focus::CommandLine)
-            || find_input_focused;
+        let show_cursor = !app.post_command_countdown_active()
+            && (app.editor_screen.is_some()
+                || mkdir_input_focused
+                || archive_input_focused
+                || new_file_input_focused
+                || rename_name_focused
+                || (app.focus == Focus::CommandLine)
+                || find_input_focused);
         let command_line_cursor_active = app.focus == Focus::CommandLine
             && app.editor_screen.is_none()
+            && !app.post_command_countdown_active()
             && app.mkdir_dialog.is_none()
             && app.archive_dialog.is_none()
             && app.new_file_dialog.is_none();
@@ -1164,7 +358,7 @@ fn main() -> Result<(), io::Error> {
             AppAction::ViewerClose => {
                 close_viewer(&mut app);
                 if app.find_dialog.is_some() {
-                    app.focus = crate::app_state::Focus::FindDialog;
+                    app.focus = crate::app::state::Focus::FindDialog;
                 }
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
             }
@@ -1175,7 +369,7 @@ fn main() -> Result<(), io::Error> {
             AppAction::EditorClose => {
                 close(&mut app);
                 if app.find_dialog.is_some() {
-                    app.focus = crate::app_state::Focus::FindDialog;
+                    app.focus = crate::app::state::Focus::FindDialog;
                 }
             }
             AppAction::EditorConfirmChoice(choice) => apply_confirm_choice(&mut app, choice),
@@ -1231,11 +425,11 @@ fn main() -> Result<(), io::Error> {
                     let rows = find_dialog::build_display_rows(&d.results);
                     if let Some(row) = rows.get(d.selected_index) {
                         match row {
-                            find_dialog::FindDisplayRow::Folder(path) => {
+                            FindDisplayRow::Folder(path) => {
                                 let loc = crate::core::location::PanelLocation::fs(path);
                                 if app.active_panel_mut().navigate_to_location(loc).is_ok() {}
                             }
-                            find_dialog::FindDisplayRow::File(r) => {
+                            FindDisplayRow::File(r) => {
                                 if let (Some(parent), Some(name)) = (
                                     r.path.parent(),
                                     r.path.file_name().map(|n| n.to_string_lossy().to_string()),
@@ -1262,9 +456,9 @@ fn main() -> Result<(), io::Error> {
             AppAction::FindView => {
                 if let Some(ref d) = app.find_dialog {
                     let rows = find_dialog::build_display_rows(&d.results);
-                    if let Some(find_dialog::FindDisplayRow::File(r)) = rows.get(d.selected_index) {
+                    if let Some(FindDisplayRow::File(r)) = rows.get(d.selected_index) {
                         if r.path.is_file() {
-                            viewer::open_viewer_path(&mut app, r.path.clone(), r.line);
+                            open_viewer_path(&mut app, r.path.clone(), r.line);
                         }
                     }
                 }
@@ -1273,9 +467,9 @@ fn main() -> Result<(), io::Error> {
             AppAction::FindEdit => {
                 if let Some(ref d) = app.find_dialog {
                     let rows = find_dialog::build_display_rows(&d.results);
-                    if let Some(find_dialog::FindDisplayRow::File(r)) = rows.get(d.selected_index) {
+                    if let Some(FindDisplayRow::File(r)) = rows.get(d.selected_index) {
                         if r.path.is_file() {
-                            editor::open_editor_path(&mut app, r.path.clone());
+                            open_editor_path(&mut app, r.path.clone());
                         }
                     }
                 }
@@ -1322,10 +516,10 @@ fn main() -> Result<(), io::Error> {
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
                 let _ = std::io::stdout().flush();
-                let prepared = subshell::Subshell::prepare_for_relay();
+                let prepared = Subshell::prepare_for_relay();
                 {
                     let mut stdout = std::io::stdout().lock();
-                    let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
+                    let _ = Subshell::write_relay_reset_sequence(&mut stdout);
                     let _ = stdout.flush();
                 }
                 let shell_cwd =
@@ -1383,47 +577,65 @@ fn main() -> Result<(), io::Error> {
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
                 let _ = std::io::stdout().flush();
-                let prepared = subshell::Subshell::prepare_for_relay();
+                let prepared = Subshell::prepare_for_relay();
                 {
                     let mut stdout = std::io::stdout().lock();
-                    let _ = subshell::Subshell::write_relay_reset_sequence(&mut stdout);
+                    let _ = Subshell::write_relay_reset_sequence(&mut stdout);
                     let _ = stdout.flush();
                 }
-                let shell_cwd =
+                let (shell_cwd, relay_exit) =
                     if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
-                        let relay_outcome = sub.run_command_then_relay(
+                        let relay_exit = sub.run_command_then_relay(
                             &cwd,
                             &cmd,
                             Some(prepared),
                             auto_exit_after_idle,
-                        );
-                        let cwd_opt = sub.get_cwd();
-                        let _ = relay_outcome;
-                        cwd_opt
+                        )?;
+                        (sub.get_cwd(), relay_exit)
                     } else {
                         eprintln!("Subshell error");
-                        None
+                        (None, RelayExit::Manual)
                     };
                 let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
-                // 3) Return: enter alternate, drain, focus panel, clear + draw (panels visible again).
-                execute!(
-                    terminal.backend_mut(),
-                    EnterAlternateScreen,
-                    crossterm::cursor::Hide,
-                    crossterm::event::EnableMouseCapture
-                )?;
-                if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
-                    break;
+                match relay_exit {
+                    RelayExit::Manual => {
+                        execute!(
+                            terminal.backend_mut(),
+                            EnterAlternateScreen,
+                            crossterm::cursor::Hide,
+                            crossterm::event::EnableMouseCapture
+                        )?;
+                        if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                            break;
+                        }
+                        app.focus_panel();
+                        maybe_sync_panel_to_shell_cwd(&mut app, shell_cwd);
+                        terminal.clear()?;
+                        refresh_both_panels_restore_selection(
+                            &mut app,
+                            left_selected.as_deref(),
+                            right_selected.as_deref(),
+                        );
+                        terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                    }
+                    RelayExit::AutoReopenDelay(d) => {
+                        if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                            break;
+                        }
+                        app.focus_panel();
+                        maybe_sync_panel_to_shell_cwd(&mut app, shell_cwd);
+                        refresh_both_panels_restore_selection(
+                            &mut app,
+                            left_selected.as_deref(),
+                            right_selected.as_deref(),
+                        );
+                        app.post_command_countdown = Some(PostCommandCountdown {
+                            reveal_at: std::time::Instant::now() + d,
+                            overlay_on_main_buffer: true,
+                        });
+                        post_command_overlay::paint_main_buffer_countdown(&app)?;
+                    }
                 }
-                app.focus_panel();
-                maybe_sync_panel_to_shell_cwd(&mut app, shell_cwd);
-                terminal.clear()?;
-                refresh_both_panels_restore_selection(
-                    &mut app,
-                    left_selected.as_deref(),
-                    right_selected.as_deref(),
-                );
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
                     break;
                 }

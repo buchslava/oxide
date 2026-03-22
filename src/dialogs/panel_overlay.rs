@@ -10,9 +10,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
-use crate::events::{AppAction, SettingChange};
-use crate::settings_dialog::draw_panel_section;
+use crate::app::state::AppState;
+use crate::app::events::{AppAction, SettingChange};
+use crate::dialogs::settings_dialog::draw_panel_section;
 
 const OVERLAY_MIN_W: u16 = 28;
 const OVERLAY_MIN_H: u16 = 18;

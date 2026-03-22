@@ -12,15 +12,15 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
-use crate::clipboard;
+use crate::app::state::AppState;
+use crate::browser::clipboard;
 use crate::core::file_ops::FileOperations;
-use crate::events::AppAction;
-use crate::panel::PanelOperations;
-use crate::styles::{
+use crate::app::events::AppAction;
+use crate::browser::panel::PanelOperations;
+use crate::ui::styles::{
     DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG,
 };
-use crate::text_input::{self, TextInputState};
+use crate::ui::text_input::{self, TextInputState};
 
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

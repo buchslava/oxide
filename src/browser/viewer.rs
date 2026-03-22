@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 
 /// Viewer is either loading file in background (Esc still closes) or ready with content.
 pub enum ViewerState {
@@ -53,8 +53,8 @@ pub enum ViewerMode {
     Hex,
 }
 use crate::core::panel_backend;
-use crate::events::AppAction;
-use crate::panel::PanelOperations;
+use crate::app::events::AppAction;
+use crate::browser::panel::PanelOperations;
 
 /// Default bytes per line when width unknown; also minimum.
 const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;

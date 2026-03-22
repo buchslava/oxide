@@ -4,10 +4,10 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 use crate::core::panel_backend;
-use crate::events::AppAction;
-use crate::text_input::{self, TextInputState};
+use crate::app::events::AppAction;
+use crate::ui::text_input::{self, TextInputState};
 
 /// State for F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name.
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
@@ -117,5 +117,5 @@ pub fn draw(
 
 /// Return (create_button_rect, cancel_button_rect) for mkdir dialog hit-testing.
 pub fn mkdir_button_rects(area: Rect) -> Option<(Rect, Rect)> {
-    Some(crate::dialog_layout::single_input_dialog_button_rects(area))
+    Some(crate::ui::dialog_layout::single_input_dialog_button_rects(area))
 }

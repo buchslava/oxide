@@ -1,14 +1,13 @@
-use crate::app_state::{AppState, Focus, Operation};
+use crate::app::state::{AppState, Focus, Operation};
 use crate::core::disk_space::disk_space_summary;
 use crate::core::file_ops::FileInfo;
 use crate::core::panel_backend;
 use crate::core::text_format::{format_byte_size, truncate_str, TruncateMode};
-use crate::dialog_layout::{self, DEFAULT_PAD_H};
-use crate::editor;
-use crate::panel::{Panel, PanelOperations, ViewMode};
-use crate::styles;
-use crate::styles::{DIALOG_ACCENT, DIALOG_BG, DIALOG_FOCUS};
-use crate::viewer;
+use crate::browser::editor;
+use crate::browser::panel::{Panel, PanelOperations, ViewMode};
+use crate::browser::viewer;
+use crate::ui::dialog_layout::{self, DEFAULT_PAD_H};
+use crate::ui::styles::{self, DIALOG_ACCENT, DIALOG_BG, DIALOG_FOCUS};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -130,31 +129,31 @@ impl Renderer {
             Self::draw_operation_confirm_dialog(f, app);
         }
         if app.mkdir_dialog.is_some() {
-            crate::mkdir_dialog::draw(f, app);
+            crate::dialogs::mkdir_dialog::draw(f, app);
         }
         if app.archive_dialog.is_some() {
-            crate::archive_dialog::draw(f, app);
+            crate::dialogs::archive_dialog::draw(f, app);
         }
         if app.new_file_dialog.is_some() {
-            crate::new_file_dialog::draw(f, app);
+            crate::dialogs::new_file_dialog::draw(f, app);
         }
         if app.new_file_error.is_some() {
             Self::draw_new_file_error_dialog(f, app);
         }
         if app.rename_attr_dialog.is_some() {
-            crate::rename_attr::draw(f, app);
+            crate::dialogs::rename_attr::draw(f, app);
         }
         if app.help_dialog {
-            crate::help_dialog::draw(f, app);
+            crate::dialogs::help_dialog::draw(f, app);
         }
         if app.settings_dialog.is_some() {
-            crate::settings_dialog::draw(f, app);
+            crate::dialogs::settings_dialog::draw(f, app);
         }
         if app.find_dialog.is_some() {
-            crate::find_dialog::draw(f, app);
+            crate::dialogs::find_dialog::draw(f, app);
         }
         if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
-            crate::panel_overlay::draw(f, app);
+            crate::dialogs::panel_overlay::draw(f, app);
         }
     }
 
@@ -363,7 +362,7 @@ impl Renderer {
     fn draw_copy_error_dialog(
         f: &mut Frame,
         app: &AppState,
-        err: &crate::app_state::CopyErrorState,
+        err: &crate::app::state::CopyErrorState,
     ) {
         let area = f.area();
         let rect = dialog_layout::centered_dialog_rect(area, 52, 10);
@@ -508,7 +507,7 @@ impl Renderer {
     /// MC-style copy progress overlay: navy blue background, wider, centered content, small margins. ESC: Cancel.
     fn draw_copy_progress(
         f: &mut Frame,
-        progress: &crate::app_state::CopyProgress,
+        progress: &crate::app::state::CopyProgress,
     ) {
         let area = f.area();
         let inner_width = 76usize;
@@ -659,7 +658,7 @@ impl Renderer {
     /// Archive progress overlay (Ctrl+A): same style as copy progress — Source, Target, gauge. ESC: Cancel.
     fn draw_archive_progress(
         f: &mut Frame,
-        progress: &crate::app_state::ArchiveProgress,
+        progress: &crate::app::state::ArchiveProgress,
     ) {
         let area = f.area();
         let inner_width = 76usize;
@@ -1051,7 +1050,7 @@ impl Renderer {
             right_total_w
         };
 
-        let size_info_line = crate::size_info_dialog::format_bottom_bar_line(app);
+        let size_info_line = crate::dialogs::size_info_dialog::format_bottom_bar_line(app);
         let active = app.active_panel();
 
         let left_text = if active == 0 {

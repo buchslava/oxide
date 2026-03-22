@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 
 /// Message from background size-calculation thread.
 #[derive(Debug, Clone)]
@@ -46,8 +46,8 @@ pub enum SizeInfoDialogState {
 }
 use crate::core::file_ops::FileOperations;
 use crate::core::text_format::format_byte_size;
-use crate::events::AppAction;
-use crate::panel::PanelOperations;
+use crate::app::events::AppAction;
+use crate::browser::panel::PanelOperations;
 
 /// Open size info (start background calculation). Ctrl+G. Result shown in panel bottom bar.
 pub fn open(app: &mut AppState) {

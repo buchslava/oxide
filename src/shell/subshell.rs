@@ -33,6 +33,15 @@ pub struct PreparedRelay(Option<libc::termios>);
 #[cfg(not(unix))]
 pub struct PreparedRelay;
 
+/// How a PTY relay session ended (used to show a countdown before restoring the panel UI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayExit {
+    /// User pressed Ctrl+O, stdin closed, or auto-reopen was off / not applicable.
+    Manual,
+    /// Command finished (or Ctrl+C with auto-reopen); caller shows a delay toast then restores panels.
+    AutoReopenDelay(std::time::Duration),
+}
+
 /// Persistent subshell: command line runs here, Ctrl+O toggles full-screen relay.
 #[cfg(unix)]
 pub struct Subshell {
@@ -479,7 +488,7 @@ impl Subshell {
         show_prompt_first: bool,
         prepared: Option<PreparedRelay>,
         auto_exit: Option<AutoExitConfig>,
-    ) -> io::Result<()> {
+    ) -> io::Result<RelayExit> {
         use nix::errno::Errno;
         use nix::poll::{poll, PollFd, PollFlags};
         use nix::unistd;
@@ -527,7 +536,7 @@ impl Subshell {
             .unwrap_or(0);
         let mut marker_pending: Vec<u8> = Vec::with_capacity(max_auto_token_len);
 
-        let relay_result = (|| -> io::Result<()> {
+        let relay_result = (|| -> io::Result<RelayExit> {
             loop {
                 let mut fds = [
                     PollFd::new(unsafe { BorrowedFd::borrow_raw(0) }, PollFlags::POLLIN),
@@ -553,15 +562,13 @@ impl Subshell {
                                 auto_exit.is_some() && stdin_buf[..n].iter().any(|b| *b == 0x03);
                             if self.relay_stdin_chunk(&mut stdin_carry, &stdin_buf[..n])? {
                                 let _ = Self::drain_pty_output(self.master_fd);
-                                return Ok(());
+                                return Ok(RelayExit::Manual);
                             }
                             if saw_ctrl_c {
                                 if let Some(cfg) = auto_exit.as_ref() {
-                                    // "Interrupted" flow: user pressed Ctrl+C while command relay is active.
-                                    // Wait configured delay, drain shell output/prompt, then return to panels.
-                                    std::thread::sleep(cfg.delay);
+                                    // Interrupted: delay is shown as a TUI countdown after relay ends.
                                     let _ = Self::drain_pty_output(self.master_fd);
-                                    return Ok(());
+                                    return Ok(RelayExit::AutoReopenDelay(cfg.delay));
                                 }
                             }
                         }
@@ -583,8 +590,7 @@ impl Subshell {
                                     &cfg.marker,
                                     &cfg.helper_echo,
                                 )? {
-                                    std::thread::sleep(cfg.delay);
-                                    return Ok(());
+                                    return Ok(RelayExit::AutoReopenDelay(cfg.delay));
                                 }
                             } else {
                                 Self::write_all_fd(1, &pty_buf[..n])?;
@@ -599,7 +605,7 @@ impl Subshell {
                     Self::flush_pty_pending_without_marker(&mut marker_pending, &cfg.helper_echo)?;
                 }
             }
-            Ok(())
+            Ok(RelayExit::Manual)
         })();
         Self::restore_real_tty(real_tty_saved);
         relay_result
@@ -652,7 +658,8 @@ impl Subshell {
             Self::write_all_fd(self.master_fd, &buf)?;
             let _ = Self::drain_pty_output(self.master_fd);
         }
-        self.run_relay_until_ctrl_o(false, prepared, None)
+        let _ = self.run_relay_until_ctrl_o(false, prepared, None)?;
+        Ok(())
     }
 
     /// Run a command in the subshell then relay until Ctrl+O (MC: invoke_subshell with command).
@@ -663,7 +670,7 @@ impl Subshell {
         cmd: &str,
         prepared: Option<PreparedRelay>,
         auto_exit_after_idle: Option<std::time::Duration>,
-    ) -> io::Result<()> {
+    ) -> io::Result<RelayExit> {
         let panel_canonical = Path::new(cwd).canonicalize().ok();
         let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
         let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
@@ -926,8 +933,8 @@ impl Subshell {
         _show_prompt_first: bool,
         _prepared: Option<PreparedRelay>,
         _auto_exit_after_idle: Option<std::time::Duration>,
-    ) -> io::Result<()> {
-        Ok(())
+    ) -> io::Result<RelayExit> {
+        Ok(RelayExit::Manual)
     }
 
     pub fn run_cd_then_relay(
@@ -944,7 +951,7 @@ impl Subshell {
         _cmd: &str,
         _prepared: Option<PreparedRelay>,
         _auto_exit_after_idle: Option<std::time::Duration>,
-    ) -> io::Result<()> {
-        Ok(())
+    ) -> io::Result<RelayExit> {
+        Ok(RelayExit::Manual)
     }
 }

@@ -9,8 +9,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
-use crate::events::AppAction;
+use crate::app::state::AppState;
+use crate::app::events::AppAction;
 
 /// Open the Help dialog.
 pub fn open(app: &mut AppState) {

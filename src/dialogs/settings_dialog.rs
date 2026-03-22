@@ -9,9 +9,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 use crate::core::file_ops::SORT_MODES;
-use crate::events::{AppAction, SettingChange};
+use crate::app::events::{AppAction, SettingChange};
 
 /// State for F9 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
 #[derive(Debug, Clone)]

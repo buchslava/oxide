@@ -1,9 +1,9 @@
-use crate::app_state::{AppState, CopyParams, Focus, RenameAttrDialogState, RenameAttrField};
-pub use crate::editor::EditorConfirmChoice;
-use crate::editor::{handle_editor_key, handle_editor_mouse};
-use crate::panel::PanelOperations;
+use crate::app::state::{AppState, CopyParams, Focus, RenameAttrDialogState, RenameAttrField};
+pub use crate::browser::editor::EditorConfirmChoice;
+use crate::browser::editor::{handle_editor_key, handle_editor_mouse};
+use crate::browser::panel::PanelOperations;
 use crate::ui::Renderer;
-use crate::viewer::handle_viewer_key;
+use crate::browser::viewer::handle_viewer_key;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     terminal::size,
@@ -165,7 +165,22 @@ impl EventHandler {
         Self::drain_events_nonblocking(app)
     }
 
+    /// During post-command countdown: advance time without dispatching keys/mouse (panels not visible yet).
+    fn handle_events_post_command_countdown() -> io::Result<AppAction> {
+        while event::poll(std::time::Duration::ZERO)? {
+            let _ = event::read()?;
+        }
+        if !event::poll(std::time::Duration::from_millis(100))? {
+            return Ok(AppAction::Continue);
+        }
+        let _ = event::read()?;
+        Ok(AppAction::Continue)
+    }
+
     pub fn handle_events(app: &mut AppState) -> io::Result<AppAction> {
+        if app.post_command_countdown_active() {
+            return Self::handle_events_post_command_countdown();
+        }
         // Process all queued events first (no block). Handle every Key/Mouse; drain non-keys.
         // This ensures rapid keypresses when switching panels (e.g. Tab then Down) are all applied.
         if let Some(action) = Self::drain_events_nonblocking(app)? {
@@ -202,7 +217,7 @@ impl EventHandler {
                 }
                 // When editor "Save changes?" dialog is open: 1/2/3 direct, Tab/↑↓ cycle, Enter confirms, Esc=Cancel.
                 if app.editor_confirm_pending {
-                    use crate::editor::EditorConfirmChoice;
+                    use crate::browser::editor::EditorConfirmChoice;
                     let choice = match key.code {
                         KeyCode::Char('1') => Some(EditorConfirmChoice::Save),
                         KeyCode::Char('2') => Some(EditorConfirmChoice::Discard),
@@ -241,7 +256,7 @@ impl EventHandler {
                 }
                 // When Find file dialog is open it has focus (unless viewer/editor is on top). Keys go to Find, not panel.
                 if app.find_dialog.is_some() {
-                    let action = crate::find_dialog::handle_key(app, key.code, key.modifiers)
+                    let action = crate::dialogs::find_dialog::handle_key(app, key.code, key.modifiers)
                         .unwrap_or(AppAction::Continue);
                     return Ok(Some(action));
                 }
@@ -367,7 +382,7 @@ impl EventHandler {
                 // F7 "Create directory" dialog: handle text input and Enter/ESC.
                 if app.mkdir_dialog.is_some() {
                     if let Some(action) =
-                        crate::mkdir_dialog::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::mkdir_dialog::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -375,7 +390,7 @@ impl EventHandler {
                 // Ctrl+A "Archive" dialog: handle text input and Enter/ESC.
                 if app.archive_dialog.is_some() {
                     if let Some(action) =
-                        crate::archive_dialog::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::archive_dialog::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -383,7 +398,7 @@ impl EventHandler {
                 // Ctrl+N "New file" dialog: handle text input and Enter/ESC.
                 if app.new_file_dialog.is_some() {
                     if let Some(action) =
-                        crate::new_file_dialog::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::new_file_dialog::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -393,21 +408,21 @@ impl EventHandler {
                     || app.right_panel_settings_overlay.is_some()
                 {
                     if let Some(action) =
-                        crate::panel_overlay::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::panel_overlay::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
                 }
                 // F1 Help dialog: Esc closes.
                 if app.help_dialog {
-                    if let Some(action) = crate::help_dialog::handle_key(key.code, key.modifiers) {
+                    if let Some(action) = crate::dialogs::help_dialog::handle_key(key.code, key.modifiers) {
                         return Ok(Some(action));
                     }
                 }
                 // F9 Settings dialog: Esc closes.
                 if app.settings_dialog.is_some() {
                     if let Some(action) =
-                        crate::settings_dialog::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::settings_dialog::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -415,7 +430,7 @@ impl EventHandler {
                 // Size info dialog: Esc closes.
                 if app.size_info_dialog.is_some() {
                     if let Some(action) =
-                        crate::size_info_dialog::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::size_info_dialog::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -427,7 +442,7 @@ impl EventHandler {
                         return Ok(Some(AppAction::Continue));
                     }
                     if let Some(action) =
-                        crate::rename_attr::handle_key(app, key.code, key.modifiers)
+                        crate::dialogs::rename_attr::handle_key(app, key.code, key.modifiers)
                     {
                         return Ok(Some(action));
                     }
@@ -574,7 +589,7 @@ impl EventHandler {
                             .get_names_to_copy_with_restore_neighbors();
                         if !items.is_empty() {
                             app.operation_confirm_pending = Some((
-                                crate::app_state::Operation::Delete,
+                                crate::app::state::Operation::Delete,
                                 CopyParams {
                                     source_dir: app.get_current_dir().to_string(),
                                     target_dir: String::new(),
@@ -607,7 +622,7 @@ impl EventHandler {
             // Bracketed paste (e.g. Cmd+V on macOS): editor first if open, else focused dialog/command line.
             Event::Paste(data) => {
                 if app.editor_screen.is_some() {
-                    if let Some(action) = crate::editor::paste_text_as_is(app, &data) {
+                    if let Some(action) = crate::browser::editor::paste_text_as_is(app, &data) {
                         return Ok(Some(action));
                     }
                 }
@@ -695,7 +710,7 @@ impl EventHandler {
                     }
                     if c == 'c' {
                         if !app.command_line.is_empty() {
-                            crate::clipboard::set(&app.command_line);
+                            crate::browser::clipboard::set(&app.command_line);
                         } else {
                             app.command_line_clear();
                         }
@@ -705,7 +720,7 @@ impl EventHandler {
                         return AppAction::ToggleShowHidden;
                     }
                     if c == 'v' {
-                        if let Some(s) = crate::clipboard::get() {
+                        if let Some(s) = crate::browser::clipboard::get() {
                             app.command_line_insert_str(&s);
                         }
                         return AppAction::Continue;
@@ -875,7 +890,7 @@ impl EventHandler {
         if app.mkdir_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                 if let Some((create_rect, cancel_rect)) =
-                    crate::mkdir_dialog::mkdir_button_rects(area)
+                    crate::dialogs::mkdir_dialog::mkdir_button_rects(area)
                 {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
@@ -900,7 +915,7 @@ impl EventHandler {
         if app.archive_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                 if let Some((create_rect, cancel_rect)) =
-                    crate::archive_dialog::archive_button_rects(area)
+                    crate::dialogs::archive_dialog::archive_button_rects(area)
                 {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
@@ -941,7 +956,7 @@ impl EventHandler {
         if app.new_file_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                 if let Some((create_rect, cancel_rect)) =
-                    crate::new_file_dialog::new_file_button_rects(area)
+                    crate::dialogs::new_file_dialog::new_file_button_rects(area)
                 {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
@@ -965,7 +980,7 @@ impl EventHandler {
         // Editor "Save changes?" dialog: handle clicks on option rows (1=Save, 2=Discard, 3=Cancel).
         if app.editor_confirm_pending {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some(rects) = crate::editor::editor_confirm_option_rects(area) {
+                if let Some(rects) = crate::browser::editor::editor_confirm_option_rects(area) {
                     let (col, row) = (mouse_event.column, mouse_event.row);
                     for (opt_rect, choice) in rects {
                         if col >= opt_rect.x
@@ -1006,7 +1021,7 @@ impl EventHandler {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                 let show_paths = matches!(
                     op,
-                    crate::app_state::Operation::Copy | crate::app_state::Operation::Move
+                    crate::app::state::Operation::Copy | crate::app::state::Operation::Move
                 );
                 if let Some((_dialog_rect, yes_rect, no_rect)) =
                     Renderer::operation_confirm_button_rects(area, show_paths)
@@ -1188,7 +1203,7 @@ impl EventHandler {
                             restore_selection_before: restore_before,
                         };
                         app.operation_confirm_pending =
-                            Some((crate::app_state::Operation::Copy, params));
+                            Some((crate::app::state::Operation::Copy, params));
                         app.operation_confirm_focus_yes = true;
                         Some(AppAction::Continue)
                     } else {
@@ -1226,7 +1241,7 @@ impl EventHandler {
                             restore_selection_before: restore_before,
                         };
                         app.operation_confirm_pending =
-                            Some((crate::app_state::Operation::Move, params));
+                            Some((crate::app::state::Operation::Move, params));
                         app.operation_confirm_focus_yes = true;
                         Some(AppAction::Continue)
                     } else {
@@ -1251,7 +1266,7 @@ impl EventHandler {
                     .get_names_to_copy_with_restore_neighbors();
                 if !names.is_empty() {
                     app.operation_confirm_pending = Some((
-                        crate::app_state::Operation::Delete,
+                        crate::app::state::Operation::Delete,
                         CopyParams {
                             source_dir: app.get_current_dir().to_string(),
                             target_dir: String::new(),
@@ -1304,8 +1319,8 @@ impl EventHandler {
             let scroll = panel.get_scroll_offset();
             let files_len = panel.get_files().len();
             let file_index = match panel.get_view_mode() {
-                crate::panel::ViewMode::SingleColumn => scroll + local_row,
-                crate::panel::ViewMode::DoubleColumn => {
+                crate::browser::panel::ViewMode::SingleColumn => scroll + local_row,
+                crate::browser::panel::ViewMode::DoubleColumn => {
                     let in_right_col = col >= inner_x + left_w / 2;
                     if in_right_col {
                         scroll + panel_height + local_row
@@ -1327,8 +1342,8 @@ impl EventHandler {
             let right_panel_x = inner_x + left_w + 1;
             let col_in_right = col - right_panel_x;
             let file_index = match panel.get_view_mode() {
-                crate::panel::ViewMode::SingleColumn => scroll + local_row,
-                crate::panel::ViewMode::DoubleColumn => {
+                crate::browser::panel::ViewMode::SingleColumn => scroll + local_row,
+                crate::browser::panel::ViewMode::DoubleColumn => {
                     let in_right_col = col_in_right >= right_w / 2;
                     if in_right_col {
                         scroll + panel_height + local_row

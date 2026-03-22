@@ -18,12 +18,10 @@ pub struct PersistedSettings {
     /// When true (default), after returning from shell (Ctrl+O) sync active panel to shell's cwd. When false, use old flow (panel stays as before).
     #[serde(default = "default_true")]
     pub sync_panel_to_shell_cwd: bool,
-    /// When true, after running a command/executable from panels, automatically return to panels
-    /// after the PTY is idle for `auto_reopen_panels_after_command_delay_secs` seconds.
+    /// When true, after running a command from panels, show a short top-line countdown over shell output, then restore panels.
     #[serde(default = "default_true")]
     pub auto_reopen_panels_after_command: bool,
-    /// Idle timeout (seconds) used by `auto_reopen_panels_after_command`.
-    /// This is an "after last output" delay: the PTY relay returns once no PTY output arrives for this long.
+    /// Seconds after the command finishes before returning to the panel TUI (countdown on the main terminal buffer).
     #[serde(default = "default_auto_reopen_panels_delay_secs")]
     pub auto_reopen_panels_after_command_delay_secs: u64,
     /// Saved current directory for left panel. None or invalid => use home on start.

@@ -1,7 +1,9 @@
 use crate::core::settings::PersistedSettings;
-use crate::panel::{Panel, PanelOperations, ViewMode};
+use crate::browser::panel::{Panel, PanelOperations, ViewMode};
+use crate::ui::toast::TimedToast;
 use ratatui::layout::Rect;
 use std::io;
+use std::time::Duration;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -11,6 +13,14 @@ pub use crate::core::copy_state::{
 };
 use crate::core::location::PanelLocation;
 use std::path::PathBuf;
+
+/// After a command with auto-reopen: countdown before restoring the panel TUI.
+#[derive(Debug)]
+pub struct PostCommandCountdown {
+    pub reveal_at: std::time::Instant,
+    /// When true, shell output is still on the main buffer; only a small overlay is drawn.
+    pub overlay_on_main_buffer: bool,
+}
 
 fn view_mode_from_settings_flag(view: &str) -> ViewMode {
     if view == "one" {
@@ -71,6 +81,10 @@ pub struct AppState {
     pub editor_confirm_pending: bool,
     /// Editor confirm dialog: focused option index 0=Save, 1=Discard, 2=Cancel.
     pub editor_confirm_focus: usize,
+    /// Short-lived ratatui toast (e.g. editor save); see [`crate::ui::toast::TimedToast`].
+    pub timed_toast: Option<TimedToast>,
+    /// Command finished with auto-reopen: countdown before restoring panel UI.
+    pub post_command_countdown: Option<PostCommandCountdown>,
     /// When Some, the file viewer is open (F3). Loading = reading file in background; Ready = content available. None = panels or editor view.
     pub viewer_screen: Option<ViewerState>,
     /// When Some, F7 "Create directory" dialog is open (text field for new folder name).
@@ -123,19 +137,19 @@ pub struct AppState {
     pub persisted_settings: PersistedSettings,
 }
 
-pub use crate::panel_overlay_state::PanelSettingsOverlayState;
-pub use crate::size_info_dialog::{SizeInfoDialogState, SizeInfoProgress};
+pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
+pub use crate::dialogs::size_info_dialog::{SizeInfoDialogState, SizeInfoProgress};
 
 // Re-exports so AppState and other modules can use these types without circular deps.
-pub use crate::archive_dialog::ArchiveDialogState;
+pub use crate::dialogs::archive_dialog::ArchiveDialogState;
 pub use crate::core::find::FindMessage;
-pub use crate::editor::EditorScreenState;
-pub use crate::find_dialog::{FindDialogPhase, FindDialogState};
-pub use crate::mkdir_dialog::MkdirDialogState;
-pub use crate::new_file_dialog::NewFileDialogState;
-pub use crate::rename_attr::{RenameAttrDialogState, RenameAttrField};
-pub use crate::settings_dialog::SettingsDialogState;
-pub use crate::viewer::ViewerState;
+pub use crate::browser::editor::EditorScreenState;
+pub use crate::dialogs::find_dialog::{FindDialogPhase, FindDialogState};
+pub use crate::dialogs::mkdir_dialog::MkdirDialogState;
+pub use crate::dialogs::new_file_dialog::NewFileDialogState;
+pub use crate::dialogs::rename_attr::{RenameAttrDialogState, RenameAttrField};
+pub use crate::dialogs::settings_dialog::SettingsDialogState;
+pub use crate::browser::viewer::ViewerState;
 
 impl AppState {
     /// Create app with initial panel dirs and settings from ~/.oxide/settings.json (used on startup).
@@ -171,6 +185,8 @@ impl AppState {
             editor_screen: None,
             editor_confirm_pending: false,
             editor_confirm_focus: 0,
+            timed_toast: None,
+            post_command_countdown: None,
             viewer_screen: None,
             mkdir_dialog: None,
             archive_dialog: None,
@@ -240,6 +256,32 @@ impl AppState {
             .map(|p| p.to_string_lossy().to_string());
         self.persisted_settings.active_panel = if self.active_panel == 0 { 0 } else { 1 };
         let _ = crate::core::settings::save(&self.persisted_settings);
+    }
+
+    /// True while the post-command countdown is running (main-buffer overlay or waiting to restore TUI).
+    pub fn post_command_countdown_active(&self) -> bool {
+        self.post_command_countdown
+            .as_ref()
+            .is_some_and(|c| std::time::Instant::now() < c.reveal_at)
+    }
+
+    pub fn set_timed_toast(
+        &mut self,
+        duration: Duration,
+        message: impl Into<String>,
+    ) {
+        self.timed_toast = Some(TimedToast::new(duration, message.into()));
+    }
+
+    pub fn clear_timed_toast(&mut self) {
+        self.timed_toast = None;
+    }
+
+    /// Countdown is drawn on the main buffer over shell output; skip ratatui `draw` until it ends.
+    pub fn post_command_countdown_on_main_buffer(&self) -> bool {
+        self.post_command_countdown.as_ref().is_some_and(|c| {
+            c.overlay_on_main_buffer && std::time::Instant::now() < c.reveal_at
+        })
     }
 
     /// Set the active panel by index (0 = left, 1 = right).

@@ -15,13 +15,13 @@ use ratatui::{
     Frame,
 };
 
-use crate::app_state::AppState;
-use crate::clipboard;
-use crate::panel::PanelOperations;
-use crate::styles::{
+use crate::app::state::AppState;
+use crate::browser::clipboard;
+use crate::browser::panel::PanelOperations;
+use crate::ui::styles::{
     DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG,
 };
-use crate::text_input::{self, TextInputState};
+use crate::ui::text_input::{self, TextInputState};
 
 pub use crate::core::find::{build_display_rows, FindDisplayRow, FindMessage, FindResult};
 
@@ -65,7 +65,7 @@ pub struct FindDialogState {
 
 /// Open Ctrl+F Find file dialog with start dir from active panel.
 pub fn open(app: &mut AppState) {
-    use crate::app_state::Focus;
+    use crate::app::state::Focus;
     let start_dir = app.active_panel_ref().get_current_dir();
     app.find_dialog = Some(FindDialogState {
         phase: FindDialogPhase::Parameter,
@@ -94,7 +94,7 @@ pub fn open(app: &mut AppState) {
 /// Close the Find file dialog and return focus to panel.
 /// If a search was in progress, signals it to stop so the background thread exits.
 pub fn close(app: &mut AppState) {
-    use crate::app_state::Focus;
+    use crate::app::state::Focus;
     if let Some(cancel_flag) = app.find_search_cancel.take() {
         cancel_flag.store(true, Ordering::Relaxed);
     }
@@ -204,8 +204,8 @@ pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
-) -> Option<crate::events::AppAction> {
-    use crate::events::AppAction;
+) -> Option<crate::app::events::AppAction> {
+    use crate::app::events::AppAction;
     let phase = app
         .find_dialog
         .as_ref()
@@ -235,8 +235,8 @@ fn handle_key_parameter(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
-) -> Option<crate::events::AppAction> {
-    use crate::events::AppAction;
+) -> Option<crate::app::events::AppAction> {
+    use crate::app::events::AppAction;
     let dialog = app.find_dialog.as_mut()?;
     if modifiers.contains(KeyModifiers::CONTROL) {
         if code == KeyCode::Char('a') && dialog.focus <= 2 {
@@ -397,8 +397,8 @@ fn handle_key_results(
     app: &mut AppState,
     code: KeyCode,
     _modifiers: KeyModifiers,
-) -> Option<crate::events::AppAction> {
-    use crate::events::AppAction;
+) -> Option<crate::app::events::AppAction> {
+    use crate::app::events::AppAction;
     let dialog = app.find_dialog.as_mut()?;
     let display_rows = build_display_rows(&dialog.results);
     let len = display_rows.len();
