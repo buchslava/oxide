@@ -2179,6 +2179,7 @@ dependencies = [
  "nix",
  "ratatui",
  "ratatui-code-editor",
+ "regex",
  "serde",
  "serde_json",
  "walkdir",

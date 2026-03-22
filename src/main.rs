@@ -395,17 +395,19 @@ fn main() -> Result<(), io::Error> {
             AppAction::OpenPatternSelectUnmark => pattern_select_dialog::open_unmark(&mut app),
             AppAction::PatternSelectConfirm => {
                 if let Some(d) = pattern_select_dialog::take(&mut app) {
+                    app.set_last_file_name_pattern(&d.pattern_input.text);
                     let p = d.pattern_input.text.trim();
                     if !p.is_empty() {
                         let panel_height = util::compute_panel_height();
                         let saved_index = app.active_panel_ref().get_selected_index();
+                        let use_regex = app.persisted_settings.file_pattern_uses_regex();
                         let panel = app.active_panel_mut();
                         match d.mode {
                             PatternSelectMode::Mark => {
-                                panel.mark_matching_glob(p, d.file_case_sensitive);
+                                panel.mark_matching_glob(p, d.file_case_sensitive, use_regex);
                             }
                             PatternSelectMode::Unmark => {
-                                panel.unmark_matching_glob(p, d.file_case_sensitive);
+                                panel.unmark_matching_glob(p, d.file_case_sensitive, use_regex);
                             }
                         }
                         panel.restore_cursor_after_same_dir_op(saved_index, panel_height);

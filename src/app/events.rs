@@ -126,6 +126,8 @@ pub enum SettingChange {
     AutoReopenPanelsAfterCommandToggle,
     /// Cycle the delay (seconds) for auto-return to panels.
     AutoReopenPanelsAfterCommandDelayCycle,
+    /// Toggle file name pattern mode for Find (Ctrl+F) and +/−: wildcards vs regex (F9 General).
+    FilePatternModeCycle,
     LeftViewCycle,
     LeftShowHiddenToggle,
     LeftSortCycle,

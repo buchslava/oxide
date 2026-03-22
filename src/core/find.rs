@@ -1,4 +1,4 @@
-//! Find-file logic: glob matching, result types, grouped display rows, background directory search.
+//! Find-file logic: glob matching, optional regex matching, result types, grouped display rows, background directory search.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 
+use regex::{Regex, RegexBuilder};
 use walkdir::WalkDir;
 
 /// One result from Find file: path and optional line number (when content search matched).
@@ -122,14 +123,74 @@ pub fn glob_match(
     match_at(p, n)
 }
 
-/// Spawn a thread that walks `start_dir`, matches files with `glob_match`, optionally scans content.
-/// Sends [`FindMessage`] values on `tx`. Stops when `cancel` is set.
+/// Prepared file-name filter for many files (Find thread, panel mark/unmark). Empty pattern matches all.
+#[derive(Debug)]
+pub enum PreparedFilePattern {
+    /// Match every non-skipped file name.
+    All,
+    /// Invalid regex (non-empty pattern in regex mode): match nothing.
+    None,
+    Wildcard {
+        pattern: String,
+        case_sensitive: bool,
+    },
+    Regex(Regex),
+}
+
+impl PreparedFilePattern {
+    /// `regex_mode`: from F9 Settings (`file_pattern_mode`); when false, use `glob_match` semantics.
+    pub fn new(
+        raw: &str,
+        case_sensitive: bool,
+        regex_mode: bool,
+    ) -> Self {
+        let pat = raw.trim();
+        if regex_mode {
+            if pat.is_empty() {
+                return Self::All;
+            }
+            let mut b = RegexBuilder::new(pat);
+            if !case_sensitive {
+                b.case_insensitive(true);
+            }
+            return match b.build() {
+                Ok(re) => Self::Regex(re),
+                Err(_) => Self::None,
+            };
+        }
+        if pat.is_empty() {
+            return Self::All;
+        }
+        Self::Wildcard {
+            pattern: pat.to_string(),
+            case_sensitive,
+        }
+    }
+
+    /// Match against a single path component (file base name), without trailing `/`.
+    pub fn matches(&self, name: &str) -> bool {
+        let name = name.trim_end_matches('/');
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::Wildcard {
+                pattern,
+                case_sensitive,
+            } => glob_match(pattern, name, *case_sensitive),
+            Self::Regex(re) => re.is_match(name),
+        }
+    }
+}
+
+/// Spawn a thread that walks `start_dir`, matches file names with wildcards or regex (see F9 Settings),
+/// optionally scans content. Sends [`FindMessage`] values on `tx`. Stops when `cancel` is set.
 pub fn run_find_search(
     start_dir: Arc<str>,
     file_pattern: Arc<str>,
     content_pattern: Arc<str>,
     recursive: bool,
     file_case_sens: bool,
+    file_pattern_regex: bool,
     content_case_sens: bool,
     skip_hidden: bool,
     cancel: Arc<AtomicBool>,
@@ -137,8 +198,9 @@ pub fn run_find_search(
 ) {
     thread::spawn(move || {
         let start_dir = start_dir.trim();
-        let file_pattern = file_pattern.trim();
+        let file_pattern_trim = file_pattern.trim();
         let content_pattern = content_pattern.trim();
+        let name_matcher = PreparedFilePattern::new(file_pattern_trim, file_case_sens, file_pattern_regex);
         let start = PathBuf::from(start_dir);
         if !start.is_dir() {
             let _ = tx.send(FindMessage::Done);
@@ -177,7 +239,7 @@ pub fn run_find_search(
             }
             let name_cow = entry.file_name().to_string_lossy();
             let name = name_cow.as_ref();
-            if !glob_match(file_pattern, name, file_case_sens) {
+            if !name_matcher.matches(name) {
                 continue;
             }
             if content_empty {

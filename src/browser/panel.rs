@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::io;
 
 use crate::core::file_ops::FileInfo;
-use crate::core::find::glob_match;
+use crate::core::find::PreparedFilePattern;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
 
@@ -75,18 +75,20 @@ pub trait PanelOperations {
     );
     /// Invert selection: all marked become unmarked, all unmarked (except "..") become marked. MC *.
     fn invert_selection(&mut self);
-    /// Mark every non–parent-dir entry whose display name matches shell glob `pattern` (*, ?). Same semantics as Find file.
+    /// Mark every non–parent-dir entry whose name matches the pattern (wildcards or regex per F9 Settings).
     fn mark_matching_glob(
         &mut self,
         pattern: &str,
         case_sensitive: bool,
+        use_regex: bool,
     );
-    /// Unmark entries matching the glob. The file under the cursor keeps its mark so a broad pattern
+    /// Unmark entries matching the pattern. The file under the cursor keeps its mark so a broad pattern
     /// does not clear the “current” tagged row.
     fn unmark_matching_glob(
         &mut self,
         pattern: &str,
         case_sensitive: bool,
+        use_regex: bool,
     );
     fn is_marked(
         &self,
@@ -557,13 +559,15 @@ impl PanelOperations for Panel {
         &mut self,
         pattern: &str,
         case_sensitive: bool,
+        use_regex: bool,
     ) {
+        let prep = PreparedFilePattern::new(pattern, case_sensitive, use_regex);
         for (idx, file) in self.files.iter().enumerate() {
             if file.is_parent_dir() {
                 continue;
             }
             let name = file.name.trim_end_matches('/');
-            if glob_match(pattern, name, case_sensitive) {
+            if prep.matches(name) {
                 self.marked_indices.insert(idx);
             }
         }
@@ -573,8 +577,10 @@ impl PanelOperations for Panel {
         &mut self,
         pattern: &str,
         case_sensitive: bool,
+        use_regex: bool,
     ) {
         let cursor = self.selected_index;
+        let prep = PreparedFilePattern::new(pattern, case_sensitive, use_regex);
         for (idx, file) in self.files.iter().enumerate() {
             if file.is_parent_dir() {
                 continue;
@@ -584,7 +590,7 @@ impl PanelOperations for Panel {
                 continue;
             }
             let name = file.name.trim_end_matches('/');
-            if glob_match(pattern, name, case_sensitive) {
+            if prep.matches(name) {
                 self.marked_indices.remove(&idx);
             }
         }

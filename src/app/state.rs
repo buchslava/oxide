@@ -133,6 +133,8 @@ pub struct AppState {
     pub last_mouse_click: Option<(std::time::Instant, usize, usize)>,
     /// Last mouse (column, row) from any mouse event (scroll, move, click).
     pub last_mouse_position: Option<(u16, u16)>,
+    /// Last file-name pattern from Find (Ctrl+F) and +/−; pre-filled when reopening those dialogs.
+    pub last_file_name_pattern: String,
     /// When true, show hidden files (names starting with "."). Default true. Toggled by Ctrl+H.
     pub show_hidden_files: bool,
     /// Last saved/loaded settings from ~/.oxide/settings.json. Used to persist on change and for autosave.
@@ -154,6 +156,14 @@ pub use crate::dialogs::settings_dialog::SettingsDialogState;
 pub use crate::browser::viewer::ViewerState;
 
 impl AppState {
+    /// Store trimmed pattern for reuse in Find and +/− (empty clears remembered pattern).
+    pub fn set_last_file_name_pattern(
+        &mut self,
+        raw: &str,
+    ) {
+        self.last_file_name_pattern = raw.trim().to_string();
+    }
+
     /// Create app with initial panel dirs and settings from ~/.oxide/settings.json (used on startup).
     /// If a saved path is missing/invalid, that panel is opened in home_dir.
     /// Panels are created with default state, then sync_from_persisted_settings() is called so
@@ -213,6 +223,7 @@ impl AppState {
             find_search_cancel: None,
             last_mouse_click: None,
             last_mouse_position: None,
+            last_file_name_pattern: String::new(),
             show_hidden_files: true,
             persisted_settings: settings,
         };

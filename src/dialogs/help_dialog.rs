@@ -77,9 +77,7 @@ fn help_lines() -> Vec<Line<'static>> {
             Span::styled("+", key),
             Span::raw(" / "),
             Span::styled("-", key),
-            Span::raw("              Mark / unmark by file pattern ("),
-            Span::styled("* ?", key),
-            Span::raw(", like Find)"),
+            Span::raw("              Mark / unmark by file pattern (F9: wildcards or regex)"),
         ]),
         Line::from(vec![
             Span::raw("    Type a key   Go to command line   "),
@@ -158,9 +156,9 @@ fn help_lines() -> Vec<Line<'static>> {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::raw("    Set start dir, file pattern ("),
+            Span::raw("    Set start dir, file pattern (F9: "),
             Span::styled("* ?", key),
-            Span::raw("), optional content pattern."),
+            Span::raw(" wildcards or regex), optional content pattern."),
         ]),
         Line::from(vec![
             Span::raw("    "),

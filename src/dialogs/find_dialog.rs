@@ -1,5 +1,5 @@
 //! Ctrl+F Find file dialog (MC-style). Parameter form (start dir, file pattern, content pattern,
-//! options), then results list. Shell-style wildcards (*, ?). Optional content search.
+//! options), then results list. File pattern uses wildcards (*, ?) or regex per F9 Settings. Optional content search.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -70,7 +70,7 @@ pub fn open(app: &mut AppState) {
     app.find_dialog = Some(FindDialogState {
         phase: FindDialogPhase::Parameter,
         start_dir_input: TextInputState::new(start_dir.to_string()),
-        file_pattern_input: TextInputState::new(String::new()),
+        file_pattern_input: TextInputState::new(app.last_file_name_pattern.clone()),
         content_pattern_input: TextInputState::new(String::new()),
         recursive: true,
         file_case_sens: false,
@@ -98,35 +98,59 @@ pub fn close(app: &mut AppState) {
     if let Some(cancel_flag) = app.find_search_cancel.take() {
         cancel_flag.store(true, Ordering::Relaxed);
     }
-    app.find_dialog = None;
+    if let Some(d) = app.find_dialog.take() {
+        app.set_last_file_name_pattern(&d.file_pattern_input.text);
+    }
     app.find_search_rx = None;
     app.focus = Focus::Panel;
 }
 
 /// Start the find search in a background thread; app.find_dialog must be Some.
 pub fn start_search(app: &mut AppState) {
-    let Some(dialog) = app.find_dialog.as_mut() else {
-        return;
+    let (
+        start_dir,
+        file_pattern,
+        content_pattern,
+        recursive,
+        file_case_sens,
+        content_case_sens,
+        skip_hidden,
+    ) = {
+        let Some(dialog) = app.find_dialog.as_mut() else {
+            return;
+        };
+        dialog.phase = FindDialogPhase::Searching;
+        dialog.results.clear();
+        dialog.status_message = "Searching...".to_string();
+        dialog.search_current_dir.clear();
+        dialog.selected_index = 0;
+        dialog.scroll_offset = 0;
+
+        // Move strings into Arc<str> (no clone); pass Arc::clone to thread (cheap). Restore from stored Arc when Done.
+        let start_dir = Arc::from(std::mem::take(&mut dialog.start_dir_input.text));
+        let file_pattern = Arc::from(std::mem::take(&mut dialog.file_pattern_input.text));
+        let content_pattern = Arc::from(std::mem::take(&mut dialog.content_pattern_input.text));
+        dialog.search_start_dir = Some(Arc::clone(&start_dir));
+        dialog.search_file_pattern = Some(Arc::clone(&file_pattern));
+        dialog.search_content_pattern = Some(Arc::clone(&content_pattern));
+
+        let recursive = dialog.recursive;
+        let file_case_sens = dialog.file_case_sens;
+        let content_case_sens = dialog.content_case_sens;
+        let skip_hidden = dialog.skip_hidden;
+        (
+            start_dir,
+            file_pattern,
+            content_pattern,
+            recursive,
+            file_case_sens,
+            content_case_sens,
+            skip_hidden,
+        )
     };
-    dialog.phase = FindDialogPhase::Searching;
-    dialog.results.clear();
-    dialog.status_message = "Searching...".to_string();
-    dialog.search_current_dir.clear();
-    dialog.selected_index = 0;
-    dialog.scroll_offset = 0;
 
-    // Move strings into Arc<str> (no clone); pass Arc::clone to thread (cheap). Restore from stored Arc when Done.
-    let start_dir = Arc::from(std::mem::take(&mut dialog.start_dir_input.text));
-    let file_pattern = Arc::from(std::mem::take(&mut dialog.file_pattern_input.text));
-    let content_pattern = Arc::from(std::mem::take(&mut dialog.content_pattern_input.text));
-    dialog.search_start_dir = Some(Arc::clone(&start_dir));
-    dialog.search_file_pattern = Some(Arc::clone(&file_pattern));
-    dialog.search_content_pattern = Some(Arc::clone(&content_pattern));
-
-    let recursive = dialog.recursive;
-    let file_case_sens = dialog.file_case_sens;
-    let content_case_sens = dialog.content_case_sens;
-    let skip_hidden = dialog.skip_hidden;
+    app.set_last_file_name_pattern(file_pattern.as_ref());
+    let file_pattern_regex = app.persisted_settings.file_pattern_uses_regex();
 
     let cancel = Arc::new(AtomicBool::new(false));
     app.find_search_cancel = Some(Arc::clone(&cancel));
@@ -138,6 +162,7 @@ pub fn start_search(app: &mut AppState) {
         content_pattern,
         recursive,
         file_case_sens,
+        file_pattern_regex,
         content_case_sens,
         skip_hidden,
         cancel,
@@ -487,6 +512,7 @@ pub fn draw(
     app: &mut AppState,
 ) {
     poll_search(app);
+    let file_pattern_regex = app.persisted_settings.file_pattern_uses_regex();
     let Some(dialog) = app.find_dialog.as_mut() else {
         return;
     };
@@ -526,7 +552,14 @@ pub fn draw(
 
     match dialog.phase {
         FindDialogPhase::Parameter => {
-            draw_parameter_form(f, dialog, inner, content_w, fill_style);
+            draw_parameter_form(
+                f,
+                dialog,
+                inner,
+                content_w,
+                fill_style,
+                file_pattern_regex,
+            );
         }
         FindDialogPhase::Searching => {
             draw_status_and_list(f, dialog, inner, content_w, fill_style, true);
@@ -543,17 +576,28 @@ fn draw_parameter_form(
     inner: Rect,
     content_w: u16,
     fill_style: Style,
+    file_pattern_regex: bool,
 ) {
     let cx = inner.x + 1;
     let mut row = inner.y;
 
-    const LABEL_W: u16 = 18;
-
-    for (focus_idx, label, input) in [
+    let file_pattern_label = if file_pattern_regex {
+        "File pattern (regex):"
+    } else {
+        "File pattern (*, ?):"
+    };
+    let rows: [(usize, &str, &TextInputState); 3] = [
         (0, "Start directory:", &dialog.start_dir_input),
-        (1, "File pattern:", &dialog.file_pattern_input),
+        (1, file_pattern_label, &dialog.file_pattern_input),
         (2, "Content pattern:", &dialog.content_pattern_input),
-    ] {
+    ];
+    let label_w = rows
+        .iter()
+        .map(|(_, l, _)| l.chars().count())
+        .max()
+        .unwrap_or(18) as u16;
+
+    for (focus_idx, label, input) in rows {
         let cursor_char = input.cursor_column();
         let focused = dialog.focus == focus_idx;
         let bg = if focused {
@@ -561,7 +605,7 @@ fn draw_parameter_form(
         } else {
             DIALOG_INPUT_BG_UNFOCUSED
         };
-        let value_w = content_w.saturating_sub(LABEL_W);
+        let value_w = content_w.saturating_sub(label_w);
         let value_w_usize = value_w as usize;
         let display_offset = if value_w_usize == 0 {
             0
@@ -588,21 +632,21 @@ fn draw_parameter_form(
             Rect {
                 x: cx,
                 y: row,
-                width: LABEL_W,
+                width: label_w,
                 height: 1,
             },
         );
         f.render_widget(
             Paragraph::new(line),
             Rect {
-                x: cx + LABEL_W,
+                x: cx + label_w,
                 y: row,
                 width: value_w,
                 height: 1,
             },
         );
         if focused {
-            let cursor_x = cx + LABEL_W + (cursor_screen as u16).min(value_w.saturating_sub(1));
+            let cursor_x = cx + label_w + (cursor_screen as u16).min(value_w.saturating_sub(1));
             f.set_cursor_position((cursor_x, row));
         }
         row += 1;

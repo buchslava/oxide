@@ -1,4 +1,4 @@
-//! + / − : mark or unmark files by shell glob (*, ?), same rules as Find file dialog.
+//! + / − : mark or unmark files by file pattern; wildcards (*, ?) or regex per F9 Settings (same as Find).
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
@@ -41,7 +41,7 @@ const FOCUS_COUNT: usize = 4;
 pub fn open_mark(app: &mut AppState) {
     app.pattern_select_dialog = Some(PatternSelectDialogState {
         mode: PatternSelectMode::Mark,
-        pattern_input: TextInputState::new(String::new()),
+        pattern_input: TextInputState::new(app.last_file_name_pattern.clone()),
         file_case_sensitive: false,
         focus: 0,
     });
@@ -50,14 +50,16 @@ pub fn open_mark(app: &mut AppState) {
 pub fn open_unmark(app: &mut AppState) {
     app.pattern_select_dialog = Some(PatternSelectDialogState {
         mode: PatternSelectMode::Unmark,
-        pattern_input: TextInputState::new(String::new()),
+        pattern_input: TextInputState::new(app.last_file_name_pattern.clone()),
         file_case_sensitive: false,
         focus: 0,
     });
 }
 
 pub fn cancel(app: &mut AppState) {
-    app.pattern_select_dialog = None;
+    if let Some(d) = app.pattern_select_dialog.take() {
+        app.set_last_file_name_pattern(&d.pattern_input.text);
+    }
 }
 
 /// Remove dialog; caller reads fields before drop if needed.
@@ -219,8 +221,13 @@ pub fn draw(
     let content = dialog_layout::dialog_content_rect(inner, DEFAULT_PAD_H);
 
     let label_style = fill_style;
+    let pattern_label = if app.persisted_settings.file_pattern_uses_regex() {
+        "File pattern (regular expression, same as Find):"
+    } else {
+        "File pattern (wildcards * and ?, same as Find):"
+    };
     f.render_widget(
-        Paragraph::new("File pattern (* and ?, same as Find):").style(label_style),
+        Paragraph::new(pattern_label).style(label_style),
         Rect {
             x: content.x,
             y: content.y,

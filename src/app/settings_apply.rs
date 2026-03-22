@@ -39,6 +39,14 @@ pub(crate) fn apply_persisted_setting_change(
             app.persisted_settings
                 .auto_reopen_panels_after_command_delay_secs = next;
         }
+        SettingChange::FilePatternModeCycle => {
+            app.persisted_settings.file_pattern_mode = if app.persisted_settings.file_pattern_uses_regex()
+            {
+                "wildcard".to_string()
+            } else {
+                "regex".to_string()
+            };
+        }
         SettingChange::LeftViewCycle => cycle_view_one_two(&mut app.persisted_settings.left_view),
         SettingChange::RightViewCycle => cycle_view_one_two(&mut app.persisted_settings.right_view),
         SettingChange::LeftShowHiddenToggle => {
@@ -79,6 +87,7 @@ pub(crate) fn setting_change_skips_panel_resync(change: SettingChange) -> bool {
             | SettingChange::SyncPanelToShellCwdToggle
             | SettingChange::AutoReopenPanelsAfterCommandToggle
             | SettingChange::AutoReopenPanelsAfterCommandDelayCycle
+            | SettingChange::FilePatternModeCycle
     )
 }
 

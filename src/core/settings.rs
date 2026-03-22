@@ -53,6 +53,13 @@ pub struct PersistedSettings {
     /// Active panel index when autosave last ran: 0 = left, 1 = right. Restored on start if autosave was on.
     #[serde(default)]
     pub active_panel: u8,
+    /// File name matching for Find (Ctrl+F) and +/− pattern selection: "wildcard" (*, ?) or "regex".
+    #[serde(default = "default_file_pattern_mode")]
+    pub file_pattern_mode: String,
+}
+
+fn default_file_pattern_mode() -> String {
+    "wildcard".to_string()
 }
 
 fn default_view() -> String {
@@ -89,7 +96,15 @@ impl Default for PersistedSettings {
             left_dirs_first: true,
             right_dirs_first: true,
             active_panel: 0,
+            file_pattern_mode: default_file_pattern_mode(),
         }
+    }
+}
+
+impl PersistedSettings {
+    /// True when Find file and +/− use regular expressions; false for shell-style wildcards.
+    pub fn file_pattern_uses_regex(&self) -> bool {
+        self.file_pattern_mode.as_str() == "regex"
     }
 }
 
@@ -158,5 +173,6 @@ mod tests {
         assert!(json.contains("\"right_dirs_first\""));
         assert!(json.contains("\"auto_reopen_panels_after_command\""));
         assert!(json.contains("\"auto_reopen_panels_after_command_delay_secs\""));
+        assert!(json.contains("\"file_pattern_mode\""));
     }
 }
