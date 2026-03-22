@@ -3,6 +3,7 @@ pub mod find_dialog;
 pub mod help_dialog;
 pub mod mkdir_dialog;
 pub mod new_file_dialog;
+pub mod pattern_select_dialog;
 pub mod panel_overlay;
 pub mod panel_overlay_state;
 pub mod rename_attr;

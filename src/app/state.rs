@@ -109,6 +109,8 @@ pub struct AppState {
     pub size_info_dialog: Option<SizeInfoDialogState>,
     /// When Some, Ctrl+F "Find file" dialog is open.
     pub find_dialog: Option<FindDialogState>,
+    /// When Some, + / − mark or unmark by file glob (same as Find file pattern).
+    pub pattern_select_dialog: Option<crate::dialogs::pattern_select_dialog::PatternSelectDialogState>,
     /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
     /// When true, F1 Help dialog is open.
@@ -199,6 +201,7 @@ impl AppState {
             rename_attr_error: None,
             size_info_dialog: None,
             find_dialog: None,
+            pattern_select_dialog: None,
             settings_dialog: None,
             help_dialog: false,
             left_panel_settings_overlay: None,

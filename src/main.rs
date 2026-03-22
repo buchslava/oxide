@@ -36,8 +36,9 @@ use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_l
 use dialogs::find_dialog::FindDisplayRow;
 use dialogs::{
     archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
-    settings_dialog, size_info_dialog,
+    pattern_select_dialog, settings_dialog, size_info_dialog,
 };
+use dialogs::pattern_select_dialog::PatternSelectMode;
 use dialogs::rename_attr;
 use shell::subshell::{RelayExit, Subshell};
 use ui::post_command_overlay;
@@ -140,6 +141,10 @@ fn main() -> Result<(), io::Error> {
             d.phase == FindDialogPhase::Parameter && d.focus <= 2
         });
         let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
+        let pattern_select_input_focused = app
+            .pattern_select_dialog
+            .as_ref()
+            .map_or(false, |d| d.focus == 0);
         let archive_input_focused = app.archive_dialog.as_ref().map_or(false, |d| d.focus == 0);
         let new_file_input_focused = app.new_file_dialog.as_ref().map_or(false, |d| d.focus == 0);
         let rename_name_focused = matches!(
@@ -151,12 +156,14 @@ fn main() -> Result<(), io::Error> {
         );
         let input_cursor_blink = find_input_focused
             || mkdir_input_focused
+            || pattern_select_input_focused
             || archive_input_focused
             || new_file_input_focused
             || rename_name_focused;
         let show_cursor = !app.post_command_countdown_active()
             && (app.editor_screen.is_some()
                 || mkdir_input_focused
+                || pattern_select_input_focused
                 || archive_input_focused
                 || new_file_input_focused
                 || rename_name_focused
@@ -166,6 +173,7 @@ fn main() -> Result<(), io::Error> {
             && app.editor_screen.is_none()
             && !app.post_command_countdown_active()
             && app.mkdir_dialog.is_none()
+            && app.pattern_select_dialog.is_none()
             && app.archive_dialog.is_none()
             && app.new_file_dialog.is_none();
 
@@ -383,6 +391,28 @@ fn main() -> Result<(), io::Error> {
                 }
             }
             AppAction::MkdirCancel => mkdir_dialog::cancel(&mut app),
+            AppAction::OpenPatternSelectMark => pattern_select_dialog::open_mark(&mut app),
+            AppAction::OpenPatternSelectUnmark => pattern_select_dialog::open_unmark(&mut app),
+            AppAction::PatternSelectConfirm => {
+                if let Some(d) = pattern_select_dialog::take(&mut app) {
+                    let p = d.pattern_input.text.trim();
+                    if !p.is_empty() {
+                        let panel_height = util::compute_panel_height();
+                        let saved_index = app.active_panel_ref().get_selected_index();
+                        let panel = app.active_panel_mut();
+                        match d.mode {
+                            PatternSelectMode::Mark => {
+                                panel.mark_matching_glob(p, d.file_case_sensitive);
+                            }
+                            PatternSelectMode::Unmark => {
+                                panel.unmark_matching_glob(p, d.file_case_sensitive);
+                            }
+                        }
+                        panel.restore_cursor_after_same_dir_op(saved_index, panel_height);
+                    }
+                }
+            }
+            AppAction::PatternSelectCancel => pattern_select_dialog::cancel(&mut app),
             AppAction::OpenArchiveDialog => archive_dialog::open(&mut app),
             AppAction::ArchiveConfirm => {
                 let (items, ..) = app

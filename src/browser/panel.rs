@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::io;
 
 use crate::core::file_ops::FileInfo;
+use crate::core::find::glob_match;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
 
@@ -74,6 +75,19 @@ pub trait PanelOperations {
     );
     /// Invert selection: all marked become unmarked, all unmarked (except "..") become marked. MC *.
     fn invert_selection(&mut self);
+    /// Mark every non–parent-dir entry whose display name matches shell glob `pattern` (*, ?). Same semantics as Find file.
+    fn mark_matching_glob(
+        &mut self,
+        pattern: &str,
+        case_sensitive: bool,
+    );
+    /// Unmark entries matching the glob. The file under the cursor keeps its mark so a broad pattern
+    /// does not clear the “current” tagged row.
+    fn unmark_matching_glob(
+        &mut self,
+        pattern: &str,
+        case_sensitive: bool,
+    );
     fn is_marked(
         &self,
         index: usize,
@@ -404,6 +418,9 @@ impl PanelOperations for Panel {
         Ok(())
     }
 
+    /// Re-read the current directory from disk. **Resets** `selected_index`, `scroll_offset`, and all marks.
+    /// Prefer [`Panel::refresh_files_restore_selection`] when the listing may be unchanged except for
+    /// adds/removes and you need to keep the highlighted file and behavior consistent with other code paths.
     fn refresh_files(&mut self) -> io::Result<()> {
         self.marked_indices.clear();
         self.files = panel_backend::list(
@@ -536,6 +553,43 @@ impl PanelOperations for Panel {
         }
     }
 
+    fn mark_matching_glob(
+        &mut self,
+        pattern: &str,
+        case_sensitive: bool,
+    ) {
+        for (idx, file) in self.files.iter().enumerate() {
+            if file.is_parent_dir() {
+                continue;
+            }
+            let name = file.name.trim_end_matches('/');
+            if glob_match(pattern, name, case_sensitive) {
+                self.marked_indices.insert(idx);
+            }
+        }
+    }
+
+    fn unmark_matching_glob(
+        &mut self,
+        pattern: &str,
+        case_sensitive: bool,
+    ) {
+        let cursor = self.selected_index;
+        for (idx, file) in self.files.iter().enumerate() {
+            if file.is_parent_dir() {
+                continue;
+            }
+            if idx == cursor {
+                // Keep the mark on the current row: broad patterns should not "clear" the file under the cursor.
+                continue;
+            }
+            let name = file.name.trim_end_matches('/');
+            if glob_match(pattern, name, case_sensitive) {
+                self.marked_indices.remove(&idx);
+            }
+        }
+    }
+
     fn is_marked(
         &self,
         index: usize,
@@ -654,6 +708,27 @@ impl Panel {
             return;
         }
         self.selected_index = index.min(len - 1);
+        match self.view_mode {
+            ViewMode::SingleColumn => self.update_scroll_offset(panel_height),
+            ViewMode::DoubleColumn => self.update_scroll_offset_double_column(panel_height),
+        }
+    }
+
+    /// Same directory listing: restore the linear cursor index captured **before** an in-place change
+    /// (marks only — `files` order and length are unchanged), clamp to the list, then sync scroll with
+    /// the same `panel_height` as keyboard navigation ([`crate::util::compute_panel_height`]).
+    ///
+    /// Name-based re-anchoring is not used here: display names, zip vs FS, and Unicode can diverge from
+    /// `FileInfo::name` and would send the cursor to the wrong row (e.g. `..` at index 0).
+    pub fn restore_cursor_after_same_dir_op(
+        &mut self,
+        saved_index: usize,
+        panel_height: usize,
+    ) {
+        if self.files.is_empty() {
+            return;
+        }
+        self.selected_index = saved_index.min(self.files.len() - 1);
         match self.view_mode {
             ViewMode::SingleColumn => self.update_scroll_offset(panel_height),
             ViewMode::DoubleColumn => self.update_scroll_offset_double_column(panel_height),

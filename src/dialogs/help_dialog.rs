@@ -73,6 +73,15 @@ fn help_lines() -> Vec<Line<'static>> {
             Span::raw("  Invert selection"),
         ]),
         Line::from(vec![
+            Span::raw("    "),
+            Span::styled("+", key),
+            Span::raw(" / "),
+            Span::styled("-", key),
+            Span::raw("              Mark / unmark by file pattern ("),
+            Span::styled("* ?", key),
+            Span::raw(", like Find)"),
+        ]),
+        Line::from(vec![
             Span::raw("    Type a key   Go to command line   "),
             Span::styled("Tab / Esc", key),
             Span::raw("  Back to panel"),

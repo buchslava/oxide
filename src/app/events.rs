@@ -98,6 +98,14 @@ pub enum AppAction {
     FindEdit,
     /// Start Find file search (from Find button in parameter form).
     FindStartSearch,
+    /// +: open dialog to mark files matching a glob (same as Find file pattern).
+    OpenPatternSelectMark,
+    /// −: open dialog to unmark files matching a glob.
+    OpenPatternSelectUnmark,
+    /// Apply pattern selection (mark or unmark).
+    PatternSelectConfirm,
+    /// Close +/− pattern dialog without applying.
+    PatternSelectCancel,
     /// Ctrl+H: toggle hidden files visibility.
     ToggleShowHidden,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
@@ -157,6 +165,7 @@ impl EventHandler {
             && app.copy_error_dialog.is_none()
             && app.operation_confirm_pending.is_none()
             && app.mkdir_dialog.is_none()
+            && app.pattern_select_dialog.is_none()
             && app.archive_dialog.is_none()
             && app.new_file_dialog.is_none()
             && app.new_file_error.is_none()
@@ -177,6 +186,7 @@ impl EventHandler {
             || app.copy_error_dialog.is_some()
             || app.operation_confirm_pending.is_some()
             || app.mkdir_dialog.is_some()
+            || app.pattern_select_dialog.is_some()
             || app.archive_dialog.is_some()
             || app.new_file_dialog.is_some()
             || app.new_file_error.is_some()
@@ -432,6 +442,16 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
+                if app.pattern_select_dialog.is_some() {
+                    return Ok(Some(
+                        crate::dialogs::pattern_select_dialog::handle_key(
+                            app,
+                            key.code,
+                            key.modifiers,
+                        )
+                        .unwrap_or(AppAction::Continue),
+                    ));
+                }
                 // Ctrl+A "Archive" dialog
                 if app.archive_dialog.is_some() {
                     return Ok(Some(
@@ -529,6 +549,10 @@ impl EventHandler {
                     KeyCode::Char(c) => {
                         if c == '*' {
                             app.active_panel_mut().invert_selection();
+                        } else if c == '+' {
+                            return Ok(Some(AppAction::OpenPatternSelectMark));
+                        } else if c == '-' {
+                            return Ok(Some(AppAction::OpenPatternSelectUnmark));
                         } else if key.modifiers.contains(KeyModifiers::CONTROL) {
                             return Ok(Some(Self::handle_ctrl_key(app, c, panel_height)));
                         } else if c.is_ascii() && !c.is_control() {
@@ -692,6 +716,12 @@ impl EventHandler {
                     _ => return false,
                 };
                 *input = std::mem::take(input).insert_str(data);
+                return true;
+            }
+        }
+        if let Some(d) = app.pattern_select_dialog.as_mut() {
+            if d.focus == 0 {
+                d.pattern_input = std::mem::take(&mut d.pattern_input).insert_str(data);
                 return true;
             }
         }
@@ -938,6 +968,31 @@ impl EventHandler {
         }
         // Archive progress overlay
         if app.archive_progress.is_some() {
+            return Ok(Some(AppAction::Continue));
+        }
+        // +/− pattern dialog: Apply / Cancel.
+        if app.pattern_select_dialog.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                if let Some((apply_rect, cancel_rect)) =
+                    crate::dialogs::pattern_select_dialog::button_rects(area)
+                {
+                    let (col, row) = (mouse_event.column, mouse_event.row);
+                    if col >= apply_rect.x
+                        && col < apply_rect.x + apply_rect.width
+                        && row >= apply_rect.y
+                        && row < apply_rect.y + apply_rect.height
+                    {
+                        return Ok(Some(AppAction::PatternSelectConfirm));
+                    }
+                    if col >= cancel_rect.x
+                        && col < cancel_rect.x + cancel_rect.width
+                        && row >= cancel_rect.y
+                        && row < cancel_rect.y + cancel_rect.height
+                    {
+                        return Ok(Some(AppAction::PatternSelectCancel));
+                    }
+                }
+            }
             return Ok(Some(AppAction::Continue));
         }
         // Mkdir dialog: handle clicks on Create and Cancel buttons.

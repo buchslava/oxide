@@ -107,6 +107,7 @@ impl Renderer {
             || app.copy_error_dialog.is_some()
             || app.operation_confirm_pending.is_some()
             || app.mkdir_dialog.is_some()
+            || app.pattern_select_dialog.is_some()
             || app.archive_dialog.is_some()
             || app.new_file_dialog.is_some()
             || app.new_file_error.is_some()
@@ -153,6 +154,9 @@ impl Renderer {
         }
         if app.mkdir_dialog.is_some() {
             crate::dialogs::mkdir_dialog::draw(f, app);
+        }
+        if app.pattern_select_dialog.is_some() {
+            crate::dialogs::pattern_select_dialog::draw(f, app);
         }
         if app.archive_dialog.is_some() {
             crate::dialogs::archive_dialog::draw(f, app);
