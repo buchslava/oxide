@@ -147,6 +147,51 @@ pub enum CopyErrorChoice {
 pub struct EventHandler;
 
 impl EventHandler {
+    /// When false, mouse must not scroll panels, click the file list, or use the bottom menu bar
+    /// (dialogs and progress overlays are modal).
+    fn panels_and_menu_mouse_enabled(app: &AppState) -> bool {
+        app.viewer_screen.is_none()
+            && app.editor_screen.is_none()
+            && !app.editor_confirm_pending
+            && app.copy_overwrite_dialog.is_none()
+            && app.copy_error_dialog.is_none()
+            && app.operation_confirm_pending.is_none()
+            && app.mkdir_dialog.is_none()
+            && app.archive_dialog.is_none()
+            && app.new_file_dialog.is_none()
+            && app.new_file_error.is_none()
+            && app.rename_attr_dialog.is_none()
+            && app.size_info_dialog.is_none()
+            && app.settings_dialog.is_none()
+            && !app.help_dialog
+            && app.find_dialog.is_none()
+            && app.left_panel_settings_overlay.is_none()
+            && app.right_panel_settings_overlay.is_none()
+            && app.copy_in_progress.is_none()
+            && app.archive_progress.is_none()
+    }
+
+    /// While any of these are open, bracketed paste must not reach the command line (focus can be stale).
+    fn modal_blocks_command_line_paste(app: &AppState) -> bool {
+        app.copy_overwrite_dialog.is_some()
+            || app.copy_error_dialog.is_some()
+            || app.operation_confirm_pending.is_some()
+            || app.mkdir_dialog.is_some()
+            || app.archive_dialog.is_some()
+            || app.new_file_dialog.is_some()
+            || app.new_file_error.is_some()
+            || app.rename_attr_dialog.is_some()
+            || app.size_info_dialog.is_some()
+            || app.settings_dialog.is_some()
+            || app.help_dialog
+            || app.find_dialog.is_some()
+            || app.left_panel_settings_overlay.is_some()
+            || app.right_panel_settings_overlay.is_some()
+            || app.editor_confirm_pending
+            || app.copy_progress.is_some()
+            || app.archive_progress.is_some()
+    }
+
     /// Drain the crossterm queue without blocking; return the last key/mouse action, if any.
     fn drain_events_nonblocking(app: &mut AppState) -> io::Result<Option<AppAction>> {
         let mut last_action = None;
@@ -363,7 +408,7 @@ impl EventHandler {
                     }
                     return Ok(Some(AppAction::Continue));
                 }
-                // When copy is in progress (no other dialog), Esc cancels the copy.
+                // Copy/move/delete progress overlay: modal — only Esc cancels; other keys do not reach panels.
                 if app.copy_in_progress.is_some()
                     && app.copy_overwrite_dialog.is_none()
                     && app.copy_error_dialog.is_none()
@@ -371,6 +416,7 @@ impl EventHandler {
                     if key.code == KeyCode::Esc {
                         return Ok(Some(AppAction::CopyCancel));
                     }
+                    return Ok(Some(AppAction::Continue));
                 }
                 // When archive is in progress, Esc cancels (same as Copy/Move: stop and close dialog).
                 if app.archive_progress.is_some() {
@@ -379,73 +425,67 @@ impl EventHandler {
                     }
                     return Ok(Some(AppAction::Continue));
                 }
-                // F7 "Create directory" dialog: handle text input and Enter/ESC.
+                // F7 "Create directory" dialog: modal — same as F1: never leak keys to panel/command line.
                 if app.mkdir_dialog.is_some() {
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::mkdir_dialog::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // Ctrl+A "Archive" dialog: handle text input and Enter/ESC.
+                // Ctrl+A "Archive" dialog
                 if app.archive_dialog.is_some() {
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::archive_dialog::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // Ctrl+N "New file" dialog: handle text input and Enter/ESC.
+                // Ctrl+N "New file" dialog
                 if app.new_file_dialog.is_some() {
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::new_file_dialog::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // Panel settings overlay (Ctrl+Q left, Ctrl+W right).
+                // Panel settings overlay (Ctrl+Q left, Ctrl+W right)
                 if app.left_panel_settings_overlay.is_some()
                     || app.right_panel_settings_overlay.is_some()
                 {
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::panel_overlay::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // F1 Help dialog: Esc closes.
+                // F1 Help dialog: Esc/q close; all other keys are absorbed (modal).
                 if app.help_dialog {
-                    if let Some(action) = crate::dialogs::help_dialog::handle_key(key.code, key.modifiers) {
-                        return Ok(Some(action));
-                    }
+                    return Ok(Some(
+                        crate::dialogs::help_dialog::handle_key(key.code, key.modifiers)
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // F9 Settings dialog: Esc closes.
+                // F9 Settings dialog
                 if app.settings_dialog.is_some() {
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::settings_dialog::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // Size info dialog: Esc closes.
+                // Size info dialog
                 if app.size_info_dialog.is_some() {
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::size_info_dialog::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
-                // F2 "Rename / Attributes" dialog.
+                // F2 "Rename / Attributes" dialog
                 if app.rename_attr_dialog.is_some() {
                     if app.rename_attr_error.is_some() {
                         app.rename_attr_error = None;
                         return Ok(Some(AppAction::Continue));
                     }
-                    if let Some(action) =
+                    return Ok(Some(
                         crate::dialogs::rename_attr::handle_key(app, key.code, key.modifiers)
-                    {
-                        return Ok(Some(action));
-                    }
+                            .unwrap_or(AppAction::Continue),
+                    ));
                 }
                 // Some terminals send Tab as Char('\t'); treat it as Tab.
                 let code = match key.code {
@@ -629,6 +669,9 @@ impl EventHandler {
                 if Self::paste_into_focused_input(app, &data) {
                     return Ok(Some(AppAction::Continue));
                 }
+                if Self::modal_blocks_command_line_paste(app) {
+                    return Ok(Some(AppAction::Continue));
+                }
                 Ok(None)
             }
             _ => Ok(None), // FocusGained, Resize, etc. - drain
@@ -680,6 +723,9 @@ impl EventHandler {
             }
         }
         if app.focus == Focus::CommandLine {
+            if Self::modal_blocks_command_line_paste(app) {
+                return true;
+            }
             app.command_line_insert_str(data);
             return true;
         }
@@ -886,6 +932,14 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
+        // Copy/move/delete progress (when no overwrite/error dialog on top)
+        if app.copy_progress.is_some() {
+            return Ok(Some(AppAction::Continue));
+        }
+        // Archive progress overlay
+        if app.archive_progress.is_some() {
+            return Ok(Some(AppAction::Continue));
+        }
         // Mkdir dialog: handle clicks on Create and Cancel buttons.
         if app.mkdir_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
@@ -1016,6 +1070,18 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
+        // Find / panel overlays / F2 rename: modal — absorb mouse like F1 (no panel hit-test).
+        if app.find_dialog.is_some() {
+            return Ok(Some(AppAction::Continue));
+        }
+        if app.left_panel_settings_overlay.is_some()
+            || app.right_panel_settings_overlay.is_some()
+        {
+            return Ok(Some(AppAction::Continue));
+        }
+        if app.rename_attr_dialog.is_some() {
+            return Ok(Some(AppAction::Continue));
+        }
         // Operation confirm dialog: handle clicks on Yes/No buttons (mouse/touchpad friendly).
         if let Some((op, _)) = app.operation_confirm_pending.as_ref() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
@@ -1050,30 +1116,30 @@ impl EventHandler {
             return Ok(Some(AppAction::Continue));
         }
         let panel_height = crate::util::compute_panel_height();
-        let in_panels_view = app.viewer_screen.is_none()
-            && app.editor_screen.is_none()
-            && app.copy_overwrite_dialog.is_none()
-            && app.copy_error_dialog.is_none()
-            && app.operation_confirm_pending.is_none()
-            && app.mkdir_dialog.is_none()
-            && app.archive_dialog.is_none()
-            && app.new_file_dialog.is_none()
-            && app.new_file_error.is_none()
-            && app.rename_attr_dialog.is_none()
-            && app.size_info_dialog.is_none()
-            && app.settings_dialog.is_none()
-            && !app.help_dialog;
+        let panels_mouse = Self::panels_and_menu_mouse_enabled(app);
 
         match mouse_event.kind {
-            MouseEventKind::ScrollUp => app.active_panel_mut().move_up(panel_height),
-            MouseEventKind::ScrollDown => app.active_panel_mut().move_down(panel_height),
+            MouseEventKind::ScrollUp => {
+                if panels_mouse {
+                    app.active_panel_mut().move_up(panel_height);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if panels_mouse {
+                    app.active_panel_mut().move_down(panel_height);
+                }
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 if mouse_event.row == term_h.saturating_sub(1) {
-                    if let Some(action) = Self::hit_test_menu_bar(mouse_event.column, term_w, app) {
-                        return Ok(Some(action));
+                    if panels_mouse {
+                        if let Some(action) =
+                            Self::hit_test_menu_bar(mouse_event.column, term_w, app)
+                        {
+                            return Ok(Some(action));
+                        }
                     }
                 }
-                if in_panels_view {
+                if panels_mouse {
                     if let Some((panel_index, file_index)) = Self::hit_test_panel(
                         mouse_event.column,
                         mouse_event.row,

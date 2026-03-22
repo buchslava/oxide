@@ -14,8 +14,6 @@ use crate::app::state::AppState;
 use crate::app::events::{AppAction, SettingChange};
 use crate::dialogs::settings_dialog::draw_panel_section;
 
-const OVERLAY_MIN_W: u16 = 28;
-const OVERLAY_MIN_H: u16 = 18;
 const HINT_H: u16 = 1;
 
 /// Open the Left panel settings overlay (Ctrl+Q). Closes the right panel overlay if open.
@@ -49,8 +47,9 @@ fn draw_overlay(
     content_focus: usize,
     is_left: bool,
 ) {
-    let w = OVERLAY_MIN_W.min(panel_rect.width.saturating_sub(2));
-    let h = OVERLAY_MIN_H.min(panel_rect.height.saturating_sub(2));
+    // Fill the panel (minus a 1-cell border); the old MIN.min(available) capped width at 28.
+    let w = panel_rect.width.saturating_sub(2).max(1);
+    let h = panel_rect.height.saturating_sub(2).max(1);
     let x = panel_rect.x + (panel_rect.width.saturating_sub(w)) / 2;
     let y = panel_rect.y + (panel_rect.height.saturating_sub(h)) / 2;
     let rect = Rect {

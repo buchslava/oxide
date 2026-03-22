@@ -221,13 +221,6 @@ pub fn draw(
     }
     let area = f.area();
 
-    // Modal: dim the entire screen so the dialog is clearly on top
-    let dim_style = Style::default()
-        .bg(Color::Rgb(18, 18, 24))
-        .fg(Color::DarkGray);
-    let dim_block = Block::default().borders(Borders::NONE).style(dim_style);
-    f.render_widget(dim_block, area);
-
     const MIN_W: u16 = 76;
     const MIN_H: u16 = 30;
     let w = MIN_W.min(area.width.saturating_sub(4));

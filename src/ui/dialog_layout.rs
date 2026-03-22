@@ -1,6 +1,11 @@
 //! Shared layout helpers for centered modal dialogs. Single source of truth for rect/content math.
 
-use ratatui::layout::{Margin, Rect};
+use ratatui::{
+    layout::{Margin, Rect},
+    style::{Color, Style},
+    widgets::{Block, Borders},
+    Frame,
+};
 
 /// Default horizontal padding inside dialog content (used by most dialogs).
 pub const DEFAULT_PAD_H: u16 = 2;
@@ -115,4 +120,16 @@ pub fn two_button_rects(
             height: 1,
         },
     )
+}
+
+/// Full-screen dim layer so panels read as disabled behind any modal (same palette as F1 Help).
+pub fn paint_modal_dim_layer(f: &mut Frame) {
+    let area = f.area();
+    let dim_style = Style::default()
+        .bg(Color::Rgb(18, 18, 24))
+        .fg(Color::DarkGray);
+    f.render_widget(
+        Block::default().borders(Borders::NONE).style(dim_style),
+        area,
+    );
 }

@@ -99,6 +99,26 @@ fn truncate_for_width(
 }
 
 impl Renderer {
+    /// True when a modal dialog or progress overlay is drawn on top of the panel view (F1-style dim layer).
+    fn modal_dim_backdrop_active(app: &AppState) -> bool {
+        app.copy_progress.is_some()
+            || app.archive_progress.is_some()
+            || app.copy_overwrite_dialog.is_some()
+            || app.copy_error_dialog.is_some()
+            || app.operation_confirm_pending.is_some()
+            || app.mkdir_dialog.is_some()
+            || app.archive_dialog.is_some()
+            || app.new_file_dialog.is_some()
+            || app.new_file_error.is_some()
+            || app.rename_attr_dialog.is_some()
+            || app.help_dialog
+            || app.settings_dialog.is_some()
+            || app.find_dialog.is_some()
+            || app.left_panel_settings_overlay.is_some()
+            || app.right_panel_settings_overlay.is_some()
+            || app.size_info_dialog.is_some()
+    }
+
     /// MC-style: panels + status + command line; or viewer (F3) or editor (F4) with optional confirm dialog.
     pub fn draw_ui(
         f: &mut Frame,
@@ -113,6 +133,9 @@ impl Renderer {
             return;
         }
         Self::draw_panels_view(f, app);
+        if Self::modal_dim_backdrop_active(app) {
+            crate::ui::dialog_layout::paint_modal_dim_layer(f);
+        }
         if let Some(ref progress) = app.copy_progress {
             Self::draw_copy_progress(f, progress);
         }

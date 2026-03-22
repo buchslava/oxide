@@ -261,10 +261,11 @@ pub fn draw(
     };
 
     let area = f.area();
-    const MIN_W: u16 = 72;
-    const MIN_H: u16 = 28;
-    let w = MIN_W.min(area.width.saturating_sub(4));
-    let h = MIN_H.min(area.height.saturating_sub(4));
+    // Use almost the full terminal so long labels (General, Info) are not clipped.
+    // Previously MIN.min(available) wrongly capped the dialog at a small fixed size.
+    const MARGIN: u16 = 4;
+    let w = area.width.saturating_sub(MARGIN).max(1);
+    let h = area.height.saturating_sub(MARGIN).max(1);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect {
@@ -305,7 +306,7 @@ pub fn draw(
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(24), Constraint::Min(20)])
+        .constraints([Constraint::Length(26), Constraint::Min(24)])
         .split(content_rect);
 
     let left_area = chunks[0];
