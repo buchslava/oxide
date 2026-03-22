@@ -18,6 +18,8 @@ use ratatui::{
 
 /// Dark background for main content area (panels, command line). Ensures consistent look across terminals.
 const MAIN_DARK_BG: Color = Color::Rgb(30, 30, 35);
+/// Bottom bar: human-readable size color (size is right-aligned in each panel; filename stays left).
+const BOTTOM_BAR_SIZE_FG: Color = Color::Rgb(170, 200, 220);
 
 pub struct Renderer;
 
@@ -46,12 +48,94 @@ fn format_mtime(t: &std::time::SystemTime) -> String {
     format!("{} {}", date, time)
 }
 
-/// Filename only for bottom bar display (no path).
-fn filename_for_bottom_bar(file: Option<&FileInfo>) -> String {
+/// Name and optional size label for bottom bar (no path).
+fn bottom_bar_filename_parts(file: Option<&FileInfo>) -> (String, Option<String>) {
     match file {
-        None => String::new(),
-        Some(f) => f.name.trim_end_matches('/').to_string(),
+        None => (String::new(), None),
+        Some(f) => {
+            let name = f.name.trim_end_matches('/').to_string();
+            let sz = size_display(f);
+            if sz.is_empty() {
+                (name, None)
+            } else {
+                (name, Some(sz))
+            }
+        }
     }
+}
+
+/// Truncate `name` so `name + gap + size` fits within `max_width` characters.
+fn truncate_bottom_bar_name(
+    name: &str,
+    suffix_chars: usize,
+    max_width: usize,
+) -> String {
+    let name_max = max_width.saturating_sub(suffix_chars);
+    let n = name.chars().count();
+    if n <= name_max {
+        return name.to_string();
+    }
+    if name_max <= 1 {
+        return "…".to_string();
+    }
+    format!(
+        "{}…",
+        name.chars().take(name_max.saturating_sub(1)).collect::<String>()
+    )
+}
+
+/// Bottom label: filename left, file size flush right in `size_style` (within `max_width` chars per panel).
+fn bottom_bar_file_line_padded(
+    file: Option<&FileInfo>,
+    max_width: usize,
+    name_style: Style,
+    size_style: Style,
+) -> Line<'static> {
+    const GAP_MIN: usize = 2;
+    let (name, sz_opt) = bottom_bar_filename_parts(file);
+    let spans: Vec<Span<'static>> = match sz_opt {
+        None => {
+            let display = if name.is_empty() {
+                String::new()
+            } else {
+                truncate_bottom_bar_name(&name, 0, max_width)
+            };
+            let used = display.chars().count();
+            let pad = max_width.saturating_sub(used);
+            let mut v = vec![Span::styled(display, name_style)];
+            if pad > 0 {
+                v.push(Span::styled(" ".repeat(pad), name_style));
+            }
+            v
+        }
+        Some(sz) => {
+            let max_sz = if name.is_empty() {
+                max_width
+            } else {
+                max_width.saturating_sub(GAP_MIN + 1)
+            };
+            let sz_display = if sz.chars().count() <= max_sz {
+                sz
+            } else {
+                truncate_bottom_bar_name(&sz, 0, max_sz.max(1))
+            };
+            let sz_len = sz_display.chars().count();
+            let name_budget = max_width.saturating_sub(sz_len + GAP_MIN);
+            let name_display = if name.is_empty() || name_budget == 0 {
+                String::new()
+            } else {
+                truncate_bottom_bar_name(&name, 0, name_budget)
+            };
+            let name_len = name_display.chars().count();
+            let pad_len = max_width.saturating_sub(name_len + sz_len);
+            vec![
+                Span::styled(name_display, name_style),
+                Span::styled(" ".repeat(pad_len), name_style),
+                Span::styled(sz_display, size_style),
+            ]
+        }
+    };
+    Line::from(spans)
 }
 
 /// Size display: nothing for dirs (including ".."), human-readable for files.
@@ -1058,7 +1142,7 @@ impl Renderer {
         Self::draw_menu_bar(f, menu_rect, app);
     }
 
-    /// Bottom bar: filename (without path) per panel; size info (Ctrl+G) replaces active panel's filename; disk space only on Ctrl+G.
+    /// Bottom bar: filename left, file size right (second color) per panel; Ctrl+G replaces active side with green size summary; disk space only on Ctrl+G.
     fn draw_bottom_file_bar(
         f: &mut Frame,
         app: &AppState,
@@ -1080,44 +1164,41 @@ impl Renderer {
         let size_info_line = crate::dialogs::size_info_dialog::format_bottom_bar_line(app);
         let active = app.active_panel();
 
-        let left_text = if active == 0 {
-            size_info_line
-                .clone()
-                .unwrap_or_else(|| filename_for_bottom_bar(app.left_panel().get_selected_file()))
-        } else {
-            filename_for_bottom_bar(app.left_panel().get_selected_file())
-        };
-        let right_text = if active == 1 {
-            size_info_line
-                .clone()
-                .unwrap_or_else(|| filename_for_bottom_bar(app.right_panel().get_selected_file()))
-        } else {
-            filename_for_bottom_bar(app.right_panel().get_selected_file())
-        };
-
         let filename_color = Color::Rgb(255, 180, 80); // orange, matches path
-        let left_style = if active == 0 && size_info_line.is_some() {
-            bar_style.fg(Color::Green)
-        } else {
-            bar_style.fg(filename_color)
-        };
-        let right_style = if active == 1 && size_info_line.is_some() {
-            bar_style.fg(Color::Green)
-        } else {
-            bar_style.fg(filename_color)
-        };
+        let name_style_bar = Style::default().bg(MAIN_DARK_BG).fg(filename_color);
+        let size_style_bar = Style::default().bg(MAIN_DARK_BG).fg(BOTTOM_BAR_SIZE_FG);
 
-        let left_trunc: String = left_text.chars().take(left_half_w).collect();
-        let left_pad = left_half_w.saturating_sub(left_trunc.chars().count());
-        f.render_widget(
-            Paragraph::new(format!("{}{}", left_trunc, " ".repeat(left_pad))).style(left_style),
-            Rect {
-                x: area.x,
-                y: area.y,
-                width: left_half_w as u16,
-                height: 1,
-            },
-        );
+        if active == 0 && size_info_line.is_some() {
+            let left_text = size_info_line.as_ref().unwrap().clone();
+            let left_trunc: String = left_text.chars().take(left_half_w).collect();
+            let left_pad = left_half_w.saturating_sub(left_trunc.chars().count());
+            f.render_widget(
+                Paragraph::new(format!("{}{}", left_trunc, " ".repeat(left_pad)))
+                    .style(bar_style.fg(Color::Green)),
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: left_half_w as u16,
+                    height: 1,
+                },
+            );
+        } else {
+            let line = bottom_bar_file_line_padded(
+                app.left_panel().get_selected_file(),
+                left_half_w,
+                name_style_bar,
+                size_style_bar,
+            );
+            f.render_widget(
+                Paragraph::new(line),
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: left_half_w as u16,
+                    height: 1,
+                },
+            );
+        }
         f.render_widget(
             Paragraph::new("│").style(bar_style),
             Rect {
@@ -1128,18 +1209,37 @@ impl Renderer {
             },
         );
 
-        let right_trunc: String = right_text.chars().take(right_content_w).collect();
-        let right_pad = right_content_w.saturating_sub(right_trunc.chars().count());
-        let right_display = format!("{}{}", right_trunc, " ".repeat(right_pad));
-        f.render_widget(
-            Paragraph::new(right_display).style(right_style),
-            Rect {
-                x: sep_x + 1,
-                y: area.y,
-                width: right_content_w as u16,
-                height: 1,
-            },
-        );
+        if active == 1 && size_info_line.is_some() {
+            let right_text = size_info_line.as_ref().unwrap().clone();
+            let right_trunc: String = right_text.chars().take(right_content_w).collect();
+            let right_pad = right_content_w.saturating_sub(right_trunc.chars().count());
+            let right_display = format!("{}{}", right_trunc, " ".repeat(right_pad));
+            f.render_widget(
+                Paragraph::new(right_display).style(bar_style.fg(Color::Green)),
+                Rect {
+                    x: sep_x + 1,
+                    y: area.y,
+                    width: right_content_w as u16,
+                    height: 1,
+                },
+            );
+        } else {
+            let line = bottom_bar_file_line_padded(
+                app.right_panel().get_selected_file(),
+                right_content_w,
+                name_style_bar,
+                size_style_bar,
+            );
+            f.render_widget(
+                Paragraph::new(line),
+                Rect {
+                    x: sep_x + 1,
+                    y: area.y,
+                    width: right_content_w as u16,
+                    height: 1,
+                },
+            );
+        }
 
         if show_disk && right_total_w > right_content_w {
             let disk = disk_space_summary(app.get_current_dir());
