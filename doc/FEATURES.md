@@ -5,6 +5,7 @@
 - **Two-panel layout** — Single- or double-column view modes
 - **Full keyboard navigation** — Arrow keys, Tab, Enter, F-keys
 - **File operations** — Copy, move, delete with overwrite and error handling
+- **Safe delete (F9 → General)** — When **on** (default), **F8** delete moves filesystem files and folders to the **OS trash** where supported (macOS; Linux when a standard trash location is writable). When **off**, or when trash is not available on the platform, delete is **permanent**. Deleting entries inside a **ZIP** panel still removes them from the archive only (not the system trash). Stored in `~/.oxide/settings.json`.
 - **Viewer (F3)** — Text and hex modes, scroll. Large files are read in a background thread so Esc closes immediately; a "Loading…" screen is shown until the read completes. In text mode, binary and non-printable characters are shown as `.` to avoid terminal corruption
 - **Embedded editor (F4)** — Syntax highlighting, Ctrl+F search, save/discard
 - **Create directory (F7)**
@@ -15,6 +16,7 @@
 - **Command line** — Run shell commands; F12 inserts the current (selected) file name at the cursor without running (Enter runs the command)
 - **Mouse support** — Clicks, scroll
 - **Disk space display** — Shows usage on Unix
+- **Find file (Ctrl+F)** — Search under a start directory by file name pattern (and optional text-in-file). **File pattern mode** (wildcards vs regex) is set in **F9 → General**. **Wildcards:** `*` and `?`; use **`|`** to give several alternative globs in one field (e.g. `Screenshot*|*.zip|file*`). **`|`** is only split into multiple globs in wildcard mode — in **regex** mode, `|` is normal regex alternation. **Ignore pattern** (optional) uses the same wildcard/regex rules as the file pattern, but is matched against the **path relative to the start directory** (forward slashes); if it matches, that hit is skipped. Example: file pattern `*.zip`, ignore `*node_modules*` finds zip files but not under any `node_modules` segment.
 
 ## Key Bindings
 
@@ -65,6 +67,19 @@ When focus is on the command line (e.g. after typing a character or F6):
 | Ctrl+T | View mode |
 | Type char | Focus command line and insert character |
 | Tab/Esc | Panel focus |
+
+### Find file (Ctrl+F)
+
+- **Fields:** start directory; **file pattern**; optional **ignore pattern**; optional **content** search string.
+- **Pattern mode (F9 → General):** **Wildcards** (`*`, `?`) or **regex**. In wildcard mode, **several globs in one field** are written **pipe-separated** — a file name matches if **any** segment matches (e.g. `Screenshot*|*.zip|file*`). In regex mode, `|` is ordinary regex alternation (the pattern is **not** split).
+- **Ignore pattern** — Optional; **same wildcard/regex rules** as the file pattern, but matched against the **path relative to the start directory** (with `/` separators). If it matches, that hit is **excluded** (e.g. file pattern `*.zip` with ignore `*node_modules*` lists zip files but skips paths that contain `node_modules`).
+
+While the dialog is open: **Tab / ↑↓** move between fields and options; **Enter** starts the search or (on a result) changes directory; **Esc** closes. **F3** / **F4** on a result view or edit; dialog stays open.
+
+### Settings (F9)
+
+- **General → Safe delete** — Toggles whether **F8** delete uses the **system trash** (when supported) or **immediate removal**. Default is on. If the OS trash is not usable (unsupported OS or trash location not writable), the control is shown as unavailable and deletes are permanent.
+- Other sections: panel view/sort/hidden, autosave, shell sync, file pattern mode (wildcards vs regex for Find and **+**/**−**), app info.
 
 ### Editor (F4)
 

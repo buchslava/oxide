@@ -9,8 +9,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::state::AppState;
 use crate::app::events::AppAction;
+use crate::app::state::AppState;
 
 /// Open the Help dialog.
 pub fn open(app: &mut AppState) {
@@ -34,186 +34,306 @@ pub fn handle_key(
     }
 }
 
+/// Section title: left marker + bold cyan heading.
+fn help_h(title: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "  ▸ ",
+            Style::default().fg(Color::Rgb(90, 170, 210)),
+        ),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(150, 230, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+/// Blank line between sections.
+fn help_spacer() -> Line<'static> {
+    Line::from("")
+}
+
+/// Muted body line (secondary description).
+fn help_muted(text: &'static str) -> Line<'static> {
+    Line::from(vec![Span::styled(
+        text,
+        Style::default().fg(Color::Rgb(165, 172, 185)),
+    )])
+}
+
 fn help_lines() -> Vec<Line<'static>> {
-    let heading = Color::Cyan;
-    let key = Color::Rgb(255, 200, 100); // warm accent for keys
-    let dim = Color::DarkGray;
+    let key = Color::Rgb(255, 205, 120);
+    let body = Color::Rgb(235, 238, 245);
+    let dim = Color::Rgb(165, 172, 185);
+
+    let k = |s: &'static str| Span::styled(s, Style::default().fg(key).add_modifier(Modifier::BOLD));
+    let t = |s: &'static str| Span::raw(s);
 
     vec![
+        help_h("Features"),
         Line::from(vec![
-            Span::styled("  Navigation", heading),
-            Span::raw(" — panels & command line"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("    "),
-            Span::styled("↑ ↓", key),
-            Span::raw("  PgUp / PgDn    Move in list"),
-        ]),
-        Line::from(vec![
-            Span::raw("    "),
-            Span::styled("← →", key),
-            Span::raw("                 Move one column"),
+            t("    "),
+            Span::styled("Dual panels", Style::default().fg(body)),
+            t(" — full keyboard + mouse. "),
+            k("F5–F8"),
+            Span::styled(" copy, move, delete. ", Style::default().fg(body)),
+            k("Ctrl+T"),
+            Span::styled(" column layout.", Style::default().fg(body)),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Tab", key),
-            Span::raw("                  Switch active panel"),
+            t("    "),
+            k("F3"),
+            Span::styled(" viewer (text/hex) · ", Style::default().fg(body)),
+            k("F4"),
+            Span::styled(" editor · ", Style::default().fg(body)),
+            k("F7"),
+            Span::styled(" mkdir · ", Style::default().fg(body)),
+            k("F2"),
+            Span::styled(" rename & attributes.", Style::default().fg(body)),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Enter", key),
-            Span::raw("                Open directory or run file"),
+            t("    "),
+            k("Ctrl+G"),
+            Span::styled(" size · ", Style::default().fg(body)),
+            k("Ctrl+H"),
+            Span::styled(" hidden · ", Style::default().fg(body)),
+            k("Ctrl+O"),
+            Span::styled(" shell · disk space (Unix).", Style::default().fg(body)),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Space", key),
-            Span::raw("                Mark item   "),
-            Span::styled("*", key),
-            Span::raw("  Invert selection"),
+            t("    "),
+            k("Ctrl+F"),
+            Span::styled(" find · ", Style::default().fg(body)),
+            k("Ctrl+A"),
+            Span::styled(" zip · ", Style::default().fg(body)),
+            k("Ctrl+N"),
+            Span::styled(" new file. Cmd line: ", Style::default().fg(body)),
+            k("F12"),
+            Span::styled(" inserts name.", Style::default().fg(body)),
+        ]),
+        help_muted("    Large viewer files load in background; non-printable text shown as “.”"),
+        help_spacer(),
+        help_h("Navigation"),
+        Line::from(vec![
+            t("    "),
+            k("↑ ↓"),
+            t("  PgUp / PgDn     Move in list"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("+", key),
-            Span::raw(" / "),
-            Span::styled("-", key),
-            Span::raw("              Mark / unmark by file pattern (F9: wildcards or regex)"),
+            t("    "),
+            k("← →"),
+            t("                 Move between columns"),
         ]),
         Line::from(vec![
-            Span::raw("    Type a key   Go to command line   "),
-            Span::styled("Tab / Esc", key),
-            Span::raw("  Back to panel"),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  Function keys", heading)]),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("    "),
-            Span::styled("F1", key),
-            Span::raw("  Help    "),
-            Span::styled("F2", key),
-            Span::raw("  Rename/attrs  "),
-            Span::styled("F3", key),
-            Span::raw("  View    "),
-            Span::styled("F4", key),
-            Span::raw("  Edit"),
+            t("    "),
+            k("Tab"),
+            t("                  Switch active panel"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("F5", key),
-            Span::raw("  Copy    "),
-            Span::styled("F6", key),
-            Span::raw("  Move    "),
-            Span::styled("F7", key),
-            Span::raw("  New dir  "),
-            Span::styled("F8", key),
-            Span::raw("  Delete"),
+            t("    "),
+            k("Enter"),
+            t("                Open directory or run file"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("F9", key),
-            Span::raw("  Settings      "),
-            Span::styled("F10", key),
-            Span::raw("  Quit"),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  Shortcuts", heading)]),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Ctrl+O", key),
-            Span::raw("  Shell   "),
-            Span::styled("Ctrl+H", key),
-            Span::raw("  Toggle hidden   "),
-            Span::styled("Ctrl+G", key),
-            Span::raw("  Size of selection"),
+            t("    "),
+            k("Space"),
+            t("                Mark      "),
+            k("*"),
+            t("  Invert selection"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Ctrl+R", key),
-            Span::raw("  Refresh   "),
-            Span::styled("Ctrl+T", key),
-            Span::raw("  One/two columns   "),
-            Span::styled("Ctrl+Q/W", key),
-            Span::raw("  Panel settings"),
+            t("    "),
+            k("+"),
+            t(" / "),
+            k("-"),
+            t("              Mark / unmark by pattern  ("),
+            k("F9"),
+            t(": wildcards or regex; "),
+            k("|"),
+            t(" = multiple globs)"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Ctrl+F", key),
-            Span::raw("  Find file   "),
-            Span::styled("Ctrl+A", key),
-            Span::raw("  Archive (zip) selected"),
+            t("    Type a character → command line   "),
+            k("Tab / Esc"),
+            t("  Back to panels"),
+        ]),
+        help_spacer(),
+        help_h("Function keys"),
+        Line::from(vec![
+            t("    "),
+            k("F1"),
+            t("  Help      "),
+            k("F2"),
+            t("  Rename    "),
+            k("F3"),
+            t("  View      "),
+            k("F4"),
+            t("  Edit"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Ctrl+N", key),
-            Span::raw("  New file (in current dir or archive)"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Find file", heading),
-            Span::raw(" (Ctrl+F)"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("    Set start dir, file pattern (F9: "),
-            Span::styled("* ?", key),
-            Span::raw(" wildcards or regex), optional content pattern."),
+            t("    "),
+            k("F5"),
+            t("  Copy      "),
+            k("F6"),
+            t("  Move      "),
+            k("F7"),
+            t("  New dir   "),
+            k("F8"),
+            t("  Delete"),
         ]),
         Line::from(vec![
-            Span::raw("    "),
-            Span::styled("Tab / ↑↓", key),
-            Span::raw("  Move   "),
-            Span::styled("Enter", key),
-            Span::raw("  Start search or chdir to result   "),
-            Span::styled("Esc", key),
-            Span::raw("  Close"),
+            t("    "),
+            k("F9"),
+            t("  Settings  "),
+            k("F10"),
+            t(" Quit"),
+        ]),
+        help_spacer(),
+        help_h("Settings (F9) — General"),
+        Line::from(vec![
+            t("    "),
+            k("Safe delete"),
+            Span::styled(
+                " — On (default): F8 moves to OS trash when supported. Off: permanent delete.",
+                Style::default().fg(body),
+            ),
+        ]),
+        help_muted("    ZIP panels: entries removed inside the archive only. Trash N/A → option dimmed."),
+        Line::from(vec![
+            t("    "),
+            Span::styled("Also:", Style::default().fg(body)),
+            Span::styled(
+                " autosave · shell sync · panel view/sort · ",
+                Style::default().fg(body),
+            ),
+            k("file pattern"),
+            Span::styled(" (wildcards vs regex for Find & +/−).", Style::default().fg(body)),
+        ]),
+        help_spacer(),
+        help_h("Shortcuts"),
+        Line::from(vec![
+            t("    "),
+            k("Ctrl+O"),
+            t("  Shell       "),
+            k("Ctrl+H"),
+            t("  Hidden    "),
+            k("Ctrl+G"),
+            t("  Size"),
         ]),
         Line::from(vec![
-            Span::raw("    On a result: "),
-            Span::styled("F3", key),
-            Span::raw(" View   "),
-            Span::styled("F4", key),
-            Span::raw(" Edit (dialog stays open)"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Viewer", heading),
-            Span::raw(" (F3)  — "),
-            Span::styled("Esc", key),
-            Span::raw(" close   "),
-            Span::styled("H", key),
-            Span::raw(" hex/text   "),
-            Span::styled("↑↓", key),
-            Span::raw(" scroll"),
+            t("    "),
+            k("Ctrl+R"),
+            t("  Refresh     "),
+            k("Ctrl+T"),
+            t("  Columns   "),
+            k("Ctrl+Q/W"),
+            t("  Panel settings"),
         ]),
         Line::from(vec![
-            Span::styled("  Editor", heading),
-            Span::raw(" (F4)  — "),
-            Span::styled("F2", key),
-            Span::raw(" Save   "),
-            Span::styled("Esc", key),
-            Span::raw(" exit   "),
-            Span::styled("Ctrl+F", key),
-            Span::raw(" Find in file   "),
-            Span::styled("Ctrl+C/V", key),
-            Span::raw(" Copy/Paste"),
+            t("    "),
+            k("Ctrl+F"),
+            t("  Find        "),
+            k("Ctrl+A"),
+            t("  Archive   "),
+            k("Ctrl+N"),
+            t("  New file"),
         ]),
-        Line::from(""),
+        help_spacer(),
+        help_h("Find file (Ctrl+F)"),
         Line::from(vec![
-            Span::styled("  Dialogs", heading),
-            Span::raw(" — "),
-            Span::styled("Tab / ↑↓", key),
-            Span::raw(" choose   "),
-            Span::styled("Enter", key),
-            Span::raw(" confirm   "),
-            Span::styled("Esc", key),
-            Span::raw(" cancel"),
+            t("    "),
+            Span::styled(
+                "Start dir, file pattern, optional ignore & content. Mode: ",
+                Style::default().fg(body),
+            ),
+            k("F9"),
+            Span::styled(" → ", Style::default().fg(body)),
+            k("* ?"),
+            Span::styled(" wildcards or regex.", Style::default().fg(body)),
         ]),
-        Line::from(""),
+        Line::from(vec![
+            t("    "),
+            k("Wildcards"),
+            Span::styled(": ", Style::default().fg(body)),
+            k("|"),
+            Span::styled(" separates globs (e.g. ", Style::default().fg(body)),
+            k("a*|b?"),
+            Span::styled("). ", Style::default().fg(body)),
+            k("Regex"),
+            Span::styled(": ", Style::default().fg(body)),
+            k("|"),
+            Span::styled(" is alternation (not split).", Style::default().fg(body)),
+        ]),
+        Line::from(vec![
+            t("    "),
+            k("Ignore"),
+            Span::styled(
+                ": same rules; matched on path relative to start — excluded if it matches",
+                Style::default().fg(body),
+            ),
+            t(" ("),
+            k("*.zip"),
+            Span::styled(" + ignore ", Style::default().fg(body)),
+            k("*node_modules*"),
+            Span::styled(" …).", Style::default().fg(body)),
+        ]),
+        Line::from(vec![
+            t("    "),
+            k("Tab / ↑↓"),
+            t("  Navigate   "),
+            k("Enter"),
+            t("  Search / chdir   "),
+            k("Esc"),
+            t("  Close"),
+        ]),
+        Line::from(vec![
+            t("    Result: "),
+            k("F3"),
+            t(" view · "),
+            k("F4"),
+            t(" edit (dialog stays open)"),
+        ]),
+        help_spacer(),
+        help_h("Viewer (F3)"),
+        Line::from(vec![
+            t("    "),
+            k("Esc"),
+            t(" close   "),
+            k("H"),
+            t(" hex/text   "),
+            k("↑↓"),
+            t(" scroll"),
+        ]),
+        help_spacer(),
+        help_h("Editor (F4)"),
+        Line::from(vec![
+            t("    "),
+            k("F2"),
+            t(" save   "),
+            k("Esc"),
+            t(" exit   "),
+            k("Ctrl+F"),
+            t(" find in file   "),
+            k("Ctrl+C/V"),
+            t(" copy/paste"),
+        ]),
+        help_spacer(),
+        help_h("Dialogs"),
+        Line::from(vec![
+            t("    "),
+            k("Tab / ↑↓"),
+            t("  focus   "),
+            k("Enter"),
+            t("  confirm   "),
+            k("Esc"),
+            t("  cancel"),
+        ]),
+        help_spacer(),
         Line::from(vec![Span::styled(
-            "  Esc  or  click  anywhere  to  close  this  help",
-            dim,
+            "  Esc or click anywhere to close this help",
+            Style::default().fg(dim).add_modifier(Modifier::ITALIC),
         )]),
     ]
 }
@@ -228,10 +348,13 @@ pub fn draw(
     }
     let area = f.area();
 
-    const MIN_W: u16 = 76;
-    const MIN_H: u16 = 30;
-    let w = MIN_W.min(area.width.saturating_sub(4));
-    let h = MIN_H.min(area.height.saturating_sub(4));
+    let margin = 4u16;
+    let max_w = area.width.saturating_sub(margin);
+    let max_h = area.height.saturating_sub(margin);
+    // Wide terminals: use up to 122 cols; narrow: use what we have (min ~64).
+    let w = max_w.min(122);
+    let h = max_h.min(56);
+
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect {
@@ -241,11 +364,11 @@ pub fn draw(
         height: h,
     };
 
-    let dialog_bg = Color::Rgb(36, 38, 42);
-    let fill_style = Style::default().bg(dialog_bg).fg(Color::White);
+    let dialog_bg = Color::Rgb(32, 34, 40);
+    let fill_style = Style::default().bg(dialog_bg).fg(Color::Rgb(235, 238, 245));
     let border_style = Style::default()
         .bg(dialog_bg)
-        .fg(Color::Cyan)
+        .fg(Color::Rgb(130, 210, 255))
         .add_modifier(Modifier::BOLD);
 
     f.render_widget(Clear, rect);
@@ -256,7 +379,7 @@ pub fn draw(
     f.render_widget(block, rect);
 
     let inner = rect.inner(Margin {
-        horizontal: 1,
+        horizontal: 2,
         vertical: 1,
     });
     let hint_h = 1u16;
@@ -280,8 +403,10 @@ pub fn draw(
     };
     f.render_widget(
         Paragraph::new(Span::styled(
-            " Esc  close  ·  click  anywhere  to  dismiss ",
-            fill_style.fg(Color::DarkGray),
+            " Esc  ·  q  close   ·   click outside to dismiss ",
+            Style::default()
+                .bg(dialog_bg)
+                .fg(Color::Rgb(150, 158, 172)),
         ))
         .alignment(Alignment::Center),
         hint_rect,

@@ -22,6 +22,15 @@ use crate::ui::styles::{
 };
 use crate::ui::text_input::{self, TextInputState};
 
+// High-contrast foregrounds for F2; panel backgrounds (DIALOG_BG, inputs, blue focus) unchanged.
+const F2_TEXT: Color = Color::Rgb(255, 255, 255);
+/// Hints / secondary lines (replaces DarkGray on grey).
+const F2_TEXT_DIM: Color = Color::Rgb(205, 212, 222);
+/// Section borders and outer title when not focused.
+const F2_BORDER: Color = Color::Rgb(115, 235, 255);
+/// Focused section border.
+const F2_BORDER_FOCUS: Color = Color::Rgb(255, 255, 110);
+
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenameAttrField {
@@ -620,14 +629,14 @@ pub fn draw(
         width: w,
         height: h,
     };
-    let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
-    let cyan = Style::default().fg(Color::Cyan);
-    let focus_border = Style::default().fg(Color::Yellow);
+    let fill_style = Style::default().bg(DIALOG_BG).fg(F2_TEXT);
+    let border_idle = Style::default().fg(F2_BORDER);
+    let border_focus = Style::default().fg(F2_BORDER_FOCUS);
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Rename / Attributes ")
-        .style(fill_style.fg(Color::Cyan));
+        .style(fill_style.fg(F2_BORDER));
     f.render_widget(block, rect);
     let inner = rect.inner(Margin {
         horizontal: 1,
@@ -673,10 +682,10 @@ pub fn draw(
                 width: name_inner.width,
                 height: 1,
             };
-            let base_style = fill_style.bg(name_input_bg).fg(Color::White);
+            let base_style = fill_style.bg(name_input_bg).fg(F2_TEXT);
             let selection_style = Style::default()
                 .bg(DIALOG_INPUT_SELECTION_BG)
-                .fg(Color::White);
+                .fg(F2_TEXT);
             let line = text_input::input_line_with_selection(
                 name_input,
                 name_rect.width as usize,
@@ -703,9 +712,9 @@ pub fn draw(
     }
 
     let name_block_style = if focus == RenameAttrField::Name {
-        focus_border
+        border_focus
     } else {
-        cyan
+        border_idle
     };
     f.render_widget(
         Block::default()
@@ -768,7 +777,7 @@ pub fn draw(
         let checked = mode_has_bit(*mode, PERM_BITS[i]);
         let mark = if checked { "[x]" } else { "[ ]" };
         let style = if i == *perm_focus {
-            fill_style.bg(Color::Blue).fg(Color::White)
+            fill_style.bg(Color::Blue).fg(F2_TEXT)
         } else {
             fill_style
         };
@@ -785,7 +794,7 @@ pub fn draw(
     let octal = format!("{:o}", *mode & 0o7777);
     f.render_widget(
         Paragraph::new(format!("Permissions (octal): {}", octal))
-            .style(Style::default().fg(Color::DarkGray)),
+            .style(fill_style.fg(F2_TEXT_DIM)),
         Rect {
             x: perm_inner.x,
             y: perm_inner.y + 12,
@@ -795,9 +804,9 @@ pub fn draw(
     );
 
     let perm_block_style = if focus == RenameAttrField::Permissions {
-        focus_border
+        border_focus
     } else {
-        cyan
+        border_idle
     };
     f.render_widget(
         Block::default()
@@ -840,7 +849,7 @@ pub fn draw(
         .enumerate()
         .map(|(i, u)| {
             let style = if user_start + i == ui {
-                fill_style.bg(Color::Blue).fg(Color::White)
+                fill_style.bg(Color::Blue).fg(F2_TEXT)
             } else {
                 fill_style
             };
@@ -854,7 +863,7 @@ pub fn draw(
         .enumerate()
         .map(|(i, g)| {
             let style = if group_start + i == gi {
-                fill_style.bg(Color::Blue).fg(Color::White)
+                fill_style.bg(Color::Blue).fg(F2_TEXT)
             } else {
                 fill_style
             };
@@ -863,14 +872,14 @@ pub fn draw(
         .collect();
 
     let user_block_style = if focus == RenameAttrField::User {
-        focus_border
+        border_focus
     } else {
-        cyan
+        border_idle
     };
     let group_block_style = if focus == RenameAttrField::Group {
-        focus_border
+        border_focus
     } else {
-        cyan
+        border_idle
     };
     f.render_widget(
         List::new(user_visible).block(
@@ -901,7 +910,7 @@ pub fn draw(
         Paragraph::new(
             "Tab: switch area   Space: toggle perm   Enter: run   ↑↓: move   Esc: Cancel",
         )
-        .style(Style::default().fg(Color::DarkGray)),
+        .style(fill_style.fg(F2_TEXT_DIM)),
         hint_rect,
     );
 
@@ -918,8 +927,8 @@ pub fn draw(
             height: ah,
         };
         let err_bg = Color::Rgb(60, 60, 60);
-        let err_style = Style::default().bg(err_bg).fg(Color::White);
-        let red = Style::default().fg(Color::Red);
+        let err_style = Style::default().bg(err_bg).fg(F2_TEXT);
+        let red = Style::default().fg(Color::Rgb(255, 90, 90));
         f.render_widget(Clear, alert_rect);
         f.render_widget(
             Block::default()
@@ -948,7 +957,7 @@ pub fn draw(
             },
         );
         f.render_widget(
-            Paragraph::new("Press any key to close").style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new("Press any key to close").style(Style::default().bg(err_bg).fg(F2_TEXT_DIM)),
             Rect {
                 x: inner.x,
                 y: inner.y + inner.height.saturating_sub(1),
