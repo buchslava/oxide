@@ -86,12 +86,17 @@ pub fn move_item<P: AsRef<Path>>(
 
 /// Delete one item (file or directory) at source_dir/name.
 /// is_dir: true = remove directory and contents recursively.
+/// When `use_trash` is true, moves to the OS trash instead of unlinking (see F9 Safe delete).
 pub fn delete_item<P: AsRef<Path>>(
     source_dir: P,
     name: &str,
     is_dir: bool,
+    use_trash: bool,
 ) -> io::Result<()> {
     let path = FileOperations::join_path(source_dir, name);
+    if use_trash {
+        return crate::core::trash_delete::move_to_trash(&path);
+    }
     if is_dir {
         fs::remove_dir_all(&path)
     } else {

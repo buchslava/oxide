@@ -138,6 +138,8 @@ pub enum SettingChange {
     RightSortCycle,
     RightSortCyclePrev,
     RightDirsFirstToggle,
+    /// F9 General: Safe delete (trash vs permanent); only applies when OS trash is available.
+    SafeDeleteToggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

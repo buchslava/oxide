@@ -53,6 +53,8 @@ pub struct CopyInProgress {
     pub skip_all: bool,
     /// When true, future copy/move errors are skipped without showing the error dialog.
     pub ignore_all_errors: bool,
+    /// F8 delete: move to OS trash when true (Safe delete on and trash available).
+    pub use_trash_for_delete: bool,
 }
 
 /// Progress shown during Ctrl+A Archive. Same layout as CopyProgress for the overlay (Source, Target, gauge).

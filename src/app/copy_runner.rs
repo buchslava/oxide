@@ -77,6 +77,7 @@ fn apply_panel_location_copy_step(
                 c.overwrite_all,
                 c.skip_all,
                 c.ignore_all_errors,
+                c.use_trash_for_delete,
             )
         }
     }
@@ -130,6 +131,7 @@ fn spawn_background_directory_delete(
     app: &mut AppState,
     source_dir: String,
     entry_name: String,
+    use_trash: bool,
 ) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -137,6 +139,7 @@ fn spawn_background_directory_delete(
             &source_dir,
             &entry_name,
             true,
+            use_trash,
         ));
     });
     app.delete_pending_rx = Some(rx);
@@ -201,10 +204,20 @@ fn run_copy_step_legacy_delete(
         return;
     }
     if is_dir {
-        spawn_background_directory_delete(app, c.params.source_dir.clone(), name.to_string());
+        spawn_background_directory_delete(
+            app,
+            c.params.source_dir.clone(),
+            name.to_string(),
+            c.use_trash_for_delete,
+        );
         return;
     }
-    match crate::core::copy_ops::delete_item(&c.params.source_dir, name, is_dir) {
+    match crate::core::copy_ops::delete_item(
+        &c.params.source_dir,
+        name,
+        is_dir,
+        c.use_trash_for_delete,
+    ) {
         Ok(()) => c.current_index += 1,
         Err(e) => {
             if c.ignore_all_errors {
@@ -250,6 +263,10 @@ pub(crate) fn start_copy_operation(
         Operation::Delete => String::new(),
     };
 
+    let use_trash_for_delete = operation == Operation::Delete
+        && app.persisted_settings.safe_delete
+        && app.trash_available;
+
     app.copy_in_progress = Some(CopyInProgress {
         operation,
         params,
@@ -257,6 +274,7 @@ pub(crate) fn start_copy_operation(
         overwrite_all: false,
         skip_all: false,
         ignore_all_errors: false,
+        use_trash_for_delete,
     });
     app.copy_progress = Some(CopyProgress {
         operation,
@@ -280,12 +298,14 @@ fn run_copy_step_backend(
     overwrite_all: bool,
     skip_all: bool,
     ignore_all_errors: bool,
+    use_trash_for_delete: bool,
 ) -> (bool, Option<String>, Option<String>) {
     let target_path = target_dir.join(name.trim_end_matches('/'));
 
     if operation == Operation::Delete {
         let items = &[(name.to_string(), is_dir)];
-        return match crate::core::panel_backend::delete_items(source_loc, items) {
+        return match crate::core::panel_backend::delete_items(source_loc, items, use_trash_for_delete)
+        {
             Ok(()) => (true, None, None),
             Err(e) => (
                 ignore_all_errors,

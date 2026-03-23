@@ -77,6 +77,11 @@ pub(crate) fn apply_persisted_setting_change(
         SettingChange::RightDirsFirstToggle => {
             app.persisted_settings.right_dirs_first = !app.persisted_settings.right_dirs_first;
         }
+        SettingChange::SafeDeleteToggle => {
+            if app.trash_available {
+                app.persisted_settings.safe_delete = !app.persisted_settings.safe_delete;
+            }
+        }
     }
 }
 
@@ -88,6 +93,7 @@ pub(crate) fn setting_change_skips_panel_resync(change: SettingChange) -> bool {
             | SettingChange::AutoReopenPanelsAfterCommandToggle
             | SettingChange::AutoReopenPanelsAfterCommandDelayCycle
             | SettingChange::FilePatternModeCycle
+            | SettingChange::SafeDeleteToggle
     )
 }
 

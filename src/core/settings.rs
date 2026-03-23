@@ -56,6 +56,9 @@ pub struct PersistedSettings {
     /// File name matching for Find (Ctrl+F) and +/− pattern selection: "wildcard" (*, ?) or "regex".
     #[serde(default = "default_file_pattern_mode")]
     pub file_pattern_mode: String,
+    /// When true (default), F8 delete moves items to the OS trash when available (F9 Safe delete).
+    #[serde(default = "default_true")]
+    pub safe_delete: bool,
 }
 
 fn default_file_pattern_mode() -> String {
@@ -97,6 +100,7 @@ impl Default for PersistedSettings {
             right_dirs_first: true,
             active_panel: 0,
             file_pattern_mode: default_file_pattern_mode(),
+            safe_delete: true,
         }
     }
 }
@@ -174,5 +178,6 @@ mod tests {
         assert!(json.contains("\"auto_reopen_panels_after_command\""));
         assert!(json.contains("\"auto_reopen_panels_after_command_delay_secs\""));
         assert!(json.contains("\"file_pattern_mode\""));
+        assert!(json.contains("\"safe_delete\""));
     }
 }

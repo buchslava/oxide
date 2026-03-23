@@ -229,7 +229,7 @@ pub fn move_items_to_fs(
     target_dir: &Path,
 ) -> io::Result<()> {
     copy_items_to_fs(source, items, target_dir)?;
-    delete_items(source, items)
+    delete_items(source, items, false)
 }
 
 /// Copy items from any source location into an existing ZIP at the given path.
@@ -252,18 +252,19 @@ pub fn move_items_into_archive(
     path_inside: &str,
 ) -> io::Result<()> {
     copy_items_into_archive(source, items, target_archive, path_inside)?;
-    delete_items(source, items)
+    delete_items(source, items, false)
 }
 
-/// Delete items at location (F8). For Zip, removes entries from the archive.
+/// Delete items at location (F8). For Zip, removes entries from the archive (`use_trash` ignored).
 pub fn delete_items(
     loc: &PanelLocation,
     items: &[(String, bool)],
+    use_trash: bool,
 ) -> io::Result<()> {
     match loc {
         PanelLocation::Fs(p) => {
             for (name, is_dir) in items {
-                copy_ops::delete_item(p, name, *is_dir)?;
+                copy_ops::delete_item(p, name, *is_dir, use_trash)?;
             }
             Ok(())
         }

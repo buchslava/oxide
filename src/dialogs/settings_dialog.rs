@@ -95,7 +95,7 @@ pub fn handle_key(
             if state.focus_left {
                 state.focus_left = false;
             } else if state.selected_section == 0 {
-                state.content_focus = (state.content_focus + 1) % 5;
+                state.content_focus = (state.content_focus + 1) % 6;
             } else if state.selected_section == 1 || state.selected_section == 2 {
                 state.content_focus = (state.content_focus + 1) % 4;
             }
@@ -118,7 +118,7 @@ pub fn handle_key(
             // Right column: Up = previous item or move focus up
             match state.selected_section {
                 0 => {
-                    state.content_focus = (state.content_focus + 1) % 5;
+                    state.content_focus = (state.content_focus + 1) % 6;
                 }
                 1 => {
                     if state.content_focus == 1 {
@@ -153,7 +153,7 @@ pub fn handle_key(
             // Right column: Down = next item or move focus down
             match state.selected_section {
                 0 => {
-                    state.content_focus = (state.content_focus + 1) % 5;
+                    state.content_focus = (state.content_focus + 1) % 6;
                 }
                 1 => {
                     if state.content_focus == 0 {
@@ -205,6 +205,7 @@ pub fn handle_key(
                         SettingChange::AutoReopenPanelsAfterCommandDelayCycle,
                     )),
                     4 => Some(AppAction::SettingChange(SettingChange::FilePatternModeCycle)),
+                    5 => Some(AppAction::SettingChange(SettingChange::SafeDeleteToggle)),
                     _ => None,
                 },
                 1 => match state.content_focus {
@@ -459,6 +460,36 @@ pub fn draw(
                 Rect {
                     x: right_inner.x,
                     y: right_inner.y + 4 * line_h,
+                    width: right_inner.width,
+                    height: line_h,
+                },
+            );
+            let safe_style = if !app.trash_available {
+                right_fill_style.fg(Color::DarkGray)
+            } else if state.content_focus == 5 {
+                view_highlight
+            } else {
+                right_fill_style
+            };
+            let safe_chk = if app.trash_available && persisted.safe_delete {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let safe_suffix = if app.trash_available {
+                " Safe delete"
+            } else {
+                " Safe delete (OS trash unavailable)"
+            };
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::raw(safe_chk),
+                    Span::raw(safe_suffix),
+                ]))
+                .style(safe_style),
+                Rect {
+                    x: right_inner.x,
+                    y: right_inner.y + 5 * line_h,
                     width: right_inner.width,
                     height: line_h,
                 },

@@ -11,3 +11,4 @@ pub mod location;
 pub mod panel_backend;
 pub mod settings;
 pub mod text_format;
+pub mod trash_delete;

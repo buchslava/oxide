@@ -139,6 +139,8 @@ pub struct AppState {
     pub show_hidden_files: bool,
     /// Last saved/loaded settings from ~/.oxide/settings.json. Used to persist on change and for autosave.
     pub persisted_settings: PersistedSettings,
+    /// At startup: OS trash usable for Safe delete (Linux: writable XDG data dir; macOS: yes).
+    pub trash_available: bool,
 }
 
 pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
@@ -226,6 +228,7 @@ impl AppState {
             last_file_name_pattern: String::new(),
             show_hidden_files: true,
             persisted_settings: settings,
+            trash_available: crate::core::trash_delete::trash_available(),
         };
         app.sync_from_persisted_settings();
         Ok(app)
