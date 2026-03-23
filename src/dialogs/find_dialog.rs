@@ -1,5 +1,8 @@
 //! Ctrl+F Find file dialog (MC-style). Parameter form (start dir, file pattern, content pattern,
-//! options), then results list. File pattern uses wildcards (*, ?) or regex per F9 Settings. Optional content search.
+//! options), then results list. File pattern uses wildcards (*, ?) or regex per F9 Settings.
+//! In wildcard mode, `|` separates alternative globs (e.g. `a*|b?`). **Ignore pattern** uses the same
+//! rules but is matched against the path relative to the start directory (exclude matching paths).
+//! Optional content search.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -42,6 +45,8 @@ pub struct FindDialogState {
     pub phase: FindDialogPhase,
     pub start_dir_input: TextInputState,
     pub file_pattern_input: TextInputState,
+    /// Same wildcard/regex semantics as file pattern; matched against relative path to exclude hits.
+    pub ignore_pattern_input: TextInputState,
     pub content_pattern_input: TextInputState,
     pub recursive: bool,
     pub file_case_sens: bool,
@@ -55,11 +60,12 @@ pub struct FindDialogState {
     pub search_current_dir: String,
     /// Visible list rows (set from dialog inner height in draw). Used for scroll math.
     pub visible_list_rows: usize,
-    /// Focus in parameter form: 0=start_dir, 1=file_pattern, 2=content, 3=recursive, 4=file_case, 5=content_case, 6=skip_hidden, 7=Find, 8=Cancel.
+    /// Focus in parameter form: 0=start_dir, 1=file_pattern, 2=ignore_pattern, 3=content, 4–7 options, 8=Find, 9=Cancel.
     pub focus: usize,
     /// Search params moved into Arc during search; restored to inputs when Done (avoids cloning strings).
     pub search_start_dir: Option<Arc<str>>,
     pub search_file_pattern: Option<Arc<str>>,
+    pub search_ignore_pattern: Option<Arc<str>>,
     pub search_content_pattern: Option<Arc<str>>,
 }
 
@@ -71,6 +77,7 @@ pub fn open(app: &mut AppState) {
         phase: FindDialogPhase::Parameter,
         start_dir_input: TextInputState::new(start_dir.to_string()),
         file_pattern_input: TextInputState::new(app.last_file_name_pattern.clone()),
+        ignore_pattern_input: TextInputState::new(String::new()),
         content_pattern_input: TextInputState::new(String::new()),
         recursive: true,
         file_case_sens: false,
@@ -85,6 +92,7 @@ pub fn open(app: &mut AppState) {
         focus: 0,
         search_start_dir: None,
         search_file_pattern: None,
+        search_ignore_pattern: None,
         search_content_pattern: None,
     });
     app.find_search_rx = None;
@@ -110,6 +118,7 @@ pub fn start_search(app: &mut AppState) {
     let (
         start_dir,
         file_pattern,
+        ignore_pattern,
         content_pattern,
         recursive,
         file_case_sens,
@@ -129,9 +138,11 @@ pub fn start_search(app: &mut AppState) {
         // Move strings into Arc<str> (no clone); pass Arc::clone to thread (cheap). Restore from stored Arc when Done.
         let start_dir = Arc::from(std::mem::take(&mut dialog.start_dir_input.text));
         let file_pattern = Arc::from(std::mem::take(&mut dialog.file_pattern_input.text));
+        let ignore_pattern = Arc::from(std::mem::take(&mut dialog.ignore_pattern_input.text));
         let content_pattern = Arc::from(std::mem::take(&mut dialog.content_pattern_input.text));
         dialog.search_start_dir = Some(Arc::clone(&start_dir));
         dialog.search_file_pattern = Some(Arc::clone(&file_pattern));
+        dialog.search_ignore_pattern = Some(Arc::clone(&ignore_pattern));
         dialog.search_content_pattern = Some(Arc::clone(&content_pattern));
 
         let recursive = dialog.recursive;
@@ -141,6 +152,7 @@ pub fn start_search(app: &mut AppState) {
         (
             start_dir,
             file_pattern,
+            ignore_pattern,
             content_pattern,
             recursive,
             file_case_sens,
@@ -159,6 +171,7 @@ pub fn start_search(app: &mut AppState) {
     run_find_search(
         start_dir,
         file_pattern,
+        ignore_pattern,
         content_pattern,
         recursive,
         file_case_sens,
@@ -208,6 +221,12 @@ pub fn poll_search(app: &mut AppState) {
                         find_dialog.file_pattern_input.cursor =
                             find_dialog.file_pattern_input.text.chars().count();
                         find_dialog.file_pattern_input.anchor = None;
+                    }
+                    if let Some(arc) = find_dialog.search_ignore_pattern.take() {
+                        find_dialog.ignore_pattern_input.text = arc.to_string();
+                        find_dialog.ignore_pattern_input.cursor =
+                            find_dialog.ignore_pattern_input.text.chars().count();
+                        find_dialog.ignore_pattern_input.anchor = None;
                     }
                     if let Some(arc) = find_dialog.search_content_pattern.take() {
                         find_dialog.content_pattern_input.text = arc.to_string();
@@ -264,11 +283,12 @@ fn handle_key_parameter(
     use crate::app::events::AppAction;
     let dialog = app.find_dialog.as_mut()?;
     if modifiers.contains(KeyModifiers::CONTROL) {
-        if code == KeyCode::Char('a') && dialog.focus <= 2 {
+        if code == KeyCode::Char('a') && dialog.focus <= 3 {
             let input = match dialog.focus {
                 0 => &mut dialog.start_dir_input,
                 1 => &mut dialog.file_pattern_input,
-                2 => &mut dialog.content_pattern_input,
+                2 => &mut dialog.ignore_pattern_input,
+                3 => &mut dialog.content_pattern_input,
                 _ => return Some(AppAction::Continue),
             };
             if !input.text.is_empty() {
@@ -276,11 +296,12 @@ fn handle_key_parameter(
             }
             return Some(AppAction::Continue);
         }
-        if code == KeyCode::Char('v') && dialog.focus <= 2 {
+        if code == KeyCode::Char('v') && dialog.focus <= 3 {
             let input = match dialog.focus {
                 0 => &mut dialog.start_dir_input,
                 1 => &mut dialog.file_pattern_input,
-                2 => &mut dialog.content_pattern_input,
+                2 => &mut dialog.ignore_pattern_input,
+                3 => &mut dialog.content_pattern_input,
                 _ => return Some(AppAction::Continue),
             };
             if let Some(s) = clipboard::get() {
@@ -289,7 +310,7 @@ fn handle_key_parameter(
             return Some(AppAction::Continue);
         }
         if code == KeyCode::Char('c') {
-            if dialog.focus <= 2 {
+            if dialog.focus <= 3 {
                 let text = match dialog.focus {
                     0 => dialog
                         .start_dir_input
@@ -300,6 +321,10 @@ fn handle_key_parameter(
                         .get_selected_text()
                         .unwrap_or_else(|| dialog.file_pattern_input.text.clone()),
                     2 => dialog
+                        .ignore_pattern_input
+                        .get_selected_text()
+                        .unwrap_or_else(|| dialog.ignore_pattern_input.text.clone()),
+                    3 => dialog
                         .content_pattern_input
                         .get_selected_text()
                         .unwrap_or_else(|| dialog.content_pattern_input.text.clone()),
@@ -317,97 +342,103 @@ fn handle_key_parameter(
     match code {
         KeyCode::Esc => return Some(AppAction::FindClose),
         KeyCode::Tab | KeyCode::Down => {
-            dialog.focus = (dialog.focus + 1) % 9;
+            dialog.focus = (dialog.focus + 1) % 10;
             return Some(AppAction::Continue);
         }
         KeyCode::BackTab | KeyCode::Up => {
-            dialog.focus = (dialog.focus + 8) % 9;
+            dialog.focus = (dialog.focus + 9) % 10;
             return Some(AppAction::Continue);
         }
         KeyCode::Enter => {
-            if dialog.focus == 8 {
+            if dialog.focus == 9 {
                 return Some(AppAction::FindClose);
             }
-            // Enter from any other widget (inputs 0–2, options 3–6, Find 7) starts the search
+            // Enter from any other widget (inputs 0–3, options 4–7, Find 8) starts the search
             return Some(AppAction::FindStartSearch);
         }
         KeyCode::Char(' ') => {
-            if dialog.focus >= 3 && dialog.focus <= 6 {
+            if dialog.focus >= 4 && dialog.focus <= 7 {
                 match dialog.focus {
-                    3 => dialog.recursive = !dialog.recursive,
-                    4 => dialog.file_case_sens = !dialog.file_case_sens,
-                    5 => dialog.content_case_sens = !dialog.content_case_sens,
-                    6 => dialog.skip_hidden = !dialog.skip_hidden,
+                    4 => dialog.recursive = !dialog.recursive,
+                    5 => dialog.file_case_sens = !dialog.file_case_sens,
+                    6 => dialog.content_case_sens = !dialog.content_case_sens,
+                    7 => dialog.skip_hidden = !dialog.skip_hidden,
                     _ => {}
                 }
                 return Some(AppAction::Continue);
             }
         }
         KeyCode::Char(c) => {
-            if c.is_ascii() && !c.is_control() && dialog.focus <= 2 {
+            if c.is_ascii() && !c.is_control() && dialog.focus <= 3 {
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,
-                    2 => &mut dialog.content_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).insert_char(c);
             }
         }
         KeyCode::Backspace => {
-            if dialog.focus <= 2 {
+            if dialog.focus <= 3 {
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,
-                    2 => &mut dialog.content_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).backspace();
             }
         }
         KeyCode::Left => {
-            if dialog.focus <= 2 {
+            if dialog.focus <= 3 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,
-                    2 => &mut dialog.content_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_left(shift);
             }
         }
         KeyCode::Right => {
-            if dialog.focus <= 2 {
+            if dialog.focus <= 3 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,
-                    2 => &mut dialog.content_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_right(shift);
             }
         }
         KeyCode::Home => {
-            if dialog.focus <= 2 {
+            if dialog.focus <= 3 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,
-                    2 => &mut dialog.content_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_home(shift);
             }
         }
         KeyCode::End => {
-            if dialog.focus <= 2 {
+            if dialog.focus <= 3 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,
-                    2 => &mut dialog.content_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
                     _ => return Some(AppAction::Continue),
                 };
                 *input = std::mem::take(input).move_end(shift);
@@ -501,7 +532,7 @@ fn handle_key_results(
 }
 
 const FIND_DIALOG_W: u16 = 110;
-const FIND_DIALOG_H_PARAM: u16 = 18;
+const FIND_DIALOG_H_PARAM: u16 = 19;
 const FIND_DIALOG_H_RESULTS: u16 = 28;
 const STATUS_ROWS: u16 = 2; // status line + gap
 const HINT_ROWS: u16 = 1;
@@ -586,10 +617,16 @@ fn draw_parameter_form(
     } else {
         "File pattern (*, ?):"
     };
-    let rows: [(usize, &str, &TextInputState); 3] = [
+    let ignore_pattern_label = if file_pattern_regex {
+        "Ignore pattern (regex):"
+    } else {
+        "Ignore pattern (*, ?):"
+    };
+    let rows: [(usize, &str, &TextInputState); 4] = [
         (0, "Start directory:", &dialog.start_dir_input),
         (1, file_pattern_label, &dialog.file_pattern_input),
-        (2, "Content pattern:", &dialog.content_pattern_input),
+        (2, ignore_pattern_label, &dialog.ignore_pattern_input),
+        (3, "Content pattern:", &dialog.content_pattern_input),
     ];
     let label_w = rows
         .iter()
@@ -654,10 +691,10 @@ fn draw_parameter_form(
     row += 1;
 
     let opts = [
-        (3, "Recursive", dialog.recursive),
-        (4, "File name case sensitive", dialog.file_case_sens),
-        (5, "Content case sensitive", dialog.content_case_sens),
-        (6, "Skip hidden files", dialog.skip_hidden),
+        (4, "Recursive", dialog.recursive),
+        (5, "File name case sensitive", dialog.file_case_sens),
+        (6, "Content case sensitive", dialog.content_case_sens),
+        (7, "Skip hidden files", dialog.skip_hidden),
     ];
     for (idx, label, on) in opts {
         let mark = if on { "[x]" } else { "[ ]" };
@@ -687,7 +724,7 @@ fn draw_parameter_form(
         }
     };
     f.render_widget(
-        Paragraph::new("  Find  ").style(btn_style(7)),
+        Paragraph::new("  Find  ").style(btn_style(8)),
         Rect {
             x: cx,
             y: row,
@@ -696,7 +733,7 @@ fn draw_parameter_form(
         },
     );
     f.render_widget(
-        Paragraph::new("  Cancel  ").style(btn_style(8)),
+        Paragraph::new("  Cancel  ").style(btn_style(9)),
         Rect {
             x: cx + 10,
             y: row,

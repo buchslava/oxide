@@ -1,4 +1,5 @@
 //! + / − : mark or unmark files by file pattern; wildcards (*, ?) or regex per F9 Settings (same as Find).
+//! In wildcard mode, `|` separates alternative globs (not in regex mode).
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{

@@ -712,11 +712,12 @@ impl EventHandler {
         data: &str,
     ) -> bool {
         if let Some(d) = app.find_dialog.as_mut() {
-            if d.focus <= 2 {
+            if d.focus <= 3 {
                 let input = match d.focus {
                     0 => &mut d.start_dir_input,
                     1 => &mut d.file_pattern_input,
-                    2 => &mut d.content_pattern_input,
+                    2 => &mut d.ignore_pattern_input,
+                    3 => &mut d.content_pattern_input,
                     _ => return false,
                 };
                 *input = std::mem::take(input).insert_str(data);

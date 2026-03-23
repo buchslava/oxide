@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -124,6 +124,9 @@ pub fn glob_match(
 }
 
 /// Prepared file-name filter for many files (Find thread, panel mark/unmark). Empty pattern matches all.
+///
+/// In **wildcard** mode, `|` separates alternative glob patterns (e.g. `a*|b?` matches if either
+/// part matches). In **regex** mode, `|` is part of the regex (alternation), not a splitter.
 #[derive(Debug)]
 pub enum PreparedFilePattern {
     /// Match every non-skipped file name.
@@ -131,7 +134,8 @@ pub enum PreparedFilePattern {
     /// Invalid regex (non-empty pattern in regex mode): match nothing.
     None,
     Wildcard {
-        pattern: String,
+        /// One or more shell-style globs; a name matches if any pattern matches (`|` alternation).
+        patterns: Vec<String>,
         case_sensitive: bool,
     },
     Regex(Regex),
@@ -161,8 +165,20 @@ impl PreparedFilePattern {
         if pat.is_empty() {
             return Self::All;
         }
+        let patterns = if pat.contains('|') {
+            pat.split('|')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect::<Vec<_>>()
+        } else {
+            vec![pat.to_string()]
+        };
+        if patterns.is_empty() {
+            return Self::None;
+        }
         Self::Wildcard {
-            pattern: pat.to_string(),
+            patterns,
             case_sensitive,
         }
     }
@@ -174,19 +190,39 @@ impl PreparedFilePattern {
             Self::All => true,
             Self::None => false,
             Self::Wildcard {
-                pattern,
+                patterns,
                 case_sensitive,
-            } => glob_match(pattern, name, *case_sensitive),
+            } => patterns
+                .iter()
+                .any(|p| glob_match(p, name, *case_sensitive)),
             Self::Regex(re) => re.is_match(name),
         }
     }
 }
 
-/// Spawn a thread that walks `start_dir`, matches file names with wildcards or regex (see F9 Settings),
+/// Path relative to the search root (forward slashes), for matching **Ignore pattern** against
+/// directory segments (e.g. `*node_modules*` excludes zips under any `node_modules`).
+fn relative_path_for_ignore(
+    start_canon: &Path,
+    file_path: &Path,
+) -> String {
+    let path_can = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+    path_can
+        .strip_prefix(start_canon)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path_can.to_string_lossy().replace('\\', "/"))
+}
+
+/// Spawn a thread that walks `start_dir`, matches file names with wildcards or regex (see F9 Settings;
+/// wildcard mode: `|` = alternative globs),
 /// optionally scans content. Sends [`FindMessage`] values on `tx`. Stops when `cancel` is set.
+///
+/// **Ignore pattern** (same wildcard/regex rules as file pattern): when non-empty, tested against the
+/// file path relative to the search root; if it matches, the file is skipped (not listed).
 pub fn run_find_search(
     start_dir: Arc<str>,
     file_pattern: Arc<str>,
+    ignore_pattern: Arc<str>,
     content_pattern: Arc<str>,
     recursive: bool,
     file_case_sens: bool,
@@ -199,13 +235,24 @@ pub fn run_find_search(
     thread::spawn(move || {
         let start_dir = start_dir.trim();
         let file_pattern_trim = file_pattern.trim();
+        let ignore_pattern_trim = ignore_pattern.trim();
         let content_pattern = content_pattern.trim();
         let name_matcher = PreparedFilePattern::new(file_pattern_trim, file_case_sens, file_pattern_regex);
+        let ignore_matcher = if ignore_pattern_trim.is_empty() {
+            None
+        } else {
+            Some(PreparedFilePattern::new(
+                ignore_pattern_trim,
+                file_case_sens,
+                file_pattern_regex,
+            ))
+        };
         let start = PathBuf::from(start_dir);
         if !start.is_dir() {
             let _ = tx.send(FindMessage::Done);
             return;
         }
+        let start_canon = fs::canonicalize(&start).unwrap_or_else(|_| start.clone());
         let content_empty = content_pattern.is_empty();
         let mut current_dir_sent: Option<PathBuf> = None;
 
@@ -242,6 +289,12 @@ pub fn run_find_search(
             if !name_matcher.matches(name) {
                 continue;
             }
+            if let Some(ref ign) = ignore_matcher {
+                let rel = relative_path_for_ignore(&start_canon, &path);
+                if ign.matches(&rel) {
+                    continue;
+                }
+            }
             if content_empty {
                 let _ = tx.send(FindMessage::Match(path, None));
             } else if let Ok(file) = fs::File::open(&path) {
@@ -272,4 +325,53 @@ pub fn run_find_search(
         }
         let _ = tx.send(FindMessage::Done);
     });
+}
+
+#[cfg(test)]
+mod prepared_pattern_tests {
+    use super::PreparedFilePattern;
+
+    #[test]
+    fn wildcard_pipe_matches_any_segment() {
+        let p = PreparedFilePattern::new("Screenshot*|d*zip|file*", true, false);
+        assert!(p.matches("Screenshot12.png"));
+        assert!(p.matches("daily.zip"));
+        assert!(p.matches("file.txt"));
+        assert!(!p.matches("other.txt"));
+    }
+
+    #[test]
+    fn wildcard_pipe_trims_segments() {
+        let p = PreparedFilePattern::new(" a* | b* ", true, false);
+        assert!(p.matches("ax"));
+        assert!(p.matches("by"));
+    }
+
+    #[test]
+    fn wildcard_only_pipes_or_empty_segments_match_nothing() {
+        let p = PreparedFilePattern::new("||", true, false);
+        assert!(!p.matches("x"));
+    }
+
+    #[test]
+    fn regex_mode_pipe_is_not_split() {
+        let p = PreparedFilePattern::new("a|b", true, true);
+        assert!(p.matches("a"));
+        assert!(p.matches("b"));
+        assert!(!p.matches("c"));
+    }
+
+    #[test]
+    fn single_wildcard_without_pipe_unchanged() {
+        let p = PreparedFilePattern::new("*.txt", true, false);
+        assert!(p.matches("foo.txt"));
+        assert!(!p.matches("foo.zip"));
+    }
+
+    #[test]
+    fn ignore_pattern_matches_relative_path_string() {
+        let p = PreparedFilePattern::new("*node_modules*", true, false);
+        assert!(p.matches("foo/node_modules/bar/file.zip"));
+        assert!(!p.matches("foo/other/file.zip"));
+    }
 }

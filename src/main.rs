@@ -138,7 +138,7 @@ fn main() -> Result<(), io::Error> {
 
         let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
             use crate::app::state::FindDialogPhase;
-            d.phase == FindDialogPhase::Parameter && d.focus <= 2
+            d.phase == FindDialogPhase::Parameter && d.focus <= 3
         });
         let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
         let pattern_select_input_focused = app
