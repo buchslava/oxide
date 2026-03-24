@@ -4,7 +4,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -12,10 +12,7 @@ use ratatui::{
 
 use crate::browser::clipboard;
 use crate::ui::dialog_layout::{self, single_input_button_rects};
-use crate::ui::styles::{
-    DIALOG_BG, DIALOG_FOCUS, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED,
-    DIALOG_INPUT_SELECTION_BG,
-};
+use crate::ui::theme::UiPalette;
 
 /// Single-line text input: content, cursor, and optional selection anchor (for Shift+arrow).
 /// Does not implement Clone to avoid accidental expensive cloning of the text buffer.
@@ -459,14 +456,16 @@ pub fn draw_single_input_dialog(
     prompt: &str,
     input: &TextInputState,
     focus: usize,
+    palette: &UiPalette,
 ) {
+    let d = &palette.dialog;
     let (rect, content) = dialog_layout::single_input_dialog_layout(area);
-    let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
+    let fill_style = d.fill_style();
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .style(fill_style.fg(DIALOG_FOCUS));
+        .style(fill_style.fg(d.border));
     f.render_widget(block, rect);
 
     f.render_widget(
@@ -487,14 +486,14 @@ pub fn draw_single_input_dialog(
     };
     let input_focused = focus == 0;
     let input_bg = if input_focused {
-        DIALOG_INPUT_BG_FOCUSED
+        d.input_bg_focused
     } else {
-        DIALOG_INPUT_BG_UNFOCUSED
+        d.input_bg_unfocused
     };
-    let base_style = Style::default().bg(input_bg).fg(Color::White);
+    let base_style = Style::default().bg(input_bg).fg(d.text);
     let selection_style = Style::default()
-        .bg(DIALOG_INPUT_SELECTION_BG)
-        .fg(Color::White);
+        .bg(d.input_selection_bg)
+        .fg(d.text);
     let line =
         input_line_with_selection(input, content.width as usize, base_style, selection_style);
     f.render_widget(Paragraph::new(line), input_rect);
@@ -509,12 +508,12 @@ pub fn draw_single_input_dialog(
     let create_btn = Line::from(vec![Span::raw("  Create  ")]);
     let cancel_btn = Line::from(vec![Span::raw("  Cancel  ")]);
     let create_style = if focus == 1 {
-        Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+        d.focus_row_style()
     } else {
         fill_style
     };
     let cancel_style = if focus == 2 {
-        Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+        d.focus_row_style()
     } else {
         fill_style
     };

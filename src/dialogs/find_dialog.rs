@@ -12,18 +12,16 @@ use crate::core::find::run_find_search;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Margin, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
 
+use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::browser::clipboard;
 use crate::browser::panel::PanelOperations;
-use crate::ui::styles::{
-    DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG,
-};
 use crate::ui::text_input::{self, TextInputState};
 
 pub use crate::core::find::{build_display_rows, FindDisplayRow, FindMessage, FindResult};
@@ -537,6 +535,36 @@ const FIND_DIALOG_H_RESULTS: u16 = 28;
 const STATUS_ROWS: u16 = 2; // status line + gap
 const HINT_ROWS: u16 = 1;
 
+/// Bounding box for hit-tests and outside-dismiss (must match [`draw`]).
+pub fn dialog_rect(area: Rect, phase: FindDialogPhase) -> Rect {
+    let (w, h) = match phase {
+        FindDialogPhase::Parameter => (FIND_DIALOG_W, FIND_DIALOG_H_PARAM),
+        FindDialogPhase::Searching | FindDialogPhase::Results => {
+            (FIND_DIALOG_W, FIND_DIALOG_H_RESULTS)
+        }
+    };
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    Rect { x, y, width: w, height: h }
+}
+
+/// Same effect as pressing Esc for the current phase (stop search vs close).
+pub fn pointer_outside_action(app: &mut AppState) -> Option<AppAction> {
+    let dialog = app.find_dialog.as_mut()?;
+    match dialog.phase {
+        FindDialogPhase::Parameter => Some(AppAction::FindClose),
+        FindDialogPhase::Searching => {
+            dialog.phase = FindDialogPhase::Results;
+            let match_count = dialog.results.len();
+            dialog.status_message = format!("Stopped. {} match(es).", match_count);
+            dialog.search_current_dir.clear();
+            app.find_search_rx = None;
+            Some(AppAction::Continue)
+        }
+        FindDialogPhase::Results => Some(AppAction::FindClose),
+    }
+}
+
 /// Draw the Find file dialog (parameter form or results list).
 pub fn draw(
     f: &mut Frame,
@@ -547,23 +575,10 @@ pub fn draw(
     let Some(dialog) = app.find_dialog.as_mut() else {
         return;
     };
+    let d = &app.ui_palette.dialog;
     let area = f.area();
-    let (w, h) = match dialog.phase {
-        FindDialogPhase::Parameter => (FIND_DIALOG_W, FIND_DIALOG_H_PARAM),
-        FindDialogPhase::Searching | FindDialogPhase::Results => {
-            (FIND_DIALOG_W, FIND_DIALOG_H_RESULTS)
-        }
-    };
-    let x = area.x + area.width.saturating_sub(w) / 2;
-    let y = area.y + area.height.saturating_sub(h) / 2;
-    let rect = ratatui::layout::Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
-    let grey_bg = Color::Rgb(60, 60, 60);
-    let fill_style = Style::default().bg(grey_bg).fg(Color::White);
+    let rect = dialog_rect(area, dialog.phase);
+    let fill_style = d.fill_style();
     f.render_widget(Clear, rect);
     let title = match dialog.phase {
         FindDialogPhase::Parameter => " Find file ",
@@ -573,7 +588,7 @@ pub fn draw(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .style(fill_style.fg(Color::Cyan));
+        .style(fill_style.fg(d.border));
     f.render_widget(block, rect);
     let inner = rect.inner(Margin {
         horizontal: 1,
@@ -585,6 +600,7 @@ pub fn draw(
         FindDialogPhase::Parameter => {
             draw_parameter_form(
                 f,
+                d,
                 dialog,
                 inner,
                 content_w,
@@ -593,16 +609,17 @@ pub fn draw(
             );
         }
         FindDialogPhase::Searching => {
-            draw_status_and_list(f, dialog, inner, content_w, fill_style, true);
+            draw_status_and_list(f, d, dialog, inner, content_w, fill_style, true);
         }
         FindDialogPhase::Results => {
-            draw_status_and_list(f, dialog, inner, content_w, fill_style, false);
+            draw_status_and_list(f, d, dialog, inner, content_w, fill_style, false);
         }
     }
 }
 
 fn draw_parameter_form(
     f: &mut Frame,
+    d: &crate::ui::theme::DialogPalette,
     dialog: &FindDialogState,
     inner: Rect,
     content_w: u16,
@@ -638,9 +655,9 @@ fn draw_parameter_form(
         let cursor_char = input.cursor_column();
         let focused = dialog.focus == focus_idx;
         let bg = if focused {
-            DIALOG_INPUT_BG_FOCUSED
+            d.input_bg_focused
         } else {
-            DIALOG_INPUT_BG_UNFOCUSED
+            d.input_bg_unfocused
         };
         let value_w = content_w.saturating_sub(label_w);
         let value_w_usize = value_w as usize;
@@ -652,10 +669,10 @@ fn draw_parameter_form(
             cursor_char + 1 - value_w_usize
         };
         let cursor_screen = cursor_char.saturating_sub(display_offset);
-        let base_style = Style::default().bg(bg).fg(Color::White);
+        let base_style = Style::default().bg(bg).fg(d.text);
         let selection_style = Style::default()
-            .bg(DIALOG_INPUT_SELECTION_BG)
-            .fg(Color::White);
+            .bg(d.input_selection_bg)
+            .fg(d.text);
         let line = text_input::input_line_with_selection_slice(
             input,
             display_offset,
@@ -699,7 +716,7 @@ fn draw_parameter_form(
     for (idx, label, on) in opts {
         let mark = if on { "[x]" } else { "[ ]" };
         let style = if dialog.focus == idx {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
+            d.focus_row_style()
         } else {
             fill_style
         };
@@ -718,7 +735,7 @@ fn draw_parameter_form(
 
     let btn_style = |idx: usize| {
         if dialog.focus == idx {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
+            d.focus_row_style()
         } else {
             fill_style
         }
@@ -745,6 +762,7 @@ fn draw_parameter_form(
 
 fn draw_status_and_list(
     f: &mut Frame,
+    d: &crate::ui::theme::DialogPalette,
     dialog: &mut FindDialogState,
     inner: Rect,
     content_w: u16,
@@ -842,7 +860,7 @@ fn draw_status_and_list(
                 }
             };
             let style = if idx == dialog.selected_index {
-                Style::default().bg(Color::Cyan).fg(Color::Black)
+                d.focus_row_style()
             } else {
                 fill_style
             };
@@ -859,7 +877,7 @@ fn draw_status_and_list(
         row += list_rect.height + 1;
         let hint = "Enter: Chdir  F3: View  F4: Edit  Esc: Close";
         f.render_widget(
-            Paragraph::new(hint).style(fill_style.fg(Color::DarkGray)),
+            Paragraph::new(hint).style(fill_style.fg(d.text_muted)),
             Rect {
                 x: cx,
                 y: row,

@@ -112,6 +112,7 @@ pub fn draw(
         "Enter directory name:",
         &d.input,
         d.focus,
+        &app.ui_palette,
     );
 }
 

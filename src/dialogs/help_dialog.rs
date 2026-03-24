@@ -1,9 +1,9 @@
-//! F1 "Help" dialog. Shows shortcut reference. Modal overlay; Esc or mouse click closes.
+//! F1 "Help" dialog. Shows shortcut reference. Modal overlay; Esc, q, or click outside closes.
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -11,6 +11,7 @@ use ratatui::{
 
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
+use crate::ui::theme::DialogPalette;
 
 /// Open the Help dialog.
 pub fn open(app: &mut AppState) {
@@ -35,16 +36,19 @@ pub fn handle_key(
 }
 
 /// Section title: left marker + bold cyan heading.
-fn help_h(title: &'static str) -> Line<'static> {
+fn help_h(
+    d: &DialogPalette,
+    title: &'static str,
+) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             "  ▸ ",
-            Style::default().fg(Color::Rgb(90, 170, 210)),
+            Style::default().fg(d.help_section_marker),
         ),
         Span::styled(
             title,
             Style::default()
-                .fg(Color::Rgb(150, 230, 255))
+                .fg(d.help_heading)
                 .add_modifier(Modifier::BOLD),
         ),
     ])
@@ -56,23 +60,26 @@ fn help_spacer() -> Line<'static> {
 }
 
 /// Muted body line (secondary description).
-fn help_muted(text: &'static str) -> Line<'static> {
+fn help_muted(
+    d: &DialogPalette,
+    text: &'static str,
+) -> Line<'static> {
     Line::from(vec![Span::styled(
         text,
-        Style::default().fg(Color::Rgb(165, 172, 185)),
+        Style::default().fg(d.help_dim),
     )])
 }
 
-fn help_lines() -> Vec<Line<'static>> {
-    let key = Color::Rgb(255, 205, 120);
-    let body = Color::Rgb(235, 238, 245);
-    let dim = Color::Rgb(165, 172, 185);
+fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
+    let key = d.help_key;
+    let body = d.help_body;
+    let dim = d.help_dim;
 
     let k = |s: &'static str| Span::styled(s, Style::default().fg(key).add_modifier(Modifier::BOLD));
     let t = |s: &'static str| Span::raw(s);
 
     vec![
-        help_h("Features"),
+        help_h(d, "Features"),
         Line::from(vec![
             t("    "),
             Span::styled("Dual panels", Style::default().fg(body)),
@@ -113,9 +120,9 @@ fn help_lines() -> Vec<Line<'static>> {
             k("F12"),
             Span::styled(" inserts name.", Style::default().fg(body)),
         ]),
-        help_muted("    Large viewer files load in background; non-printable text shown as “.”"),
+        help_muted(d, "    Large viewer files load in background; non-printable text shown as “.”"),
         help_spacer(),
-        help_h("Navigation"),
+        help_h(d, "Navigation"),
         Line::from(vec![
             t("    "),
             k("↑ ↓"),
@@ -160,7 +167,7 @@ fn help_lines() -> Vec<Line<'static>> {
             t("  Back to panels"),
         ]),
         help_spacer(),
-        help_h("Function keys"),
+        help_h(d, "Function keys"),
         Line::from(vec![
             t("    "),
             k("F1"),
@@ -191,7 +198,7 @@ fn help_lines() -> Vec<Line<'static>> {
             t(" Quit"),
         ]),
         help_spacer(),
-        help_h("Settings (F9) — General"),
+        help_h(d, "Settings (F9) — General"),
         Line::from(vec![
             t("    "),
             k("Safe delete"),
@@ -200,7 +207,7 @@ fn help_lines() -> Vec<Line<'static>> {
                 Style::default().fg(body),
             ),
         ]),
-        help_muted("    ZIP panels: entries removed inside the archive only. Trash N/A → option dimmed."),
+        help_muted(d, "    ZIP panels: entries removed inside the archive only. Trash N/A → option dimmed."),
         Line::from(vec![
             t("    "),
             Span::styled("Also:", Style::default().fg(body)),
@@ -212,7 +219,7 @@ fn help_lines() -> Vec<Line<'static>> {
             Span::styled(" (wildcards vs regex for Find & +/−).", Style::default().fg(body)),
         ]),
         help_spacer(),
-        help_h("Shortcuts"),
+        help_h(d, "Shortcuts"),
         Line::from(vec![
             t("    "),
             k("Ctrl+O"),
@@ -241,7 +248,7 @@ fn help_lines() -> Vec<Line<'static>> {
             t("  New file"),
         ]),
         help_spacer(),
-        help_h("Find file (Ctrl+F)"),
+        help_h(d, "Find file (Ctrl+F)"),
         Line::from(vec![
             t("    "),
             Span::styled(
@@ -296,7 +303,7 @@ fn help_lines() -> Vec<Line<'static>> {
             t(" edit (dialog stays open)"),
         ]),
         help_spacer(),
-        help_h("Viewer (F3)"),
+        help_h(d, "Viewer (F3)"),
         Line::from(vec![
             t("    "),
             k("Esc"),
@@ -307,7 +314,7 @@ fn help_lines() -> Vec<Line<'static>> {
             t(" scroll"),
         ]),
         help_spacer(),
-        help_h("Editor (F4)"),
+        help_h(d, "Editor (F4)"),
         Line::from(vec![
             t("    "),
             k("F2"),
@@ -320,7 +327,7 @@ fn help_lines() -> Vec<Line<'static>> {
             t(" copy/paste"),
         ]),
         help_spacer(),
-        help_h("Dialogs"),
+        help_h(d, "Dialogs"),
         Line::from(vec![
             t("    "),
             k("Tab / ↑↓"),
@@ -332,10 +339,27 @@ fn help_lines() -> Vec<Line<'static>> {
         ]),
         help_spacer(),
         Line::from(vec![Span::styled(
-            "  Esc or click anywhere to close this help",
+            "  Esc or click outside this window to close",
             Style::default().fg(dim).add_modifier(Modifier::ITALIC),
         )]),
     ]
+}
+
+/// Bounding box of the Help modal (must match [`draw`]).
+pub fn dialog_rect(area: Rect) -> Rect {
+    let margin = 4u16;
+    let max_w = area.width.saturating_sub(margin);
+    let max_h = area.height.saturating_sub(margin);
+    let w = max_w.min(122);
+    let h = max_h.min(56);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }
 
 /// Draw the Help dialog as a modal: dimmed full screen, then dialog box on top.
@@ -347,29 +371,11 @@ pub fn draw(
         return;
     }
     let area = f.area();
-
-    let margin = 4u16;
-    let max_w = area.width.saturating_sub(margin);
-    let max_h = area.height.saturating_sub(margin);
-    // Wide terminals: use up to 122 cols; narrow: use what we have (min ~64).
-    let w = max_w.min(122);
-    let h = max_h.min(56);
-
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
-
-    let dialog_bg = Color::Rgb(32, 34, 40);
-    let fill_style = Style::default().bg(dialog_bg).fg(Color::Rgb(235, 238, 245));
-    let border_style = Style::default()
-        .bg(dialog_bg)
-        .fg(Color::Rgb(130, 210, 255))
-        .add_modifier(Modifier::BOLD);
+    let rect = dialog_rect(area);
+    let d = &app.ui_palette.dialog;
+    let dialog_bg = d.dialog_bg;
+    let fill_style = Style::default().bg(dialog_bg).fg(d.text);
+    let border_style = d.border_block_style();
 
     f.render_widget(Clear, rect);
     let block = Block::default()
@@ -390,7 +396,7 @@ pub fn draw(
         height: inner.height.saturating_sub(hint_h),
     };
 
-    let para = Paragraph::new(help_lines())
+    let para = Paragraph::new(help_lines(d))
         .style(fill_style)
         .wrap(Wrap { trim: true });
     f.render_widget(para, content_rect);
@@ -406,7 +412,7 @@ pub fn draw(
             " Esc  ·  q  close   ·   click outside to dismiss ",
             Style::default()
                 .bg(dialog_bg)
-                .fg(Color::Rgb(150, 158, 172)),
+                .fg(d.text_muted),
         ))
         .alignment(Alignment::Center),
         hint_rect,

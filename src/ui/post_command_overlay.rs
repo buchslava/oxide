@@ -7,7 +7,6 @@ use crossterm::{
 };
 use std::io::{self, Write};
 
-use crate::ui::toast::{palette_crossterm_bg, palette_crossterm_fg};
 
 fn countdown_secs_remaining(reveal_at: std::time::Instant) -> u64 {
     let now = std::time::Instant::now();
@@ -40,8 +39,8 @@ pub fn paint_main_buffer_countdown(app: &crate::app::state::AppState) -> io::Res
     execute!(
         stdout,
         MoveTo(0, y),
-        SetBackgroundColor(palette_crossterm_bg()),
-        SetForegroundColor(palette_crossterm_fg()),
+        SetBackgroundColor(app.ui_palette.toast.crossterm_bg()),
+        SetForegroundColor(app.ui_palette.toast.crossterm_fg()),
         Print(&line),
     )?;
     execute!(stdout, ResetColor)?;

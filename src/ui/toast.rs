@@ -1,55 +1,14 @@
-//! Short-lived status toasts: shared palette and timed message helpers.
+//! Short-lived status toasts: timed message helpers.
 //!
-//! - **Ratatui:** [`TimedToast`] + [`draw_timed_bottom_left`] for one-line overlays (e.g. editor).
-//! - **Crossterm (main buffer):** use [`palette_crossterm_bg`] / [`palette_crossterm_fg`] with
-//!   [`post_command_overlay`](crate::post_command_overlay) so colors stay consistent.
+//! - **Ratatui:** [`TimedToast`] + [`draw_timed_bottom_left`].
+//! - **Crossterm (main buffer):** use `app.ui_palette.toast` (see [`post_command_overlay`](crate::ui::post_command_overlay)).
+//!   with [`post_command_overlay`](crate::ui::post_command_overlay).
 
 use std::time::{Duration, Instant};
 
-use crossterm::style::Color as CrosstermColor;
-use ratatui::{
-    layout::Rect,
-    style::{Color, Style},
-    widgets::Paragraph,
-    Frame,
-};
+use ratatui::{layout::Rect, widgets::Paragraph, Frame};
 
-// --- Palette (single source for ratatui + crossterm) ---
-
-const BG_R: u8 = 60;
-const BG_G: u8 = 60;
-const BG_B: u8 = 60;
-const FG_R: u8 = 140;
-const FG_G: u8 = 200;
-const FG_B: u8 = 140;
-
-#[inline]
-pub fn palette_ratatui_bg() -> Color {
-    Color::Rgb(BG_R, BG_G, BG_B)
-}
-
-#[inline]
-pub fn palette_ratatui_fg() -> Color {
-    Color::Rgb(FG_R, FG_G, FG_B)
-}
-
-#[inline]
-pub fn palette_crossterm_bg() -> CrosstermColor {
-    CrosstermColor::Rgb {
-        r: BG_R,
-        g: BG_G,
-        b: BG_B,
-    }
-}
-
-#[inline]
-pub fn palette_crossterm_fg() -> CrosstermColor {
-    CrosstermColor::Rgb {
-        r: FG_R,
-        g: FG_G,
-        b: FG_B,
-    }
-}
+use crate::ui::theme::UiPalette;
 
 // --- Timed overlay (ratatui) ---
 
@@ -87,6 +46,7 @@ impl TimedToast {
 pub fn draw_timed_bottom_left(
     f: &mut Frame,
     area: Rect,
+    palette: &UiPalette,
     toast: &TimedToast,
 ) {
     const PAD: u16 = 1;
@@ -100,8 +60,6 @@ pub fn draw_timed_bottom_left(
         width: w,
         height: 1,
     };
-    let style = Style::default()
-        .bg(palette_ratatui_bg())
-        .fg(palette_ratatui_fg());
+    let style = palette.toast.ratatui_style();
     f.render_widget(Paragraph::new(toast.message.as_str()).style(style), rect);
 }

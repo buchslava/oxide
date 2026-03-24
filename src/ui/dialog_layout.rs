@@ -2,10 +2,11 @@
 
 use ratatui::{
     layout::{Margin, Rect},
-    style::{Color, Style},
     widgets::{Block, Borders},
     Frame,
 };
+
+use crate::ui::theme::UiPalette;
 
 /// Default horizontal padding inside dialog content (used by most dialogs).
 pub const DEFAULT_PAD_H: u16 = 2;
@@ -122,14 +123,25 @@ pub fn two_button_rects(
     )
 }
 
-/// Full-screen dim layer so panels read as disabled behind any modal (same palette as F1 Help).
-pub fn paint_modal_dim_layer(f: &mut Frame) {
+/// Full-screen dim layer so panels read as disabled behind any modal.
+pub fn paint_modal_dim_layer(
+    f: &mut Frame,
+    palette: &UiPalette,
+) {
     let area = f.area();
-    let dim_style = Style::default()
-        .bg(Color::Rgb(18, 18, 24))
-        .fg(Color::DarkGray);
     f.render_widget(
-        Block::default().borders(Borders::NONE).style(dim_style),
+        Block::default()
+            .borders(Borders::NONE)
+            .style(palette.dialog.dim_layer_style()),
         area,
     );
+}
+
+/// Hit-test: terminal cell `(col, row)` lies inside `rect` (half-open ranges).
+#[must_use]
+pub fn pointer_in_dialog(col: u16, row: u16, rect: Rect) -> bool {
+    col >= rect.x
+        && col < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
 }

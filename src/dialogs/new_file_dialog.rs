@@ -109,6 +109,7 @@ pub fn draw(
         "Enter file name:",
         &d.input,
         d.focus,
+        &app.ui_palette,
     );
 }
 

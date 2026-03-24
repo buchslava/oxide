@@ -1,9 +1,9 @@
-//! F9 "Settings" dialog. Two-column: section list (General, Left panel, Right panel, Info) and content. Esc or mouse click closes.
+//! F9 "Settings" dialog. Two-column: section list (General, Left panel, Right panel, Info) and content. Esc or click outside closes.
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
@@ -36,6 +36,21 @@ impl Default for SettingsDialogState {
 
 /// Section indices for the Settings dialog sidebar (Help is in F1 dialog).
 pub const SETTINGS_SECTIONS: [&str; 4] = ["General settings", "Left panel", "Right panel", "Info"];
+
+/// Bounding box of the Settings modal (must match [`draw`]).
+pub fn dialog_rect(area: Rect) -> Rect {
+    const MARGIN: u16 = 4;
+    let w = area.width.saturating_sub(MARGIN).max(1);
+    let h = area.height.saturating_sub(MARGIN).max(1);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
 
 const VIEW_OPTS: [&str; 2] = ["Two columns", "One column"];
 
@@ -264,29 +279,12 @@ pub fn draw(
     };
 
     let area = f.area();
-    // Use almost the full terminal so long labels (General, Info) are not clipped.
-    // Previously MIN.min(available) wrongly capped the dialog at a small fixed size.
-    const MARGIN: u16 = 4;
-    let w = area.width.saturating_sub(MARGIN).max(1);
-    let h = area.height.saturating_sub(MARGIN).max(1);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
-
-    let grey_bg = Color::Rgb(60, 60, 60);
-    let right_bg = Color::Rgb(50, 52, 58); // slightly darker tint for column 2
-    let fill_style = Style::default().bg(grey_bg).fg(Color::White);
-    let right_fill_style = Style::default().bg(right_bg).fg(Color::White);
-    let border_style = fill_style.fg(Color::Cyan);
-    let highlight_style = Style::default()
-        .bg(Color::Blue)
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
+    let rect = dialog_rect(area);
+    let d = &app.ui_palette.dialog;
+    let fill_style = d.fill_style();
+    let right_fill_style = d.fill_secondary_style();
+    let border_style = fill_style.fg(d.border);
+    let highlight_style = d.list_highlight_style();
 
     f.render_widget(Clear, rect);
     let block = Block::default()
@@ -362,7 +360,9 @@ pub fn draw(
         .unwrap_or(0);
     match state.selected_section {
         0 => {
-            let view_highlight = Style::default().bg(Color::Blue).fg(Color::White);
+            let view_highlight = d
+                .list_highlight_style()
+                .remove_modifier(Modifier::BOLD);
             let line_h = 1u16;
             let chk0 = if persisted.autosave { "[x]" } else { "[ ]" };
             let style0 = if state.content_focus == 0 {
@@ -465,7 +465,7 @@ pub fn draw(
                 },
             );
             let safe_style = if !app.trash_available {
-                right_fill_style.fg(Color::DarkGray)
+                right_fill_style.fg(d.text_muted)
             } else if state.content_focus == 5 {
                 view_highlight
             } else {
@@ -497,6 +497,7 @@ pub fn draw(
         }
         1 => draw_panel_section(
             f,
+            d,
             right_inner,
             right_fill_style,
             left_view_index,
@@ -507,6 +508,7 @@ pub fn draw(
         ),
         2 => draw_panel_section(
             f,
+            d,
             right_inner,
             right_fill_style,
             right_view_index,
@@ -532,7 +534,7 @@ pub fn draw(
     };
     f.render_widget(
         Paragraph::new("↑↓ List  ← → Column  Tab  Options  Space/Enter  Toggle  Esc  Close")
-            .style(fill_style.fg(Color::DarkGray))
+            .style(fill_style.fg(d.text_muted))
             .alignment(Alignment::Center),
         hint_rect,
     );
@@ -541,6 +543,7 @@ pub fn draw(
 /// Draw panel options (View, Sort, Folders first, Show hidden). Used by F9 Settings and by panel overlay.
 pub(crate) fn draw_panel_section(
     f: &mut Frame,
+    dialog: &crate::ui::theme::DialogPalette,
     area: Rect,
     fill_style: Style,
     view_index: usize,
@@ -549,7 +552,9 @@ pub(crate) fn draw_panel_section(
     show_hidden: bool,
     content_focus: usize,
 ) {
-    let view_highlight = Style::default().bg(Color::Blue).fg(Color::White);
+    let view_highlight = dialog
+        .list_highlight_style()
+        .remove_modifier(Modifier::BOLD);
     let mut y = area.y;
     let line_h = 1u16;
 

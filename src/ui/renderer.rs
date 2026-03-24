@@ -7,19 +7,15 @@ use crate::browser::editor;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::browser::viewer;
 use crate::ui::dialog_layout::{self, DEFAULT_PAD_H};
-use crate::ui::styles::{self, DIALOG_ACCENT, DIALOG_BG, DIALOG_FOCUS};
+use crate::ui::styles;
+use crate::ui::theme::UiPalette;
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Gauge, Paragraph},
     Frame,
 };
-
-/// Dark background for main content area (panels, command line). Ensures consistent look across terminals.
-const MAIN_DARK_BG: Color = Color::Rgb(30, 30, 35);
-/// Bottom bar: human-readable size color (size is right-aligned in each panel; filename stays left).
-const BOTTOM_BAR_SIZE_FG: Color = Color::Rgb(170, 200, 220);
 
 pub struct Renderer;
 
@@ -219,13 +215,13 @@ impl Renderer {
         }
         Self::draw_panels_view(f, app);
         if Self::modal_dim_backdrop_active(app) {
-            crate::ui::dialog_layout::paint_modal_dim_layer(f);
+            crate::ui::dialog_layout::paint_modal_dim_layer(f, &app.ui_palette);
         }
         if let Some(ref progress) = app.copy_progress {
-            Self::draw_copy_progress(f, progress);
+            Self::draw_copy_progress(f, progress, &app.ui_palette);
         }
         if let Some(ref progress) = app.archive_progress {
-            Self::draw_archive_progress(f, progress);
+            Self::draw_archive_progress(f, progress, &app.ui_palette);
         }
         if let Some(ref filename) = app.copy_overwrite_dialog {
             Self::draw_copy_overwrite_dialog(f, app, filename);
@@ -275,6 +271,7 @@ impl Renderer {
         f: &mut Frame,
         app: &AppState,
     ) {
+        let d = &app.ui_palette.dialog;
         let (op, params) = match app.operation_confirm_pending.as_ref() {
             Some(x) => x,
             None => return,
@@ -311,12 +308,12 @@ impl Renderer {
         let h = if show_paths { 11 } else { 8 };
         let rect = dialog_layout::centered_dialog_rect(area, 60, h);
         let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
-        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
+        let fill_style = d.fill_style();
         f.render_widget(Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .style(fill_style.fg(DIALOG_FOCUS));
+            .style(fill_style.fg(d.border));
         f.render_widget(block, rect);
         let max_msg_w = content.width as usize;
         let mut row = content.y;
@@ -373,25 +370,25 @@ impl Renderer {
         let focus_yes = app.operation_confirm_focus_yes;
         let yes_btn = Line::from(vec![
             Span::raw("  "),
-            Span::styled("Y", DIALOG_ACCENT),
+            Span::styled("Y", Style::default().fg(d.accent)),
             Span::raw("es"),
             Span::raw("  "),
         ]);
         let no_btn = Line::from(vec![
             Span::raw("  "),
-            Span::styled("N", DIALOG_ACCENT),
+            Span::styled("N", Style::default().fg(d.accent)),
             Span::raw("o"),
             Span::raw("  "),
         ]);
         let yes_style = if focus_yes {
-            Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+            d.focus_row_style()
         } else {
             fill_style
         };
         let no_style = if focus_yes {
             fill_style
         } else {
-            Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+            d.focus_row_style()
         };
         f.render_widget(Paragraph::new(yes_btn).style(yes_style), yes_rect);
         f.render_widget(Paragraph::new(no_btn).style(no_style), no_rect);
@@ -444,6 +441,7 @@ impl Renderer {
         content: Rect,
         options: &[(u8, &str)],
         focus_index: usize,
+        dialog: &crate::ui::theme::DialogPalette,
         fill_style: Style,
         start_row: u16,
     ) {
@@ -451,7 +449,7 @@ impl Renderer {
         for (i, (num, label)) in options.iter().enumerate() {
             let num_s = num.to_string();
             let line = Line::from(vec![
-                Span::styled(num_s.as_str(), DIALOG_ACCENT),
+                Span::styled(num_s.as_str(), Style::default().fg(dialog.accent)),
                 Span::raw(format!(". {}", label)),
             ]);
             let opt_rect = Rect {
@@ -461,7 +459,7 @@ impl Renderer {
                 height: 1,
             };
             let style = if i == focus {
-                Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+                dialog.focus_row_style()
             } else {
                 fill_style
             };
@@ -475,10 +473,11 @@ impl Renderer {
         app: &AppState,
         err: &crate::app::state::CopyErrorState,
     ) {
+        let d = &app.ui_palette.dialog;
         let area = f.area();
         let rect = dialog_layout::centered_dialog_rect(area, 52, 10);
         let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
-        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
+        let fill_style = d.fill_style();
         f.render_widget(Clear, rect);
         let title = match err.operation {
             Operation::Copy => " Copy error ",
@@ -488,7 +487,7 @@ impl Renderer {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .style(fill_style.fg(DIALOG_FOCUS));
+            .style(fill_style.fg(d.border));
         f.render_widget(block, rect);
         let max_msg_w = content.width as usize;
         let msg_display = truncate_str_ellipsis(&err.message, max_msg_w);
@@ -513,6 +512,7 @@ impl Renderer {
             content,
             &opts,
             app.copy_error_focus.min(2),
+            d,
             fill_style,
             2,
         );
@@ -523,15 +523,16 @@ impl Renderer {
         f: &mut Frame,
         app: &AppState,
     ) {
+        let d = &app.ui_palette.dialog;
         let area = f.area();
-        let rect = dialog_layout::centered_dialog_rect(area, 52, 8);
+        let rect = Self::new_file_error_dialog_rect(area);
         let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
-        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
+        let fill_style = d.fill_style();
         f.render_widget(Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Error ")
-            .style(fill_style.fg(DIALOG_FOCUS));
+            .style(fill_style.fg(d.border));
         f.render_widget(block, rect);
         let msg = app.new_file_error.as_deref().unwrap_or("");
         let msg_display = truncate_str_ellipsis(msg, content.width as usize);
@@ -547,12 +548,17 @@ impl Renderer {
             },
         );
         let ok_opts: [(u8, &str); 1] = [(1, "OK")];
-        Self::draw_numbered_options(f, content, &ok_opts, 0, fill_style, 4);
+        Self::draw_numbered_options(f, content, &ok_opts, 0, d, fill_style, 4);
+    }
+
+    /// Outer rect for new file error dialog (must match [`Self::draw_new_file_error_dialog`]).
+    pub fn new_file_error_dialog_rect(area: Rect) -> Rect {
+        dialog_layout::centered_dialog_rect(area, 52, 8)
     }
 
     /// Return OK button rect for new file error dialog hit-testing (row at content.y + 4).
     pub fn new_file_error_ok_rect(area: Rect) -> Option<Rect> {
-        let rect = dialog_layout::centered_dialog_rect(area, 52, 8);
+        let rect = Self::new_file_error_dialog_rect(area);
         let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
         const OK_W: u16 = 6;
         let ok_x = content.x + content.width.saturating_sub(OK_W) / 2;
@@ -571,15 +577,16 @@ impl Renderer {
         app: &AppState,
         filename: &str,
     ) {
+        let d = &app.ui_palette.dialog;
         let area = f.area();
         let rect = dialog_layout::centered_dialog_rect(area, 54, 12);
         let content = dialog_layout::dialog_content_rect(rect, DEFAULT_PAD_H);
-        let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
+        let fill_style = d.fill_style();
         f.render_widget(Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" File exists ")
-            .style(fill_style.fg(DIALOG_FOCUS));
+            .style(fill_style.fg(d.border));
         f.render_widget(block, rect);
         let max_name_w = (content.width as usize).saturating_sub(2);
         let name_only = std::path::Path::new(filename)
@@ -610,6 +617,7 @@ impl Renderer {
             content,
             &opts,
             app.copy_overwrite_focus.min(4),
+            d,
             fill_style,
             2,
         );
@@ -619,6 +627,7 @@ impl Renderer {
     fn draw_copy_progress(
         f: &mut Frame,
         progress: &crate::app::state::CopyProgress,
+        palette: &UiPalette,
     ) {
         let area = f.area();
         let inner_width = 76usize;
@@ -637,8 +646,8 @@ impl Renderer {
             width: w,
             height: h,
         };
-        let progress_bg = Color::Rgb(25, 40, 60);
-        let fill_style = Style::default().bg(progress_bg);
+        let pr = &palette.progress;
+        let fill_style = Style::default().bg(pr.background);
 
         f.render_widget(Clear, rect);
         let title = match progress.operation {
@@ -649,7 +658,7 @@ impl Renderer {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .style(fill_style.fg(Color::Cyan));
+            .style(fill_style.fg(pr.border));
         f.render_widget(block, rect);
         let inner = rect.inner(Margin {
             horizontal: 1,
@@ -666,7 +675,8 @@ impl Renderer {
         let space_line = " ".repeat(content.width as usize);
         for r in 0..content.height {
             f.render_widget(
-                Paragraph::new(space_line.as_str()).style(Style::default().bg(progress_bg)),
+                Paragraph::new(space_line.as_str())
+                    .style(Style::default().bg(pr.background)),
                 Rect {
                     x: content.x,
                     y: content.y + r,
@@ -678,7 +688,7 @@ impl Renderer {
 
         let mut row = 0u16;
         let src_label = Paragraph::new("Source")
-            .style(fill_style.fg(Color::Yellow))
+            .style(fill_style.fg(pr.section_label))
             .alignment(Alignment::Center);
         f.render_widget(
             src_label,
@@ -692,7 +702,7 @@ impl Renderer {
         row += 1;
         let path_display = compact_path(&progress.current_path, max_path_width.max(10));
         let path_para = Paragraph::new(path_display)
-            .style(fill_style.fg(Color::White))
+            .style(fill_style.fg(pr.path_text))
             .alignment(Alignment::Center);
         f.render_widget(
             path_para,
@@ -706,7 +716,7 @@ impl Renderer {
         row += 1;
         if matches!(progress.operation, Operation::Copy | Operation::Move) {
             let tgt_label = Paragraph::new("Target")
-                .style(fill_style.fg(Color::Yellow))
+                .style(fill_style.fg(pr.section_label))
                 .alignment(Alignment::Center);
             f.render_widget(
                 tgt_label,
@@ -720,7 +730,7 @@ impl Renderer {
             row += 1;
             let target_display = compact_path(&progress.target_path, max_path_width.max(10));
             let target_para = Paragraph::new(target_display)
-                .style(fill_style.fg(Color::White))
+                .style(fill_style.fg(pr.path_text))
                 .alignment(Alignment::Center);
             f.render_widget(
                 target_para,
@@ -739,7 +749,7 @@ impl Renderer {
             0.0
         };
         let gauge = Gauge::default()
-            .gauge_style(Style::default().fg(Color::Cyan))
+            .gauge_style(Style::default().fg(pr.gauge))
             .ratio(ratio)
             .label(format!("{} / {}", progress.current, progress.total));
         f.render_widget(
@@ -753,7 +763,7 @@ impl Renderer {
         );
         row += 1;
         let cancel_hint = Paragraph::new("ESC: Cancel")
-            .style(fill_style.fg(Color::DarkGray))
+            .style(fill_style.fg(pr.hint))
             .alignment(Alignment::Center);
         f.render_widget(
             cancel_hint,
@@ -770,7 +780,9 @@ impl Renderer {
     fn draw_archive_progress(
         f: &mut Frame,
         progress: &crate::app::state::ArchiveProgress,
+        palette: &UiPalette,
     ) {
+        let pr = &palette.progress;
         let area = f.area();
         let inner_width = 76usize;
         const PAD_H: u16 = 2;
@@ -784,14 +796,13 @@ impl Renderer {
             width: w,
             height: h,
         };
-        let progress_bg = Color::Rgb(25, 40, 60);
-        let fill_style = Style::default().bg(progress_bg);
+        let fill_style = Style::default().bg(pr.background);
 
         f.render_widget(Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Archive ")
-            .style(fill_style.fg(Color::Cyan));
+            .style(fill_style.fg(pr.border));
         f.render_widget(block, rect);
         let inner = rect.inner(Margin {
             horizontal: 1,
@@ -808,7 +819,8 @@ impl Renderer {
         let space_line = " ".repeat(content.width as usize);
         for r in 0..content.height {
             f.render_widget(
-                Paragraph::new(space_line.as_str()).style(Style::default().bg(progress_bg)),
+                Paragraph::new(space_line.as_str())
+                    .style(Style::default().bg(pr.background)),
                 Rect {
                     x: content.x,
                     y: content.y + r,
@@ -820,7 +832,7 @@ impl Renderer {
 
         let mut row = 0u16;
         let src_label = Paragraph::new("Source")
-            .style(fill_style.fg(Color::Yellow))
+            .style(fill_style.fg(pr.section_label))
             .alignment(Alignment::Center);
         f.render_widget(
             src_label,
@@ -835,7 +847,7 @@ impl Renderer {
         let path_display = compact_path(&progress.current_path, max_path_width.max(10));
         f.render_widget(
             Paragraph::new(path_display)
-                .style(fill_style.fg(Color::White))
+                .style(fill_style.fg(pr.path_text))
                 .alignment(Alignment::Center),
             Rect {
                 x: content.x,
@@ -846,7 +858,7 @@ impl Renderer {
         );
         row += 1;
         let tgt_label = Paragraph::new("Target")
-            .style(fill_style.fg(Color::Yellow))
+            .style(fill_style.fg(pr.section_label))
             .alignment(Alignment::Center);
         f.render_widget(
             tgt_label,
@@ -861,7 +873,7 @@ impl Renderer {
         let target_display = compact_path(&progress.target_path, max_path_width.max(10));
         f.render_widget(
             Paragraph::new(target_display)
-                .style(fill_style.fg(Color::White))
+                .style(fill_style.fg(pr.path_text))
                 .alignment(Alignment::Center),
             Rect {
                 x: content.x,
@@ -877,7 +889,7 @@ impl Renderer {
             0.0
         };
         let gauge = Gauge::default()
-            .gauge_style(Style::default().fg(Color::Cyan))
+            .gauge_style(Style::default().fg(pr.gauge))
             .ratio(ratio)
             .label(format!("{} / {}", progress.current, progress.total));
         f.render_widget(
@@ -891,7 +903,7 @@ impl Renderer {
         );
         row += 1;
         let cancel_hint = Paragraph::new("ESC: Cancel")
-            .style(fill_style.fg(Color::DarkGray))
+            .style(fill_style.fg(pr.hint))
             .alignment(Alignment::Center);
         f.render_widget(
             cancel_hint,
@@ -968,9 +980,10 @@ impl Renderer {
         area: Rect,
         app: &AppState,
     ) {
-        let dark_bg = Color::Rgb(60, 60, 60);
+        let c = &app.ui_palette.chrome;
+        let menu_bg = c.menu_overlay_bg;
         f.render_widget(
-            Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(dark_bg)),
+            Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(menu_bg)),
             area,
         );
         let items = Self::menu_bar_items();
@@ -979,9 +992,9 @@ impl Renderer {
             return;
         }
         let slot_w = area.width / menu_item_count;
-        let num_style = Style::default().fg(Color::Rgb(255, 180, 80)).bg(dark_bg);
-        let label_style = Style::default().fg(Color::Rgb(180, 180, 180)).bg(dark_bg);
-        let unavailable_style = Style::default().fg(Color::DarkGray).bg(dark_bg);
+        let num_style = Style::default().fg(c.menu_hotkey).bg(menu_bg);
+        let label_style = Style::default().fg(c.menu_label).bg(menu_bg);
+        let unavailable_style = Style::default().fg(c.menu_unavailable).bg(menu_bg);
         for (i, (label, key)) in items.iter().enumerate() {
             let slot_start = area.x + (i as u16) * slot_w;
             let unavailable = !Self::is_menu_action_available(app, *key);
@@ -1027,8 +1040,10 @@ impl Renderer {
         app: &mut AppState,
     ) {
         let area = f.area();
+        let c = app.ui_palette.chrome;
+        let main_bg = c.main_background;
         f.render_widget(
-            Block::default().style(Style::default().bg(MAIN_DARK_BG)),
+            Block::default().style(Style::default().bg(main_bg)),
             area,
         );
         // Rows 0..height-2: frame + panels. Row height-2: command line. Row height-1: menu bar (footer).
@@ -1041,8 +1056,12 @@ impl Renderer {
         };
         let frame_block = Block::default()
             .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::White).bg(MAIN_DARK_BG))
-            .style(Style::default().bg(MAIN_DARK_BG));
+            .border_style(
+                Style::default()
+                    .fg(c.panel_border_fg)
+                    .bg(c.panel_border_bg),
+            )
+            .style(Style::default().bg(main_bg));
         let inner = frame_block.inner(frame_rect);
         f.render_widget(frame_block, frame_rect);
 
@@ -1051,7 +1070,7 @@ impl Renderer {
         let sep_x = inner.x + left_w;
 
         // Row 0: path (without filename) at top-left of each panel
-        let path_style = Style::default().fg(Color::Rgb(255, 180, 80));
+        let path_style = Style::default().fg(c.bottom_bar_path);
         let left_path = app.left_panel().get_current_dir();
         let right_path = app.right_panel().get_current_dir();
         let left_path_display = compact_path(left_path.trim_end_matches('/'), left_w as usize);
@@ -1110,12 +1129,14 @@ impl Renderer {
         };
 
         let active_panel = app.active_panel();
+        let palette = app.ui_palette;
         Self::draw_single_panel(
             f,
             app.left_panel_mut(),
             left_panel,
             "Left Panel",
             active_panel == 0,
+            &palette,
         );
         Self::draw_single_panel(
             f,
@@ -1123,9 +1144,12 @@ impl Renderer {
             right_panel,
             "Right Panel",
             active_panel == 1,
+            &palette,
         );
         // Vertical separator │ from path row through bottom bar
-        let sep_style = Style::default().bg(MAIN_DARK_BG).fg(Color::White);
+        let sep_style = Style::default()
+            .bg(main_bg)
+            .fg(c.column_separator);
         for row in inner.y..(inner.y + panel_content_height + 2) {
             f.render_widget(
                 Paragraph::new("│").style(sep_style),
@@ -1149,7 +1173,10 @@ impl Renderer {
         area: Rect,
         sep_x: u16,
     ) {
-        let bar_style = Style::default().bg(MAIN_DARK_BG).fg(Color::White);
+        let c = &app.ui_palette.chrome;
+        let bar_style = Style::default()
+            .bg(c.main_background)
+            .fg(c.command_line_fg);
         let left_half_w = (sep_x.saturating_sub(area.x)) as usize;
         let right_total_w = area.width.saturating_sub((sep_x - area.x) + 1) as usize;
 
@@ -1164,9 +1191,12 @@ impl Renderer {
         let size_info_line = crate::dialogs::size_info_dialog::format_bottom_bar_line(app);
         let active = app.active_panel();
 
-        let filename_color = Color::Rgb(255, 180, 80); // orange, matches path
-        let name_style_bar = Style::default().bg(MAIN_DARK_BG).fg(filename_color);
-        let size_style_bar = Style::default().bg(MAIN_DARK_BG).fg(BOTTOM_BAR_SIZE_FG);
+        let name_style_bar = Style::default()
+            .bg(c.main_background)
+            .fg(c.bottom_bar_path);
+        let size_style_bar = Style::default()
+            .bg(c.main_background)
+            .fg(c.bottom_bar_size);
 
         if active == 0 && size_info_line.is_some() {
             let left_text = size_info_line.as_ref().unwrap().clone();
@@ -1174,7 +1204,7 @@ impl Renderer {
             let left_pad = left_half_w.saturating_sub(left_trunc.chars().count());
             f.render_widget(
                 Paragraph::new(format!("{}{}", left_trunc, " ".repeat(left_pad)))
-                    .style(bar_style.fg(Color::Green)),
+                    .style(bar_style.fg(c.bottom_bar_success)),
                 Rect {
                     x: area.x,
                     y: area.y,
@@ -1215,7 +1245,8 @@ impl Renderer {
             let right_pad = right_content_w.saturating_sub(right_trunc.chars().count());
             let right_display = format!("{}{}", right_trunc, " ".repeat(right_pad));
             f.render_widget(
-                Paragraph::new(right_display).style(bar_style.fg(Color::Green)),
+                Paragraph::new(right_display)
+                    .style(bar_style.fg(c.bottom_bar_success)),
                 Rect {
                     x: sep_x + 1,
                     y: area.y,
@@ -1260,11 +1291,12 @@ impl Renderer {
         app: &AppState,
         area: Rect,
     ) {
+        let c = &app.ui_palette.chrome;
         let prompt = "$ ";
         let line = format!("{}{}", prompt, app.command_line);
         let is_focused = app.focus == Focus::CommandLine;
-        let base = Style::default().bg(MAIN_DARK_BG);
-        let style = base.fg(Color::White);
+        let base = Style::default().bg(c.main_background);
+        let style = base.fg(c.command_line_fg);
         let command_line_paragraph = Paragraph::new(line.clone()).style(style);
         f.render_widget(command_line_paragraph, area);
         if is_focused {
@@ -1282,13 +1314,14 @@ impl Renderer {
         area: Rect,
         _title: &str,
         is_active_panel: bool,
+        palette: &UiPalette,
     ) {
         match panel.get_view_mode() {
             ViewMode::SingleColumn => {
-                Self::draw_single_column_view(f, panel, area, is_active_panel)
+                Self::draw_single_column_view(f, panel, area, is_active_panel, palette)
             }
             ViewMode::DoubleColumn => {
-                Self::draw_double_column_view(f, panel, area, is_active_panel)
+                Self::draw_double_column_view(f, panel, area, is_active_panel, palette)
             }
         }
     }
@@ -1298,6 +1331,7 @@ impl Renderer {
         panel: &mut Panel,
         area: Rect,
         is_active_panel: bool,
+        palette: &UiPalette,
     ) {
         // One-column view: no header row; data rows have name + size + mtime (like two-column: no redundant left padding).
         // Mark: only "> " when marked (no leading spaces when unmarked, to match two-column).
@@ -1318,7 +1352,8 @@ impl Renderer {
             .get_scroll_offset()
             .min(files.len().saturating_sub(1).max(0));
 
-        let base = Style::default().bg(MAIN_DARK_BG);
+        let list = &palette.panel_list;
+        let base = Style::default().bg(palette.chrome.main_background);
 
         for (i, file) in files.iter().skip(scroll).take(panel_height).enumerate() {
             let actual_index = i + scroll;
@@ -1337,19 +1372,23 @@ impl Renderer {
             let mtime_pad = format!("{:>17}", mtime_str); // "Feb 13 2024 20:05" = 17 chars
 
             let (name_style, mark_style) = if is_selected {
-                let sel = Style::default().fg(Color::White).bg(Color::Blue);
+                let sel = Style::default()
+                    .fg(list.selected_fg)
+                    .bg(list.selected_bg);
                 (sel, sel)
             } else if file.is_dir {
-                let dir = base.fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                let dir = base
+                    .fg(list.directory_fg)
+                    .add_modifier(Modifier::BOLD);
                 (dir, base)
             } else if file.is_executable {
-                (base.fg(Color::Green), base)
+                (base.fg(list.executable_fg), base)
             } else if is_zip_file(file) {
-                (base.fg(Color::Rgb(160, 120, 255)), base)
+                (base.fg(list.zip_fg), base)
             } else if file.is_symlink {
-                (base.fg(Color::Magenta), base)
+                (base.fg(list.symlink_fg), base)
             } else {
-                (base.fg(Color::White), base)
+                (base.fg(list.file_fg), base)
             };
 
             let pad_len = (name_w + GAP as usize)
@@ -1366,7 +1405,7 @@ impl Renderer {
                     if is_selected {
                         mark_style
                     } else {
-                        base.fg(Color::White)
+                        base.fg(list.file_fg)
                     },
                 ),
                 Span::raw(" "),
@@ -1375,7 +1414,7 @@ impl Renderer {
                     if is_selected {
                         mark_style
                     } else {
-                        base.fg(Color::White)
+                        base.fg(list.file_fg)
                     },
                 ),
             ];
@@ -1396,6 +1435,7 @@ impl Renderer {
         panel: &mut Panel,
         area: Rect,
         is_active_panel: bool,
+        palette: &UiPalette,
     ) {
         let panel_height = (area.height as usize).max(1);
         let files_per_column = panel_height;
@@ -1438,6 +1478,7 @@ impl Renderer {
             let display = truncate_for_width(file, max_left_w);
             let line = styles::create_file_line_from_display(
                 &display,
+                &palette.panel_list,
                 file.is_dir,
                 file.is_symlink,
                 file.is_executable,
@@ -1463,6 +1504,7 @@ impl Renderer {
             let display = truncate_for_width(file, max_right_w);
             let line = styles::create_file_line_from_display(
                 &display,
+                &palette.panel_list,
                 file.is_dir,
                 file.is_symlink,
                 file.is_executable,
@@ -1481,7 +1523,8 @@ impl Renderer {
 
         for y in left_col.y..left_col.y + left_col.height {
             f.render_widget(
-                Paragraph::new("│").style(Style::default().fg(Color::White)),
+                Paragraph::new("│")
+                    .style(Style::default().fg(palette.chrome.column_separator)),
                 Rect {
                     x: vertical_line_x,
                     y,

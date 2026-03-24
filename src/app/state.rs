@@ -1,5 +1,6 @@
 use crate::core::settings::PersistedSettings;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
+use crate::ui::theme::{ThemeId, UiPalette};
 use crate::ui::toast::TimedToast;
 use ratatui::layout::Rect;
 use std::io;
@@ -141,6 +142,11 @@ pub struct AppState {
     pub persisted_settings: PersistedSettings,
     /// At startup: OS trash usable for Safe delete (Linux: writable XDG data dir; macOS: yes).
     pub trash_available: bool,
+    /// Active built-in theme id (for future persistence / settings UI).
+    #[allow(dead_code)]
+    pub theme_id: ThemeId,
+    /// Resolved colors for this frame; update when `theme_id` changes via [`ThemeId::palette`].
+    pub ui_palette: UiPalette,
 }
 
 pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
@@ -229,6 +235,8 @@ impl AppState {
             show_hidden_files: true,
             persisted_settings: settings,
             trash_available: crate::core::trash_delete::trash_available(),
+            theme_id: ThemeId::default(),
+            ui_palette: ThemeId::default().palette(),
         };
         app.sync_from_persisted_settings();
         Ok(app)

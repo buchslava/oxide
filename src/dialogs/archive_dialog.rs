@@ -171,6 +171,7 @@ pub fn draw(
         "Enter archive file name:",
         &d.input,
         d.focus,
+        &app.ui_palette,
     );
 }
 

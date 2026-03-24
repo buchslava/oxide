@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Margin, Rect},
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
@@ -17,19 +17,7 @@ use crate::browser::clipboard;
 use crate::core::file_ops::FileOperations;
 use crate::app::events::AppAction;
 use crate::browser::panel::PanelOperations;
-use crate::ui::styles::{
-    DIALOG_BG, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED, DIALOG_INPUT_SELECTION_BG,
-};
 use crate::ui::text_input::{self, TextInputState};
-
-// High-contrast foregrounds for F2; panel backgrounds (DIALOG_BG, inputs, blue focus) unchanged.
-const F2_TEXT: Color = Color::Rgb(255, 255, 255);
-/// Hints / secondary lines (replaces DarkGray on grey).
-const F2_TEXT_DIM: Color = Color::Rgb(205, 212, 222);
-/// Section borders and outer title when not focused.
-const F2_BORDER: Color = Color::Rgb(115, 235, 255);
-/// Focused section border.
-const F2_BORDER_FOCUS: Color = Color::Rgb(255, 255, 110);
 
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -608,35 +596,41 @@ pub fn handle_key(
     Some(AppAction::Continue)
 }
 
-/// Draw the F2 dialog. Order left to right: 1 File name, 2 Permissions (in File section), 3 User name, 4 Group name.
-pub fn draw(
-    f: &mut Frame,
-    app: &mut AppState,
-) {
-    let d = match app.rename_attr_dialog.as_mut() {
-        Some(x) => x,
-        None => return,
-    };
-    let area = f.area();
+/// Bounding box for outside-dismiss (must match [`draw`]).
+pub fn dialog_rect(area: Rect) -> Rect {
     let max_w = 72u16;
     let w = max_w.min(area.width.saturating_sub(4));
     let h = 22u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect {
+    Rect {
         x,
         y,
         width: w,
         height: h,
+    }
+}
+
+/// Draw the F2 dialog. Order left to right: 1 File name, 2 Permissions (in File section), 3 User name, 4 Group name.
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+) {
+    let colors = app.ui_palette.dialog;
+    let dlg = match app.rename_attr_dialog.as_mut() {
+        Some(x) => x,
+        None => return,
     };
-    let fill_style = Style::default().bg(DIALOG_BG).fg(F2_TEXT);
-    let border_idle = Style::default().fg(F2_BORDER);
-    let border_focus = Style::default().fg(F2_BORDER_FOCUS);
+    let area = f.area();
+    let rect = dialog_rect(area);
+    let fill_style = colors.fill_style();
+    let border_idle = Style::default().fg(colors.rename_border);
+    let border_focus = Style::default().fg(colors.rename_border_active);
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Rename / Attributes ")
-        .style(fill_style.fg(F2_BORDER));
+        .style(fill_style.fg(colors.rename_border));
     f.render_widget(block, rect);
     let inner = rect.inner(Margin {
         horizontal: 1,
@@ -647,7 +641,7 @@ pub fn draw(
     let right_w = inner.width.saturating_sub(left_w).saturating_sub(1);
     let gap = 1u16;
 
-    let focus = match d {
+    let focus = match dlg {
         RenameAttrDialogState::Single { focus, .. } => *focus,
         RenameAttrDialogState::Group { focus, .. } => *focus,
     };
@@ -665,16 +659,16 @@ pub fn draw(
         vertical: 1,
     });
 
-    match d {
+    match dlg {
         RenameAttrDialogState::Single {
             name_input,
             focus: _,
             ..
         } => {
             let name_input_bg = if focus == RenameAttrField::Name {
-                DIALOG_INPUT_BG_FOCUSED
+                colors.input_bg_focused
             } else {
-                DIALOG_INPUT_BG_UNFOCUSED
+                colors.input_bg_unfocused
             };
             let name_rect = Rect {
                 x: name_inner.x,
@@ -682,10 +676,10 @@ pub fn draw(
                 width: name_inner.width,
                 height: 1,
             };
-            let base_style = fill_style.bg(name_input_bg).fg(F2_TEXT);
+            let base_style = fill_style.bg(name_input_bg).fg(colors.text);
             let selection_style = Style::default()
-                .bg(DIALOG_INPUT_SELECTION_BG)
-                .fg(F2_TEXT);
+                .bg(colors.input_selection_bg)
+                .fg(colors.text);
             let line = text_input::input_line_with_selection(
                 name_input,
                 name_rect.width as usize,
@@ -738,7 +732,8 @@ pub fn draw(
         vertical: 1,
     });
 
-    let (mode, perm_focus, _owner, _group, user_list, group_list, user_index, group_index) = match d
+    let (mode, perm_focus, _owner, _group, user_list, group_list, user_index, group_index) =
+        match dlg
     {
         RenameAttrDialogState::Single {
             mode,
@@ -777,7 +772,9 @@ pub fn draw(
         let checked = mode_has_bit(*mode, PERM_BITS[i]);
         let mark = if checked { "[x]" } else { "[ ]" };
         let style = if i == *perm_focus {
-            fill_style.bg(Color::Blue).fg(F2_TEXT)
+            Style::default()
+                .bg(colors.list_highlight_bg)
+                .fg(colors.text)
         } else {
             fill_style
         };
@@ -794,7 +791,7 @@ pub fn draw(
     let octal = format!("{:o}", *mode & 0o7777);
     f.render_widget(
         Paragraph::new(format!("Permissions (octal): {}", octal))
-            .style(fill_style.fg(F2_TEXT_DIM)),
+            .style(fill_style.fg(colors.text_muted)),
         Rect {
             x: perm_inner.x,
             y: perm_inner.y + 12,
@@ -849,7 +846,9 @@ pub fn draw(
         .enumerate()
         .map(|(i, u)| {
             let style = if user_start + i == ui {
-                fill_style.bg(Color::Blue).fg(F2_TEXT)
+                fill_style
+                    .bg(colors.list_highlight_bg)
+                    .fg(colors.text)
             } else {
                 fill_style
             };
@@ -863,7 +862,9 @@ pub fn draw(
         .enumerate()
         .map(|(i, g)| {
             let style = if group_start + i == gi {
-                fill_style.bg(Color::Blue).fg(F2_TEXT)
+                fill_style
+                    .bg(colors.list_highlight_bg)
+                    .fg(colors.text)
             } else {
                 fill_style
             };
@@ -910,7 +911,7 @@ pub fn draw(
         Paragraph::new(
             "Tab: switch area   Space: toggle perm   Enter: run   ↑↓: move   Esc: Cancel",
         )
-        .style(fill_style.fg(F2_TEXT_DIM)),
+        .style(fill_style.fg(colors.text_muted)),
         hint_rect,
     );
 
@@ -926,9 +927,9 @@ pub fn draw(
             width: aw,
             height: ah,
         };
-        let err_bg = Color::Rgb(60, 60, 60);
-        let err_style = Style::default().bg(err_bg).fg(F2_TEXT);
-        let red = Style::default().fg(Color::Rgb(255, 90, 90));
+        let err_bg = colors.dialog_bg;
+        let err_style = Style::default().bg(err_bg).fg(colors.text);
+        let red = Style::default().fg(colors.error_fg);
         f.render_widget(Clear, alert_rect);
         f.render_widget(
             Block::default()
@@ -957,7 +958,8 @@ pub fn draw(
             },
         );
         f.render_widget(
-            Paragraph::new("Press any key to close").style(Style::default().bg(err_bg).fg(F2_TEXT_DIM)),
+            Paragraph::new("Press any key to close")
+                .style(Style::default().bg(err_bg).fg(colors.text_muted)),
             Rect {
                 x: inner.x,
                 y: inner.y + inner.height.saturating_sub(1),

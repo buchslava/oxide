@@ -5,7 +5,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -22,6 +22,7 @@ use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::browser::panel::PanelOperations;
 use crate::core::location::PanelLocation;
+use crate::ui::theme::DialogPalette;
 use crate::ui::toast;
 
 /// State when the embedded code editor is open (F4).
@@ -583,6 +584,9 @@ pub fn handle_editor_mouse(
     app: &mut AppState,
     mouse_event: crossterm::event::MouseEvent,
 ) -> bool {
+    if app.editor_confirm_pending {
+        return false;
+    }
     if let Some(ref mut ed) = app.editor_screen {
         let hint_row = ed.area.y + ed.area.height;
         if mouse_event.row >= hint_row {
@@ -788,8 +792,8 @@ pub fn draw(
             width: area.width,
             height: content_height,
         };
-        let dark_bg = Color::Rgb(30, 30, 35);
-        f.render_widget(Block::default().style(Style::default().bg(dark_bg)), area);
+        let main_bg = app.ui_palette.chrome.main_background;
+        f.render_widget(Block::default().style(Style::default().bg(main_bg)), area);
         f.render_widget(&ed.editor, ed.area);
         if let Some((cx, cy)) = ed.editor.get_visible_cursor(&ed.area) {
             f.set_cursor_position((cx, cy));
@@ -806,16 +810,20 @@ pub fn draw(
                 height: 1,
             };
             f.render_widget(
-                Paragraph::new(hint).style(Style::default().bg(dark_bg).fg(Color::DarkGray)),
+                Paragraph::new(hint).style(
+                    Style::default()
+                        .bg(main_bg)
+                        .fg(app.ui_palette.viewer.muted),
+                ),
                 r,
             );
         }
         if let Some(ref query) = ed.search_query {
             let cursor = ed.search_query_cursor.min(query.chars().count());
-            draw_search_bar(f, area, query, cursor);
+            draw_search_bar(f, area, query, cursor, &app.ui_palette.dialog);
         }
         if let Some(ref t) = app.timed_toast {
-            toast::draw_timed_bottom_left(f, area, t);
+            toast::draw_timed_bottom_left(f, area, &app.ui_palette, t);
         }
         if app.editor_confirm_pending {
             draw_confirm_dialog(f, app);
@@ -829,6 +837,7 @@ fn draw_search_bar(
     area: Rect,
     query: &str,
     cursor_pos: usize,
+    d: &DialogPalette,
 ) {
     let title = " Find (in file) ";
     let hint = " Enter: next  ←→: move  Esc: close ";
@@ -843,14 +852,12 @@ fn draw_search_bar(
         width: w,
         height: h,
     };
-    // Same dialog background as F7 / F2 — distinct from editor panel.
-    let dialog_bg = Color::Rgb(60, 60, 60);
-    let style = Style::default().bg(dialog_bg).fg(Color::White);
+    let style = d.fill_style();
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .style(style.fg(Color::Cyan));
+        .style(style.fg(d.border));
     f.render_widget(block, rect);
     let inner = rect.inner(Margin {
         horizontal: 1,
@@ -874,11 +881,26 @@ fn draw_search_bar(
         height: 1,
     };
     f.render_widget(
-        Paragraph::new(hint).style(style.fg(Color::DarkGray)),
+        Paragraph::new(hint).style(style.fg(d.text_muted)),
         hint_row,
     );
     let cursor_col = (2 + cursor_pos).min(inner.width as usize);
     f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
+}
+
+/// Bounding box for "Save changes?" (must match [`draw_confirm_dialog`]).
+pub fn save_changes_confirm_rect(area: Rect) -> Rect {
+    let max_w = 48u16;
+    let w = max_w.min(area.width.saturating_sub(4));
+    let h = 9u16;
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }
 
 /// "Save changes?" when exiting editor with unsaved changes. Tab/↑↓ cycle, Enter confirms, 1/2/3 direct.
@@ -887,25 +909,15 @@ pub fn draw_confirm_dialog(
     app: &AppState,
 ) {
     let area = f.area();
-    let max_w = 48u16;
-    let w = max_w.min(area.width.saturating_sub(4));
-    let h = 9u16;
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
-    let menu_bg = Color::Rgb(60, 60, 60);
-    let fill_style = Style::default().bg(menu_bg).fg(Color::White);
-    let orange = Color::Rgb(255, 180, 80);
+    let rect = save_changes_confirm_rect(area);
+    let d = &app.ui_palette.dialog;
+    let fill_style = d.fill_style();
+    let orange = d.accent;
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Save changes? ")
-        .style(fill_style.fg(Color::Cyan));
+        .style(fill_style.fg(d.border));
     f.render_widget(block, rect);
     let inner = rect.inner(Margin {
         horizontal: 1,
@@ -950,7 +962,7 @@ pub fn draw_confirm_dialog(
             Span::raw(*label),
         ]);
         let style = if focused {
-            Style::default().bg(Color::Cyan).fg(Color::Black)
+            d.focus_row_style()
         } else {
             fill_style
         };
@@ -959,7 +971,7 @@ pub fn draw_confirm_dialog(
     let hint_y = content.y + 6;
     f.render_widget(
         Paragraph::new("↑↓ / Tab: choose   Enter: confirm")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(d.text_muted))
             .alignment(Alignment::Center),
         Rect {
             x: content.x,
@@ -972,17 +984,7 @@ pub fn draw_confirm_dialog(
 
 /// Return (option_rects) for editor confirm hit-testing. Rows 0=Save, 1=Discard, 2=Cancel.
 pub fn editor_confirm_option_rects(area: Rect) -> Option<[(Rect, EditorConfirmChoice); 3]> {
-    let max_w = 48u16;
-    let w = max_w.min(area.width.saturating_sub(4));
-    let h = 9u16;
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    let rect = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
+    let rect = save_changes_confirm_rect(area);
     let inner = rect.inner(Margin {
         horizontal: 1,
         vertical: 1,

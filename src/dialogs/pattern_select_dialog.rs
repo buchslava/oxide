@@ -4,7 +4,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::{Color, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -13,10 +13,6 @@ use ratatui::{
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::ui::dialog_layout::{self, DEFAULT_PAD_H};
-use crate::ui::styles::{
-    DIALOG_ACCENT, DIALOG_BG, DIALOG_FOCUS, DIALOG_INPUT_BG_FOCUSED, DIALOG_INPUT_BG_UNFOCUSED,
-    DIALOG_INPUT_SELECTION_BG,
-};
 use crate::ui::text_input::{self, TextInputState};
 
 /// Whether the dialog adds marks or removes them.
@@ -191,22 +187,28 @@ impl PatternSelectDialogState {
     }
 }
 
+/// Bounding box for outside-dismiss (must match [`draw`]).
+pub fn dialog_rect(area: Rect) -> Rect {
+    dialog_layout::centered_dialog_rect(area, 64, 12)
+}
+
 /// Draw modal: pattern row, case row, hint, Apply/Cancel (layout aligned with single-input dialogs).
 pub fn draw(
     f: &mut Frame,
     app: &mut AppState,
 ) {
-    let Some(ref d) = app.pattern_select_dialog else {
+    let Some(ref st) = app.pattern_select_dialog else {
         return;
     };
-    let title = match d.mode {
+    let title = match st.mode {
         PatternSelectMode::Mark => " Select by pattern (+) ",
         PatternSelectMode::Unmark => " Deselect by pattern (−) ",
     };
+    let dlg = &app.ui_palette.dialog;
     let area = f.area();
-    let rect = dialog_layout::centered_dialog_rect(area, 64, 12);
-    let fill_style = Style::default().bg(DIALOG_BG).fg(Color::White);
-    let border_style = fill_style.fg(DIALOG_FOCUS);
+    let rect = dialog_rect(area);
+    let fill_style = dlg.fill_style();
+    let border_style = fill_style.fg(dlg.border);
 
     f.render_widget(Clear, rect);
     let block = Block::default()
@@ -243,18 +245,18 @@ pub fn draw(
         width: content.width,
         height: 1,
     };
-    let input_base = if d.focus == 0 {
-        DIALOG_INPUT_BG_FOCUSED
+    let input_base = if st.focus == 0 {
+        dlg.input_bg_focused
     } else {
-        DIALOG_INPUT_BG_UNFOCUSED
+        dlg.input_bg_unfocused
     };
     let line = text_input::input_line_with_selection(
-        &d.pattern_input,
+        &st.pattern_input,
         content.width as usize,
-        Style::default().bg(input_base).fg(Color::White),
+        Style::default().bg(input_base).fg(dlg.text),
         Style::default()
-            .bg(DIALOG_INPUT_SELECTION_BG)
-            .fg(Color::White),
+            .bg(dlg.input_selection_bg)
+            .fg(dlg.text),
     );
     f.render_widget(
         Paragraph::new(line).style(Style::default().bg(input_base)),
@@ -262,12 +264,13 @@ pub fn draw(
     );
 
     let case_y = content.y + 3;
-    let case_style = if d.focus == 1 {
-        Style::default().bg(Color::Blue).fg(Color::White)
+    let case_style = if st.focus == 1 {
+        dlg.list_highlight_style()
+            .remove_modifier(Modifier::BOLD)
     } else {
         fill_style
     };
-    let chk = if d.file_case_sensitive { "[x]" } else { "[ ]" };
+    let chk = if st.file_case_sensitive { "[x]" } else { "[ ]" };
     let case_line = Line::from(vec![
         Span::raw(chk),
         Span::raw(" File name case sensitive (same as Find)"),
@@ -296,19 +299,19 @@ pub fn draw(
         height: cancel_rect.height,
     };
 
-    let apply_style = if d.focus == 2 {
-        Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+    let apply_style = if st.focus == 2 {
+        dlg.focus_row_style()
     } else {
         fill_style
     };
-    let cancel_style = if d.focus == 3 {
-        Style::default().bg(DIALOG_FOCUS).fg(Color::Black)
+    let cancel_style = if st.focus == 3 {
+        dlg.focus_row_style()
     } else {
         fill_style
     };
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("A", DIALOG_ACCENT),
+            Span::styled("A", Style::default().fg(dlg.accent)),
             Span::raw("pply"),
         ]))
         .style(apply_style)
@@ -317,7 +320,7 @@ pub fn draw(
     );
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("C", DIALOG_ACCENT),
+            Span::styled("C", Style::default().fg(dlg.accent)),
             Span::raw("ancel"),
         ]))
         .style(cancel_style)
@@ -325,8 +328,8 @@ pub fn draw(
         cancel_rect,
     );
 
-    if d.focus == 0 {
-        if let Some((cx, cy)) = pattern_input_cursor(f.area(), &d.pattern_input) {
+    if st.focus == 0 {
+        if let Some((cx, cy)) = pattern_input_cursor(f.area(), &st.pattern_input) {
             f.set_cursor_position((cx, cy));
         }
     }
@@ -334,7 +337,7 @@ pub fn draw(
 
 /// Hit-test Apply/Cancel (y offset matches draw).
 pub fn button_rects(area: Rect) -> Option<(Rect, Rect)> {
-    let rect = dialog_layout::centered_dialog_rect(area, 64, 12);
+    let rect = dialog_rect(area);
     let inner = rect.inner(Margin {
         horizontal: 1,
         vertical: 1,
@@ -363,7 +366,7 @@ pub fn pattern_input_cursor(
     area: Rect,
     input: &TextInputState,
 ) -> Option<(u16, u16)> {
-    let rect = dialog_layout::centered_dialog_rect(area, 64, 12);
+    let rect = dialog_rect(area);
     let inner = rect.inner(Margin {
         horizontal: 1,
         vertical: 1,

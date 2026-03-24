@@ -4,7 +4,6 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::{Color, Style},
     text::Span,
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -15,6 +14,20 @@ use crate::app::events::{AppAction, SettingChange};
 use crate::dialogs::settings_dialog::draw_panel_section;
 
 const HINT_H: u16 = 1;
+
+/// Overlay box inside `panel_rect` (must match [`draw_overlay`]).
+pub fn overlay_dialog_rect(panel_rect: Rect) -> Rect {
+    let w = panel_rect.width.saturating_sub(2).max(1);
+    let h = panel_rect.height.saturating_sub(2).max(1);
+    let x = panel_rect.x + (panel_rect.width.saturating_sub(w)) / 2;
+    let y = panel_rect.y + (panel_rect.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
 
 /// Open the Left panel settings overlay (Ctrl+Q). Closes the right panel overlay if open.
 pub fn open_left(app: &mut AppState) {
@@ -48,22 +61,11 @@ fn draw_overlay(
     is_left: bool,
 ) {
     // Fill the panel (minus a 1-cell border); the old MIN.min(available) capped width at 28.
-    let w = panel_rect.width.saturating_sub(2).max(1);
-    let h = panel_rect.height.saturating_sub(2).max(1);
-    let x = panel_rect.x + (panel_rect.width.saturating_sub(w)) / 2;
-    let y = panel_rect.y + (panel_rect.height.saturating_sub(h)) / 2;
-    let rect = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
-
-    let grey_bg = Color::Rgb(60, 60, 60);
-    let right_bg = Color::Rgb(50, 52, 58);
-    let fill_style = Style::default().bg(grey_bg).fg(Color::White);
-    let right_fill_style = Style::default().bg(right_bg).fg(Color::White);
-    let border_style = fill_style.fg(Color::Cyan);
+    let rect = overlay_dialog_rect(panel_rect);
+    let d = &app.ui_palette.dialog;
+    let fill_style = d.fill_style();
+    let right_fill_style = d.fill_secondary_style();
+    let border_style = fill_style.fg(d.border);
 
     f.render_widget(Clear, rect);
     let block = Block::default()
@@ -120,6 +122,7 @@ fn draw_overlay(
 
     draw_panel_section(
         f,
+        d,
         content_rect,
         right_fill_style,
         view_index,
@@ -137,7 +140,7 @@ fn draw_overlay(
     };
     f.render_widget(
         Paragraph::new("↑↓  Tab  Space/Enter  Toggle   Esc  Close")
-            .style(fill_style.fg(Color::DarkGray))
+            .style(fill_style.fg(d.text_muted))
             .alignment(Alignment::Center),
         hint_rect,
     );

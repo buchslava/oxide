@@ -5,13 +5,14 @@ use std::sync::mpsc;
 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
     Frame,
 };
 
 use crate::app::state::AppState;
+use crate::ui::theme::ViewerPalette;
 
 /// Viewer is either loading file in background (Esc still closes) or ready with content.
 pub enum ViewerState {
@@ -557,6 +558,7 @@ fn hex_visible_lines_two_columns_styled(
     height: usize,
     left_width: u16,
     right_width: u16,
+    hex_cursor_highlight: Style,
 ) -> (Vec<Line<'_>>, Vec<Line<'_>>, usize) {
     let bytes = &v.content;
     let cursor_byte = v.hex_cursor;
@@ -571,7 +573,7 @@ fn hex_visible_lines_two_columns_styled(
     let mut left_lines = Vec::with_capacity(height.min(total_lines.saturating_sub(scroll)));
     let mut right_lines = Vec::with_capacity(left_lines.capacity());
     let addr_len = 10usize; // "AAAAAAAA: "
-    let highlight_style = Style::default().bg(Color::DarkGray).fg(Color::White);
+    let highlight_style = hex_cursor_highlight;
     let mut offset = start_byte;
     while offset < end_byte && left_lines.len() < height {
         let chunk = &bytes[offset..(offset + bpl).min(bytes.len())];
@@ -659,8 +661,9 @@ pub fn draw(
 ) {
     if let Some(state) = app.viewer_screen.as_mut() {
         let area = f.area();
-        let dark_bg = Color::Rgb(30, 30, 35);
-        let content_style = Style::default().bg(dark_bg).fg(Color::White);
+        let vp: ViewerPalette = app.ui_palette.viewer;
+
+        let content_style = Style::default().bg(vp.background).fg(vp.text);
 
         match state {
             ViewerState::Loading { file_path, .. } => {
@@ -683,15 +686,15 @@ pub fn draw(
                     height: 1,
                 };
                 let header = Line::from(vec![
-                    Span::styled(file_path.as_str(), Style::default().fg(Color::Cyan)),
+                    Span::styled(file_path.as_str(), Style::default().fg(vp.header_path)),
                     Span::raw("  "),
-                    Span::styled("Loading…", Style::default().fg(Color::DarkGray)),
+                    Span::styled("Loading…", Style::default().fg(vp.muted)),
                 ]);
                 f.render_widget(Paragraph::new(header).style(content_style), header_rect);
                 let msg = "Reading file in background — Esc to close";
                 f.render_widget(Paragraph::new(msg).style(content_style), content_rect);
                 f.render_widget(
-                    Paragraph::new(" Esc: close ").style(content_style.fg(Color::DarkGray)),
+                    Paragraph::new(" Esc: close ").style(content_style.fg(vp.muted)),
                     bottom_rect,
                 );
             }
@@ -751,6 +754,7 @@ pub fn draw(
                             content_height_usize,
                             chunks[0].width,
                             chunks[1].width,
+                            vp.hex_cursor_highlight_style(),
                         );
                         let left_text = ratatui::text::Text::from(left_lines);
                         let right_text = ratatui::text::Text::from(right_lines);
@@ -780,9 +784,9 @@ pub fn draw(
                     .saturating_sub(path_span.len() + right_info.len())
                     .max(1);
                 let header_line = Line::from(vec![
-                    Span::styled(path_span, Style::default().fg(Color::Cyan)),
+                    Span::styled(path_span, Style::default().fg(vp.header_path)),
                     Span::raw(" ".repeat(pad_len)),
-                    Span::styled(right_info, Style::default().fg(Color::DarkGray)),
+                    Span::styled(right_info, Style::default().fg(vp.muted)),
                 ]);
                 f.render_widget(
                     Paragraph::new(header_line).style(content_style),
@@ -790,15 +794,15 @@ pub fn draw(
                 );
 
                 let bar = Line::from(vec![
-                    Span::styled(" Esc ", content_style.fg(Color::DarkGray)),
+                    Span::styled(" Esc ", content_style.fg(vp.muted)),
                     Span::raw("close  "),
-                    Span::styled(" H ", content_style.fg(Color::DarkGray)),
+                    Span::styled(" H ", content_style.fg(vp.muted)),
                     Span::raw("hex/text  "),
-                    Span::styled(" ↑↓ ", content_style.fg(Color::DarkGray)),
+                    Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
                     Span::raw("PgUp/PgDn scroll"),
                 ]);
                 f.render_widget(
-                    Paragraph::new(bar).style(content_style.fg(Color::DarkGray)),
+                    Paragraph::new(bar).style(content_style.fg(vp.muted)),
                     bottom_rect,
                 );
             }

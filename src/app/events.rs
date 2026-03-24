@@ -2,6 +2,7 @@ use crate::app::state::{AppState, CopyParams, Focus, RenameAttrDialogState, Rena
 pub use crate::browser::editor::EditorConfirmChoice;
 use crate::browser::editor::{handle_editor_key, handle_editor_mouse};
 use crate::browser::panel::PanelOperations;
+use crate::ui::dialog_layout;
 use crate::ui::Renderer;
 use crate::browser::viewer::handle_viewer_key;
 use crossterm::{
@@ -72,11 +73,11 @@ pub enum AppAction {
     SizeInfoClose,
     /// F1: open Help dialog.
     OpenHelpDialog,
-    /// ESC or mouse click in Help dialog: close.
+    /// ESC or click outside Help dialog: close.
     HelpClose,
     /// F9: open Settings dialog.
     OpenSettingsDialog,
-    /// ESC or mouse click in Settings dialog: close.
+    /// ESC or click outside Settings dialog: close.
     SettingsClose,
     /// Ctrl+Q: open Left panel settings overlay over the left panel.
     OpenLeftPanelSettings,
@@ -678,9 +679,6 @@ impl EventHandler {
                 Ok(Some(AppAction::Continue))
             }
             Event::Mouse(mouse_event) => {
-                if app.editor_confirm_pending {
-                    return Ok(Some(AppAction::Continue));
-                }
                 if handle_editor_mouse(app, mouse_event) {
                     return Ok(Some(AppAction::Continue));
                 }
@@ -934,11 +932,39 @@ impl EventHandler {
             height: term_h,
         };
 
+        // Editor "Save changes?" — outside click = Cancel (same as Esc).
+        if app.editor_confirm_pending {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let dialog_rect = crate::browser::editor::save_changes_confirm_rect(area);
+                if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                    return Ok(Some(AppAction::EditorConfirmChoice(
+                        EditorConfirmChoice::Cancel,
+                    )));
+                }
+                if let Some(rects) = crate::browser::editor::editor_confirm_option_rects(area) {
+                    for (opt_rect, choice) in rects {
+                        if col >= opt_rect.x
+                            && col < opt_rect.x + opt_rect.width
+                            && row >= opt_rect.y
+                            && row < opt_rect.y + opt_rect.height
+                        {
+                            return Ok(Some(AppAction::EditorConfirmChoice(choice)));
+                        }
+                    }
+                }
+            }
+            return Ok(Some(AppAction::Continue));
+        }
+
         // Overwrite dialog: handle clicks on option rows (1–5). Mouse/touchpad friendly.
         if app.copy_overwrite_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                let (_rect, content) = Renderer::overwrite_dialog_layout(area);
+                let (rect, content) = Renderer::overwrite_dialog_layout(area);
                 let (col, row) = (mouse_event.column, mouse_event.row);
+                if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                    return Ok(Some(AppAction::CopyOverwriteChoice(5)));
+                }
                 if col >= content.x && col < content.x + content.width && row >= content.y + 2 {
                     let opt_row = (row - content.y - 2) as usize;
                     if opt_row < 5 {
@@ -951,8 +977,11 @@ impl EventHandler {
         // Error dialog: handle clicks on option rows (1–3).
         if app.copy_error_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                let (_rect, content) = Renderer::error_dialog_layout(area);
+                let (rect, content) = Renderer::error_dialog_layout(area);
                 let (col, row) = (mouse_event.column, mouse_event.row);
+                if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                    return Ok(Some(AppAction::CopyErrorChoice(CopyErrorChoice::Cancel)));
+                }
                 if col >= content.x && col < content.x + content.width && row >= content.y + 2 {
                     let opt_row = (row - content.y - 2) as usize;
                     if opt_row < 3 {
@@ -978,10 +1007,14 @@ impl EventHandler {
         // +/− pattern dialog: Apply / Cancel.
         if app.pattern_select_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let rect = crate::dialogs::pattern_select_dialog::dialog_rect(area);
+                if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                    return Ok(Some(AppAction::PatternSelectCancel));
+                }
                 if let Some((apply_rect, cancel_rect)) =
                     crate::dialogs::pattern_select_dialog::button_rects(area)
                 {
-                    let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= apply_rect.x
                         && col < apply_rect.x + apply_rect.width
                         && row >= apply_rect.y
@@ -1003,10 +1036,14 @@ impl EventHandler {
         // Mkdir dialog: handle clicks on Create and Cancel buttons.
         if app.mkdir_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let (dialog_rect, _) = dialog_layout::single_input_dialog_layout(area);
+                if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                    return Ok(Some(AppAction::MkdirCancel));
+                }
                 if let Some((create_rect, cancel_rect)) =
                     crate::dialogs::mkdir_dialog::mkdir_button_rects(area)
                 {
-                    let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
                         && col < create_rect.x + create_rect.width
                         && row >= create_rect.y
@@ -1028,10 +1065,14 @@ impl EventHandler {
         // Archive dialog: handle clicks on Create and Cancel buttons.
         if app.archive_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let (dialog_rect, _) = dialog_layout::single_input_dialog_layout(area);
+                if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                    return Ok(Some(AppAction::ArchiveCancel));
+                }
                 if let Some((create_rect, cancel_rect)) =
                     crate::dialogs::archive_dialog::archive_button_rects(area)
                 {
-                    let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
                         && col < create_rect.x + create_rect.width
                         && row >= create_rect.y
@@ -1053,8 +1094,13 @@ impl EventHandler {
         // New file error dialog: handle click on OK to close.
         if app.new_file_error.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let err_rect = Renderer::new_file_error_dialog_rect(area);
+                if !dialog_layout::pointer_in_dialog(col, row, err_rect) {
+                    app.new_file_error = None;
+                    return Ok(Some(AppAction::Continue));
+                }
                 if let Some(ok_rect) = Renderer::new_file_error_ok_rect(area) {
-                    let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= ok_rect.x
                         && col < ok_rect.x + ok_rect.width
                         && row >= ok_rect.y
@@ -1069,10 +1115,14 @@ impl EventHandler {
         // New file dialog: handle clicks on Create and Cancel buttons.
         if app.new_file_dialog.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let (dialog_rect, _) = dialog_layout::single_input_dialog_layout(area);
+                if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                    return Ok(Some(AppAction::NewFileCancel));
+                }
                 if let Some((create_rect, cancel_rect)) =
                     crate::dialogs::new_file_dialog::new_file_button_rects(area)
                 {
-                    let (col, row) = (mouse_event.column, mouse_event.row);
                     if col >= create_rect.x
                         && col < create_rect.x + create_rect.width
                         && row >= create_rect.y
@@ -1091,35 +1141,25 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
-        // Editor "Save changes?" dialog: handle clicks on option rows (1=Save, 2=Discard, 3=Cancel).
-        if app.editor_confirm_pending {
+        // Help dialog: click outside the window closes (Esc / q still handled in key path).
+        if app.help_dialog {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some(rects) = crate::browser::editor::editor_confirm_option_rects(area) {
-                    let (col, row) = (mouse_event.column, mouse_event.row);
-                    for (opt_rect, choice) in rects {
-                        if col >= opt_rect.x
-                            && col < opt_rect.x + opt_rect.width
-                            && row >= opt_rect.y
-                            && row < opt_rect.y + opt_rect.height
-                        {
-                            return Ok(Some(AppAction::EditorConfirmChoice(choice)));
-                        }
-                    }
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let rect = crate::dialogs::help_dialog::dialog_rect(area);
+                if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                    return Ok(Some(AppAction::HelpClose));
                 }
             }
             return Ok(Some(AppAction::Continue));
         }
-        // Help dialog: any mouse click closes.
-        if app.help_dialog {
-            if matches!(mouse_event.kind, MouseEventKind::Down(_)) {
-                return Ok(Some(AppAction::HelpClose));
-            }
-            return Ok(Some(AppAction::Continue));
-        }
-        // Settings dialog: any mouse click closes.
+        // Settings dialog: click outside closes (Esc in key path).
         if app.settings_dialog.is_some() {
-            if matches!(mouse_event.kind, MouseEventKind::Down(_)) {
-                return Ok(Some(AppAction::SettingsClose));
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let rect = crate::dialogs::settings_dialog::dialog_rect(area);
+                if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                    return Ok(Some(AppAction::SettingsClose));
+                }
             }
             return Ok(Some(AppAction::Continue));
         }
@@ -1130,16 +1170,55 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
-        // Find / panel overlays / F2 rename: modal — absorb mouse like F1 (no panel hit-test).
+        // Find dialog: outside click closes or stops search (same as Esc for current phase).
         if app.find_dialog.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                if let Some(d) = app.find_dialog.as_ref() {
+                    let rect = crate::dialogs::find_dialog::dialog_rect(area, d.phase);
+                    if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                        if let Some(a) = crate::dialogs::find_dialog::pointer_outside_action(app) {
+                            return Ok(Some(a));
+                        }
+                    }
+                }
+            }
             return Ok(Some(AppAction::Continue));
         }
-        if app.left_panel_settings_overlay.is_some()
-            || app.right_panel_settings_overlay.is_some()
-        {
+        // Panel settings overlay: outside the overlay box closes (Esc in key path).
+        if app.left_panel_settings_overlay.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                if let Some(panel_rect) = app.left_panel_rect {
+                    let rect = crate::dialogs::panel_overlay::overlay_dialog_rect(panel_rect);
+                    if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                        return Ok(Some(AppAction::CloseLeftPanelSettings));
+                    }
+                }
+            }
             return Ok(Some(AppAction::Continue));
         }
+        if app.right_panel_settings_overlay.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                if let Some(panel_rect) = app.right_panel_rect {
+                    let rect = crate::dialogs::panel_overlay::overlay_dialog_rect(panel_rect);
+                    if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                        return Ok(Some(AppAction::CloseRightPanelSettings));
+                    }
+                }
+            }
+            return Ok(Some(AppAction::Continue));
+        }
+        // F2 rename/attributes: outside click cancels.
         if app.rename_attr_dialog.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let (col, row) = (mouse_event.column, mouse_event.row);
+                let rect = crate::dialogs::rename_attr::dialog_rect(area);
+                if !dialog_layout::pointer_in_dialog(col, row, rect) {
+                    return Ok(Some(AppAction::RenameAttrCancel));
+                }
+            }
             return Ok(Some(AppAction::Continue));
         }
         // Operation confirm dialog: handle clicks on Yes/No buttons (mouse/touchpad friendly).
@@ -1149,10 +1228,15 @@ impl EventHandler {
                     op,
                     crate::app::state::Operation::Copy | crate::app::state::Operation::Move
                 );
-                if let Some((_dialog_rect, yes_rect, no_rect)) =
+                if let Some((dialog_rect, yes_rect, no_rect)) =
                     Renderer::operation_confirm_button_rects(area, show_paths)
                 {
                     let (col, row) = (mouse_event.column, mouse_event.row);
+                    if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                        return Ok(Some(AppAction::DeleteConfirmChoice(
+                            DeleteConfirmChoice::No,
+                        )));
+                    }
                     if col >= yes_rect.x
                         && col < yes_rect.x + yes_rect.width
                         && row >= yes_rect.y
