@@ -197,7 +197,6 @@ impl Renderer {
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
             || app.right_panel_settings_overlay.is_some()
-            || app.size_info_dialog.is_some()
     }
 
     /// MC-style: panels + status + command line; or viewer (F3) or editor (F4) with optional confirm dialog.

@@ -175,7 +175,6 @@ impl EventHandler {
             && app.new_file_dialog.is_none()
             && app.new_file_error.is_none()
             && app.rename_attr_dialog.is_none()
-            && app.size_info_dialog.is_none()
             && app.settings_dialog.is_none()
             && !app.help_dialog
             && app.find_dialog.is_none()
@@ -196,7 +195,6 @@ impl EventHandler {
             || app.new_file_dialog.is_some()
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
-            || app.size_info_dialog.is_some()
             || app.settings_dialog.is_some()
             || app.help_dialog
             || app.find_dialog.is_some()
@@ -1163,12 +1161,11 @@ impl EventHandler {
             }
             return Ok(Some(AppAction::Continue));
         }
-        // Size info dialog: any mouse click closes.
+        // Size info (Ctrl+G): any mouse click closes; scroll/move fall through so panels stay usable.
         if app.size_info_dialog.is_some() {
             if matches!(mouse_event.kind, MouseEventKind::Down(_)) {
                 return Ok(Some(AppAction::SizeInfoClose));
             }
-            return Ok(Some(AppAction::Continue));
         }
         // Find dialog: outside click closes or stops search (same as Esc for current phase).
         if app.find_dialog.is_some() {

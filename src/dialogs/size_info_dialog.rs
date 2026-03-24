@@ -1,5 +1,6 @@
 //! Ctrl+G "Size info" — shows total size of selected files and folders in the panel's bottom bar.
-//! Directories computed recursively. Any key or mouse click returns to file attributes display.
+//! Directories computed recursively. Not a dimmed modal: panels stay visible. Any key or mouse
+//! click dismisses the size line and returns to normal bottom bar.
 
 use std::sync::mpsc;
 

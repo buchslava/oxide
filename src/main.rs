@@ -250,6 +250,7 @@ fn main() -> Result<(), io::Error> {
                         file_count,
                         dir_count,
                     });
+                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     app.size_info_pending_rx = Some(rx);
