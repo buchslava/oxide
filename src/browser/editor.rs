@@ -14,10 +14,14 @@ use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::selection::Selection;
 use ratatui_code_editor::theme::vesper;
 
-use crate::app::state::AppState;
-use crate::core::location::PanelLocation;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use crate::app::events::AppAction;
+use crate::app::state::AppState;
 use crate::browser::panel::PanelOperations;
+use crate::core::location::PanelLocation;
 use crate::ui::toast;
 
 /// State when the embedded code editor is open (F4).
@@ -38,6 +42,8 @@ pub struct EditorScreenState {
     /// When editing a file inside a Zip, these are set; otherwise None (save uses file_path to fs).
     pub edit_location: Option<PanelLocation>,
     pub edit_name: Option<String>,
+    /// True when the file bytes were not valid UTF-8 at open; F2 saves as `name.text` to avoid overwriting binary.
+    pub opened_with_invalid_utf8: bool,
 }
 
 /// User choice in the "Save changes?" dialog when exiting editor with unsaved changes.
@@ -115,10 +121,14 @@ pub fn open_editor(app: &mut AppState) -> bool {
     let loc = app.get_current_location();
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
-            let content = match crate::core::panel_backend::read_file(&loc, &file.name) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(_) => return false,
-            };
+            let (content, opened_with_invalid_utf8) =
+                match crate::core::panel_backend::read_file(&loc, &file.name) {
+                    Ok(bytes) => (
+                        String::from_utf8_lossy(&bytes).into_owned(),
+                        std::str::from_utf8(&bytes).is_err(),
+                    ),
+                    Err(_) => return false,
+                };
             let file_path_str = crate::core::panel_backend::join_path_display(&loc, &file.name);
             let lang = get_lang_from_path(&file_path_str);
             let theme = vesper();
@@ -139,6 +149,7 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 selection_extend_mode: false,
                 edit_location,
                 edit_name,
+                opened_with_invalid_utf8,
             });
             app.editor_confirm_pending = false;
             app.clear_timed_toast();
@@ -157,7 +168,13 @@ pub fn open_editor_path(
         return false;
     }
     let file_path_str = path.display().to_string();
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    let (content, opened_with_invalid_utf8) = match std::fs::read(&path) {
+        Ok(bytes) => (
+            String::from_utf8_lossy(&bytes).into_owned(),
+            std::str::from_utf8(&bytes).is_err(),
+        ),
+        Err(_) => return false,
+    };
     let lang = get_lang_from_path(&file_path_str);
     let theme = vesper();
     let editor = Editor::new(lang, &content, theme);
@@ -171,6 +188,7 @@ pub fn open_editor_path(
         selection_extend_mode: false,
         edit_location: None,
         edit_name: None,
+        opened_with_invalid_utf8,
     });
     app.editor_confirm_pending = false;
     app.clear_timed_toast();
@@ -581,7 +599,7 @@ fn editor_saved_display_name(ed: &EditorScreenState) -> String {
     if let Some(name) = &ed.edit_name {
         name.trim_end_matches('/').to_string()
     } else {
-        std::path::Path::new(&ed.file_path)
+        Path::new(&ed.file_path)
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
@@ -589,25 +607,83 @@ fn editor_saved_display_name(ed: &EditorScreenState) -> String {
     }
 }
 
+/// Zip entry or fs file name with `.text` appended (e.g. `foo.mp3` -> `foo.mp3.text`).
+fn entry_name_with_text_suffix(name: &str) -> String {
+    format!("{}.text", name.trim_end_matches('/'))
+}
+
+/// Write buffer to the editor's target file. If `opened_with_invalid_utf8`, writes to `*.text`, updates paths, clears the flag.
+/// Returns `Ok(true)` when the `.text` redirect was used.
+fn write_editor_buffer(
+    ed: &mut EditorScreenState,
+    content: &[u8],
+) -> io::Result<bool> {
+    let redirect = ed.opened_with_invalid_utf8;
+    match (&ed.edit_location, &ed.edit_name) {
+        (Some(loc), Some(name)) => {
+            let target_name = if redirect {
+                entry_name_with_text_suffix(name)
+            } else {
+                name.clone()
+            };
+            crate::core::panel_backend::write_file(loc, &target_name, content)?;
+            if redirect {
+                ed.edit_name = Some(target_name.clone());
+                ed.file_path = crate::core::panel_backend::join_path_display(loc, &target_name);
+                ed.opened_with_invalid_utf8 = false;
+            }
+            Ok(redirect)
+        }
+        (None, None) => {
+            let path = if redirect {
+                let p = Path::new(&ed.file_path);
+                let stem = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("file");
+                p.with_file_name(entry_name_with_text_suffix(stem))
+            } else {
+                PathBuf::from(&ed.file_path)
+            };
+            std::fs::write(&path, content)?;
+            if redirect {
+                ed.file_path = path.to_string_lossy().into_owned();
+                ed.opened_with_invalid_utf8 = false;
+            }
+            Ok(redirect)
+        }
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid editor path state",
+        )),
+    }
+}
+
 /// F2 save: write content to file and update initial_content. Works for FS and files inside ZIP.
 pub fn save(app: &mut AppState) {
     if let Some(ref mut ed) = app.editor_screen {
         let content = ed.editor.get_content();
-        let result = match (&ed.edit_location, &ed.edit_name) {
-            (Some(loc), Some(name)) => {
-                crate::core::panel_backend::write_file(loc, name, content.as_bytes())
+        match write_editor_buffer(ed, content.as_bytes()) {
+            Err(e) => eprintln!("Save failed: {}", e),
+            Ok(used_text_suffix) => {
+                ed.initial_content = content;
+                let name = editor_saved_display_name(ed);
+                let (duration, msg) = if used_text_suffix {
+                    (
+                        Duration::from_secs(6),
+                        format!(
+                            "Non-UTF-8 opened as text: saved as \"{}\" (original left unchanged).",
+                            name
+                        ),
+                    )
+                } else {
+                    (
+                        Duration::from_secs(3),
+                        format!("\"{}\" has been saved.", name),
+                    )
+                };
+                app.set_timed_toast(duration, msg);
             }
-            _ => std::fs::write(&ed.file_path, &content),
-        };
-        if let Err(e) = result {
-            eprintln!("Save failed: {}", e);
-        } else {
-            ed.initial_content = content;
-            let name = editor_saved_display_name(ed);
-            app.set_timed_toast(
-                std::time::Duration::from_secs(3),
-                format!("\"{}\" has been saved.", name),
-            );
         }
     }
 }
@@ -670,13 +746,11 @@ pub fn apply_confirm_choice(
         EditorConfirmChoice::Save => {
             if let Some(ref mut ed) = app.editor_screen {
                 let content = ed.editor.get_content();
-                let _ = match (&ed.edit_location, &ed.edit_name) {
-                    (Some(loc), Some(name)) => {
-                        crate::core::panel_backend::write_file(loc, name, content.as_bytes())
-                    }
-                    _ => std::fs::write(&ed.file_path, &content),
-                };
-                ed.initial_content = content;
+                if let Err(e) = write_editor_buffer(ed, content.as_bytes()) {
+                    eprintln!("Save failed: {}", e);
+                } else {
+                    ed.initial_content = content;
+                }
             }
             app.editor_screen = None;
             app.clear_timed_toast();
