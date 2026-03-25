@@ -43,14 +43,14 @@ pub enum AppAction {
     ViewerClose,
     /// F7: open "Create a new Directory" dialog (MC-style).
     OpenMkdirDialog,
-    /// Enter in mkdir dialog: create directory and close.
-    MkdirConfirm,
+    /// Enter in mkdir dialog: create directory and close (name from dialog field).
+    MkdirConfirm(String),
     /// ESC in mkdir dialog: cancel and close.
     MkdirCancel,
     /// Ctrl+A: open "Archive" dialog (create zip of selected items; originals kept).
     OpenArchiveDialog,
-    /// Enter in archive dialog: create archive and close.
-    ArchiveConfirm,
+    /// Enter in archive dialog: create archive and close (name from dialog field).
+    ArchiveConfirm(String),
     /// ESC in archive dialog: cancel and close.
     ArchiveCancel,
     /// ESC during archive progress: stop archiving and close progress dialog (like CopyCancel).
@@ -58,7 +58,7 @@ pub enum AppAction {
     /// Ctrl+N: open "New file" dialog (create empty file in current directory or archive).
     OpenNewFileDialog,
     /// Enter in new file dialog: create file and close (or show error if exists).
-    NewFileConfirm,
+    NewFileConfirm(String),
     /// ESC in new file dialog: cancel and close.
     NewFileCancel,
     /// F2: open "Rename / Attributes" dialog (single file or group).
@@ -1047,7 +1047,12 @@ impl EventHandler {
                         && row >= create_rect.y
                         && row < create_rect.y + create_rect.height
                     {
-                        return Ok(Some(AppAction::MkdirConfirm));
+                        let name = app
+                            .mkdir_dialog
+                            .as_ref()
+                            .map(|d| d.input.text.clone())
+                            .unwrap_or_default();
+                        return Ok(Some(AppAction::MkdirConfirm(name)));
                     }
                     if col >= cancel_rect.x
                         && col < cancel_rect.x + cancel_rect.width
@@ -1076,7 +1081,12 @@ impl EventHandler {
                         && row >= create_rect.y
                         && row < create_rect.y + create_rect.height
                     {
-                        return Ok(Some(AppAction::ArchiveConfirm));
+                        let name = app
+                            .archive_dialog
+                            .as_ref()
+                            .map(|d| d.input.text.clone())
+                            .unwrap_or_default();
+                        return Ok(Some(AppAction::ArchiveConfirm(name)));
                     }
                     if col >= cancel_rect.x
                         && col < cancel_rect.x + cancel_rect.width
@@ -1126,7 +1136,12 @@ impl EventHandler {
                         && row >= create_rect.y
                         && row < create_rect.y + create_rect.height
                     {
-                        return Ok(Some(AppAction::NewFileConfirm));
+                        let name = app
+                            .new_file_dialog
+                            .as_ref()
+                            .map(|d| d.input.text.clone())
+                            .unwrap_or_default();
+                        return Ok(Some(AppAction::NewFileConfirm(name)));
                     }
                     if col >= cancel_rect.x
                         && col < cancel_rect.x + cancel_rect.width

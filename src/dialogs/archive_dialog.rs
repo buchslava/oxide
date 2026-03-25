@@ -35,11 +35,6 @@ pub fn cancel(app: &mut AppState) {
     app.archive_dialog = None;
 }
 
-/// Take the entered name and close the dialog. Returns the name (may be empty).
-pub fn confirm(app: &mut AppState) -> Option<String> {
-    app.archive_dialog.take().map(|d| d.input.text)
-}
-
 /// Create the archive in the active panel's current location and refresh the panel (sync, no progress).
 /// Kept for compatibility; normal flow uses start_archive_background.
 #[allow(dead_code)]
@@ -121,39 +116,34 @@ pub fn start_archive_background(
     });
 }
 
-impl ArchiveDialogState {
-    /// Pure key handler: returns updated state (None = close dialog) and action.
-    #[must_use]
-    pub fn handle_key(
-        self,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-    ) -> (Option<Self>, AppAction) {
-        let (input, focus, result) =
-            text_input::handle_single_input_key(self.input, self.focus, code, modifiers);
-        match result {
-            text_input::SingleInputKeyResult::Confirm => (None, AppAction::ArchiveConfirm),
-            text_input::SingleInputKeyResult::Cancel => (None, AppAction::ArchiveCancel),
-            text_input::SingleInputKeyResult::Suspend => {
-                (Some(Self { input, focus }), AppAction::Suspend)
-            }
-            text_input::SingleInputKeyResult::Continue => {
-                (Some(Self { input, focus }), AppAction::Continue)
-            }
-        }
-    }
-}
-
-/// Handle a key when the archive dialog is open. Updates app state by replacement; returns action.
+/// Handle a key when the archive dialog is open. On Confirm/Cancel the dialog is closed and the
+/// entered name is carried on [`AppAction::ArchiveConfirm`].
 pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
     let d = app.archive_dialog.take()?;
-    let (new_dialog, action) = d.handle_key(code, modifiers);
-    app.archive_dialog = new_dialog;
-    Some(action)
+    let (input, focus, result) =
+        text_input::handle_single_input_key(d.input, d.focus, code, modifiers);
+    match result {
+        text_input::SingleInputKeyResult::Confirm => {
+            app.archive_dialog = None;
+            Some(AppAction::ArchiveConfirm(input.text))
+        }
+        text_input::SingleInputKeyResult::Cancel => {
+            app.archive_dialog = None;
+            Some(AppAction::ArchiveCancel)
+        }
+        text_input::SingleInputKeyResult::Suspend => {
+            app.archive_dialog = Some(ArchiveDialogState { input, focus });
+            Some(AppAction::Suspend)
+        }
+        text_input::SingleInputKeyResult::Continue => {
+            app.archive_dialog = Some(ArchiveDialogState { input, focus });
+            Some(AppAction::Continue)
+        }
+    }
 }
 
 /// Draw the "Archive" dialog.

@@ -383,12 +383,11 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::EditorConfirmChoice(choice) => apply_confirm_choice(&mut app, choice),
             AppAction::OpenMkdirDialog => mkdir_dialog::open(&mut app),
-            AppAction::MkdirConfirm => {
-                if let Some(name) = mkdir_dialog::confirm(&mut app) {
-                    let name = name.trim();
-                    if !name.is_empty() {
-                        mkdir_dialog::create_and_refresh(&mut app, name);
-                    }
+            AppAction::MkdirConfirm(name) => {
+                mkdir_dialog::cancel(&mut app);
+                let name = name.trim();
+                if !name.is_empty() {
+                    mkdir_dialog::create_and_refresh(&mut app, name);
                 }
             }
             AppAction::MkdirCancel => mkdir_dialog::cancel(&mut app),
@@ -417,25 +416,23 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::PatternSelectCancel => pattern_select_dialog::cancel(&mut app),
             AppAction::OpenArchiveDialog => archive_dialog::open(&mut app),
-            AppAction::ArchiveConfirm => {
+            AppAction::ArchiveConfirm(name) => {
+                archive_dialog::cancel(&mut app);
                 let (items, ..) = app
                     .active_panel_ref()
                     .get_names_to_copy_with_restore_neighbors();
-                if let Some(name) = archive_dialog::confirm(&mut app) {
-                    let name = name.trim();
-                    if !name.is_empty() && !items.is_empty() {
-                        archive_dialog::start_archive_background(&mut app, name, &items);
-                    }
+                let name = name.trim();
+                if !name.is_empty() && !items.is_empty() {
+                    archive_dialog::start_archive_background(&mut app, name, &items);
                 }
             }
             AppAction::ArchiveCancel => archive_dialog::cancel(&mut app),
             AppAction::OpenNewFileDialog => new_file_dialog::open(&mut app),
-            AppAction::NewFileConfirm => {
-                if let Some(name) = new_file_dialog::confirm(&mut app) {
-                    let name = name.trim();
-                    if !name.is_empty() {
-                        new_file_dialog::create_and_refresh(&mut app, name);
-                    }
+            AppAction::NewFileConfirm(name) => {
+                new_file_dialog::cancel(&mut app);
+                let name = name.trim();
+                if !name.is_empty() {
+                    new_file_dialog::create_and_refresh(&mut app, name);
                 }
             }
             AppAction::NewFileCancel => new_file_dialog::cancel(&mut app),

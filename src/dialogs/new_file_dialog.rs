@@ -30,11 +30,6 @@ pub fn cancel(app: &mut AppState) {
     app.new_file_dialog = None;
 }
 
-/// Take the entered name and close the dialog. Returns the name (may be empty).
-pub fn confirm(app: &mut AppState) -> Option<String> {
-    app.new_file_dialog.take().map(|d| d.input.text)
-}
-
 /// Create the empty file in the active panel's current location and refresh the panel.
 /// If the file already exists, sets app.new_file_error with a message and leaves the dialog closed.
 /// Call only when name is non-empty (after trim). Supported on filesystem and inside ZIP archives.
@@ -59,39 +54,33 @@ pub fn create_and_refresh(
     );
 }
 
-impl NewFileDialogState {
-    /// Pure key handler: returns updated state (None = close dialog) and action.
-    #[must_use]
-    pub fn handle_key(
-        self,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-    ) -> (Option<Self>, AppAction) {
-        let (input, focus, result) =
-            text_input::handle_single_input_key(self.input, self.focus, code, modifiers);
-        match result {
-            text_input::SingleInputKeyResult::Confirm => (None, AppAction::NewFileConfirm),
-            text_input::SingleInputKeyResult::Cancel => (None, AppAction::NewFileCancel),
-            text_input::SingleInputKeyResult::Suspend => {
-                (Some(Self { input, focus }), AppAction::Suspend)
-            }
-            text_input::SingleInputKeyResult::Continue => {
-                (Some(Self { input, focus }), AppAction::Continue)
-            }
-        }
-    }
-}
-
-/// Handle a key when the new file dialog is open. Updates app state by replacement; returns action.
+/// Handle a key when the new file dialog is open. On Confirm the entered name is on [`AppAction::NewFileConfirm`].
 pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
     let d = app.new_file_dialog.take()?;
-    let (new_dialog, action) = d.handle_key(code, modifiers);
-    app.new_file_dialog = new_dialog;
-    Some(action)
+    let (input, focus, result) =
+        text_input::handle_single_input_key(d.input, d.focus, code, modifiers);
+    match result {
+        text_input::SingleInputKeyResult::Confirm => {
+            app.new_file_dialog = None;
+            Some(AppAction::NewFileConfirm(input.text))
+        }
+        text_input::SingleInputKeyResult::Cancel => {
+            app.new_file_dialog = None;
+            Some(AppAction::NewFileCancel)
+        }
+        text_input::SingleInputKeyResult::Suspend => {
+            app.new_file_dialog = Some(NewFileDialogState { input, focus });
+            Some(AppAction::Suspend)
+        }
+        text_input::SingleInputKeyResult::Continue => {
+            app.new_file_dialog = Some(NewFileDialogState { input, focus });
+            Some(AppAction::Continue)
+        }
+    }
 }
 
 /// Draw the "New file" dialog.

@@ -38,11 +38,6 @@ pub fn cancel(app: &mut AppState) {
     app.mkdir_dialog = None;
 }
 
-/// Take the entered name and close the dialog. Returns the name (may be empty).
-pub fn confirm(app: &mut AppState) -> Option<String> {
-    app.mkdir_dialog.take().map(|d| d.input.text)
-}
-
 /// Create the directory in the active panel's current location and refresh the panel.
 /// Call only when name is non-empty (after trim). Supported on filesystem and inside ZIP archives.
 pub fn create_and_refresh(
@@ -62,39 +57,33 @@ pub fn create_and_refresh(
     );
 }
 
-impl MkdirDialogState {
-    /// Pure key handler: returns updated state (None = close dialog) and action.
-    #[must_use]
-    pub fn handle_key(
-        self,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-    ) -> (Option<Self>, AppAction) {
-        let (input, focus, result) =
-            text_input::handle_single_input_key(self.input, self.focus, code, modifiers);
-        match result {
-            text_input::SingleInputKeyResult::Confirm => (None, AppAction::MkdirConfirm),
-            text_input::SingleInputKeyResult::Cancel => (None, AppAction::MkdirCancel),
-            text_input::SingleInputKeyResult::Suspend => {
-                (Some(Self { input, focus }), AppAction::Suspend)
-            }
-            text_input::SingleInputKeyResult::Continue => {
-                (Some(Self { input, focus }), AppAction::Continue)
-            }
-        }
-    }
-}
-
-/// Handle a key when the mkdir dialog is open. Updates app state by replacement; returns action.
+/// Handle a key when the mkdir dialog is open. On Confirm the entered name is on [`AppAction::MkdirConfirm`].
 pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
     let d = app.mkdir_dialog.take()?;
-    let (new_dialog, action) = d.handle_key(code, modifiers);
-    app.mkdir_dialog = new_dialog;
-    Some(action)
+    let (input, focus, result) =
+        text_input::handle_single_input_key(d.input, d.focus, code, modifiers);
+    match result {
+        text_input::SingleInputKeyResult::Confirm => {
+            app.mkdir_dialog = None;
+            Some(AppAction::MkdirConfirm(input.text))
+        }
+        text_input::SingleInputKeyResult::Cancel => {
+            app.mkdir_dialog = None;
+            Some(AppAction::MkdirCancel)
+        }
+        text_input::SingleInputKeyResult::Suspend => {
+            app.mkdir_dialog = Some(MkdirDialogState { input, focus });
+            Some(AppAction::Suspend)
+        }
+        text_input::SingleInputKeyResult::Continue => {
+            app.mkdir_dialog = Some(MkdirDialogState { input, focus });
+            Some(AppAction::Continue)
+        }
+    }
 }
 
 /// Draw the "Create a new Directory" dialog.
