@@ -6,8 +6,9 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
+use std::time::Duration;
 
 mod app;
 mod browser;
@@ -575,6 +576,17 @@ fn main() -> Result<(), io::Error> {
             AppAction::ToggleShowHidden => {
                 toggle_show_hidden_on_active_panel(&mut app);
             }
+            AppAction::PersistPanelState => match app.persist_panel_state_to_settings() {
+                Ok(()) => {
+                    app.set_timed_toast(Duration::from_secs(3), "Panel layout saved to settings.");
+                }
+                Err(e) => {
+                    app.set_timed_toast(
+                        Duration::from_secs(5),
+                        format!("Could not save settings: {}", e),
+                    );
+                }
+            },
             AppAction::RenameAttrConfirm => {
                 if rename_attr::apply(&mut app) {
                     terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;

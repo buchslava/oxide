@@ -60,6 +60,7 @@ When focus is on the command line (e.g. after typing a character or F6):
 
 | Keys | Action |
 |------|--------|
+| Ctrl+E | Save panel paths & active panel to `~/.oxide/settings.json` (same snapshot as **Autosave latest state**) |
 | Ctrl+G | Size info |
 | Ctrl+H | Toggle hidden files |
 | Ctrl+O | Shell |

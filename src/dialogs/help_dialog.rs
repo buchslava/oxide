@@ -231,6 +231,8 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
         ]),
         Line::from(vec![
             t("    "),
+            k("Ctrl+E"),
+            t("  Save layout "),
             k("Ctrl+R"),
             t("  Refresh     "),
             k("Ctrl+T"),

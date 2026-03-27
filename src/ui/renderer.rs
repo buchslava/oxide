@@ -261,6 +261,13 @@ impl Renderer {
         if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
             crate::dialogs::panel_overlay::draw(f, app);
         }
+        // Bottom-left timed toast (e.g. Ctrl+E save layout) — same pattern as editor save.
+        if app.viewer_screen.is_none() && app.editor_screen.is_none() {
+            crate::ui::toast::TimedToast::clear_if_expired(&mut app.timed_toast);
+            if let Some(ref t) = app.timed_toast {
+                crate::ui::toast::draw_timed_bottom_left(f, f.area(), &app.ui_palette, t);
+            }
+        }
     }
 
     /// Operation confirmation dialog (Copy/Move/Delete): operation alert, Yes/No buttons.

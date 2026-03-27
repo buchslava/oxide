@@ -109,6 +109,8 @@ pub enum AppAction {
     PatternSelectCancel,
     /// Ctrl+H: toggle hidden files visibility.
     ToggleShowHidden,
+    /// Ctrl+E: save left/right paths and active panel to settings.json (same as autosave snapshot).
+    PersistPanelState,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
     PanelNavigated,
     /// A specific setting was toggled/changed in the F9 Settings dialog. Main applies to persisted_settings, saves, applies to panels.
@@ -802,6 +804,9 @@ impl EventHandler {
                         }
                         return AppAction::Continue;
                     }
+                    if c == 'e' {
+                        return AppAction::PersistPanelState;
+                    }
                 }
                 app.command_line_insert(c);
                 AppAction::Continue
@@ -910,6 +915,7 @@ impl EventHandler {
                 );
                 AppAction::Continue
             }
+            'e' => AppAction::PersistPanelState,
             _ => AppAction::Continue,
         }
     }

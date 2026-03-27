@@ -267,11 +267,9 @@ impl AppState {
         self.show_hidden_files = self.active_panel_ref().get_show_hidden();
     }
 
-    /// If autosave is on, write current panel dirs and active panel to persisted_settings and save to file.
-    pub fn maybe_persist_panel_dirs(&mut self) {
-        if !self.persisted_settings.autosave {
-            return;
-        }
+    /// Write current left/right paths and active panel to `persisted_settings` and `settings.json`
+    /// (same data as **Autosave latest state** when it saves).
+    pub fn persist_panel_state_to_settings(&mut self) -> io::Result<()> {
         let loc_left = self.left_panel.current_location();
         let loc_right = self.right_panel.current_location();
         self.persisted_settings.left_cwd = loc_left
@@ -281,7 +279,15 @@ impl AppState {
             .as_fs_path()
             .map(|p| p.to_string_lossy().to_string());
         self.persisted_settings.active_panel = if self.active_panel == 0 { 0 } else { 1 };
-        let _ = crate::core::settings::save(&self.persisted_settings);
+        crate::core::settings::save(&self.persisted_settings)
+    }
+
+    /// If autosave is on, write current panel dirs and active panel to persisted_settings and save to file.
+    pub fn maybe_persist_panel_dirs(&mut self) {
+        if !self.persisted_settings.autosave {
+            return;
+        }
+        let _ = self.persist_panel_state_to_settings();
     }
 
     /// True while the post-command countdown is running (main-buffer overlay or waiting to restore TUI).
