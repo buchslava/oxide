@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedSettings {
     /// When true, save left/right panel current dirs on navigation (and on exit); restore on start.
+    /// When false, the Oxide process `cwd` follows the active panel (filesystem locations only).
     #[serde(default)]
     pub autosave: bool,
     /// When true (default), after returning from shell (Ctrl+O) sync active panel to shell's cwd. When false, use old flow (panel stays as before).

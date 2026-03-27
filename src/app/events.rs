@@ -541,7 +541,7 @@ impl EventHandler {
                             }
                         }
                         panel.enter_directory()?;
-                        app.sync_process_cwd_to_active_panel();
+                        app.sync_process_cwd_to_active_panel_if_no_autosave();
                         return Ok(Some(AppAction::PanelNavigated));
                     }
                     KeyCode::Char(' ') => {
@@ -1311,6 +1311,7 @@ impl EventHandler {
                             app.right_panel_mut()
                         };
                         panel.set_selection(file_index, panel_height);
+                        app.sync_process_cwd_to_active_panel_if_no_autosave();
 
                         let now = std::time::Instant::now();
                         let is_double = app
@@ -1335,7 +1336,7 @@ impl EventHandler {
                                 let is_zip = name_lower.ends_with(".zip");
                                 if file.is_dir || is_zip {
                                     panel.enter_directory()?;
-                                    app.sync_process_cwd_to_active_panel();
+                                    app.sync_process_cwd_to_active_panel_if_no_autosave();
                                     return Ok(Some(AppAction::PanelNavigated));
                                 } else if !file.is_parent_dir() && file.is_executable {
                                     let cmd = format!("./{}", file.name);

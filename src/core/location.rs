@@ -38,7 +38,7 @@ impl PanelLocation {
         }
     }
 
-    /// True if this is a filesystem location (used for sync_process_cwd, subshell).
+    /// True if this is a filesystem location (used for process cwd sync when autosave is off, subshell).
     pub fn is_fs(&self) -> bool {
         matches!(self, PanelLocation::Fs(_))
     }

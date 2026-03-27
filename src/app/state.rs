@@ -173,7 +173,8 @@ impl AppState {
     }
 
     /// Create app with initial panel dirs and settings from ~/.oxide/settings.json (used on startup).
-    /// If a saved path is missing/invalid, that panel is opened in home_dir.
+    /// Path resolution is handled in `main` (autosave vs launch dir vs saved opposite panel). If a
+    /// path is invalid, that panel falls back to `home_dir`.
     /// Panels are created with default state, then sync_from_persisted_settings() is called so
     /// view_mode and show_hidden (and file lists) match persisted_settings before first render.
     pub fn new_with_initial(
@@ -400,15 +401,25 @@ impl AppState {
         }
     }
 
-    /// Sync the process current directory to the active panel's directory.
-    /// Only when the active panel is on the filesystem (not inside a ZIP). Call after panel navigation.
-    pub fn sync_process_cwd_to_active_panel(&self) {
+    /// Set the process working directory to the **active** panel's filesystem path (`active_panel`:
+    /// 0 = left, 1 = right). No-op if that panel is inside a ZIP.
+    fn apply_process_cwd_to_active_panel_fs(&self) {
         let loc = self.get_current_location();
         if let Some(p) = loc.as_fs_path() {
             if let Err(e) = std::env::set_current_dir(p) {
                 eprintln!("Failed to change directory: {}", e);
             }
         }
+    }
+
+    /// When **Autosave latest state** is off, keep the terminal/process `cwd` aligned with the
+    /// **active** panel's directory (left vs right follows [`Self::active_panel`]). When autosave is
+    /// on, directories are stored in settings instead and the process `cwd` is not updated on navigation.
+    pub fn sync_process_cwd_to_active_panel_if_no_autosave(&self) {
+        if self.persisted_settings.autosave {
+            return;
+        }
+        self.apply_process_cwd_to_active_panel_fs();
     }
 
     pub fn toggle_view_mode(&mut self) {
@@ -479,17 +490,8 @@ impl AppState {
 
     pub fn switch_panel(&mut self) -> io::Result<()> {
         let new_active_panel = if self.active_panel == 0 { 1 } else { 0 };
-        let target_loc = if new_active_panel == 0 {
-            self.left_panel.current_location()
-        } else {
-            self.right_panel.current_location()
-        };
-        if let Some(p) = target_loc.as_fs_path() {
-            if let Err(e) = std::env::set_current_dir(p) {
-                eprintln!("Failed to change directory: {}", e);
-            }
-        }
         self.active_panel = new_active_panel;
+        self.sync_process_cwd_to_active_panel_if_no_autosave();
         Ok(())
     }
 }

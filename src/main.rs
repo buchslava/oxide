@@ -45,6 +45,28 @@ use ui::post_command_overlay;
 use ui::Renderer;
 use util::{log_if_err, reset_terminal_character_set_and_modes};
 
+/// When **autosave is on** and a panel path is missing in `settings.json`, use the process working
+/// directory (launch directory). Falls back to `home` if `current_dir` is unavailable.
+fn initial_panel_cwd_when_autosave(
+    saved: Option<String>,
+    home: &str,
+) -> String {
+    saved.unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| home.to_string())
+    })
+}
+
+/// Path for the **inactive** panel when autosave is off: use the saved path from disk, or `$HOME`
+/// if none was stored.
+fn opposite_panel_path_from_settings(
+    saved: Option<String>,
+    home: &str,
+) -> String {
+    saved.unwrap_or_else(|| home.to_string())
+}
+
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -65,15 +87,33 @@ fn main() -> Result<(), io::Error> {
     );
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let home_str = home.to_string_lossy().to_string();
-    let left_cwd = app_settings
-        .left_cwd
-        .clone()
-        .unwrap_or_else(|| home_str.clone());
-    let right_cwd = app_settings
-        .right_cwd
-        .clone()
-        .unwrap_or_else(|| home_str.clone());
+    let launch_cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| home_str.clone());
+
+    // Autosave on: restore both saved paths (missing → launch dir, not HOME).
+    // Autosave off: **active** panel (`active_panel` in settings) starts in the launch directory;
+    // the **opposite** panel uses the saved path for that side (`left_cwd` / `right_cwd`), or HOME
+    // if nothing was stored.
+    let active_is_left = app_settings.active_panel == 0;
+    let (left_cwd, right_cwd) = if app_settings.autosave {
+        (
+            initial_panel_cwd_when_autosave(app_settings.left_cwd.clone(), &home_str),
+            initial_panel_cwd_when_autosave(app_settings.right_cwd.clone(), &home_str),
+        )
+    } else if active_is_left {
+        (
+            launch_cwd.clone(),
+            opposite_panel_path_from_settings(app_settings.right_cwd.clone(), &home_str),
+        )
+    } else {
+        (
+            opposite_panel_path_from_settings(app_settings.left_cwd.clone(), &home_str),
+            launch_cwd.clone(),
+        )
+    };
     let mut app = AppState::new_with_initial(left_cwd, right_cwd, &home_str, app_settings)?;
+    app.sync_process_cwd_to_active_panel_if_no_autosave();
     let mut subshell: Option<Subshell> = None;
 
     // Process any events from EnterAlternateScreen (never discard keys).
