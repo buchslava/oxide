@@ -63,13 +63,6 @@ pub fn single_input_dialog_layout(area: Rect) -> (Rect, Rect) {
     (rect, content)
 }
 
-/// Return (create_button_rect, cancel_button_rect) for hit-testing. Same layout as single-input dialogs.
-#[must_use]
-pub fn single_input_dialog_button_rects(area: Rect) -> (Rect, Rect) {
-    let (_, content) = single_input_dialog_layout(area);
-    single_input_button_rects(content)
-}
-
 /// Return (create_button_rect, cancel_button_rect) for a single-input dialog (Create/Cancel).
 /// Uses standard widths: Create 10, Cancel 10, gap 4. Buttons centered in content, at content.y + 5.
 #[must_use]
@@ -139,9 +132,43 @@ pub fn paint_modal_dim_layer(
 
 /// Hit-test: terminal cell `(col, row)` lies inside `rect` (half-open ranges).
 #[must_use]
-pub fn pointer_in_dialog(col: u16, row: u16, rect: Rect) -> bool {
+pub fn pointer_in_dialog(
+    col: u16,
+    row: u16,
+    rect: Rect,
+) -> bool {
     col >= rect.x
         && col < rect.x.saturating_add(rect.width)
         && row >= rect.y
         && row < rect.y.saturating_add(rect.height)
+}
+
+/// Hit target for the shared single-input modal layout ([`single_input_dialog_layout`]: mkdir, archive, new file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SingleInputDialogHit {
+    Outside,
+    Primary,
+    Secondary,
+    InsideBody,
+}
+
+/// Hit-test mkdir / archive / new-file style dialogs (same geometry as [`draw_single_input_dialog`](crate::ui::text_input::draw_single_input_dialog)).
+#[must_use]
+pub fn hit_test_single_input_dialog(
+    col: u16,
+    row: u16,
+    area: Rect,
+) -> SingleInputDialogHit {
+    let (dialog_rect, content) = single_input_dialog_layout(area);
+    if !pointer_in_dialog(col, row, dialog_rect) {
+        return SingleInputDialogHit::Outside;
+    }
+    let (primary, secondary) = single_input_button_rects(content);
+    if pointer_in_dialog(col, row, primary) {
+        return SingleInputDialogHit::Primary;
+    }
+    if pointer_in_dialog(col, row, secondary) {
+        return SingleInputDialogHit::Secondary;
+    }
+    SingleInputDialogHit::InsideBody
 }

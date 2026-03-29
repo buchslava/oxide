@@ -2,12 +2,12 @@
 //! Enter = create empty file (if non-empty), Esc = cancel. Works on filesystem and inside ZIP.
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::layout::Rect;
 
+use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::core::panel_backend;
-use crate::app::events::AppAction;
 use crate::ui::text_input::{self, TextInputState};
+use crate::util::compute_panel_height;
 
 /// State for Ctrl+N "New file" dialog. Single text field for the new file name.
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
@@ -46,7 +46,7 @@ pub fn create_and_refresh(
         app.new_file_error = Some(format!("{}: {}", name, e));
         return;
     }
-    let panel_height = crate::util::compute_panel_height();
+    let panel_height = compute_panel_height();
     let _ = app.active_panel_mut().refresh_files_restore_selection(
         Some(name),
         None,
@@ -100,9 +100,4 @@ pub fn draw(
         d.focus,
         &app.ui_palette,
     );
-}
-
-/// Return (create_button_rect, cancel_button_rect) for new file dialog hit-testing.
-pub fn new_file_button_rects(area: Rect) -> Option<(Rect, Rect)> {
-    Some(crate::ui::dialog_layout::single_input_dialog_button_rects(area))
 }

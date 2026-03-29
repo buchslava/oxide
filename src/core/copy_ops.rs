@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 
 use super::file_ops::FileOperations;
+use crate::core::trash_delete::move_to_trash;
 
 /// EXDEV: cross-device link not permitted (rename across filesystems).
 #[cfg(unix)]
@@ -95,7 +96,7 @@ pub fn delete_item<P: AsRef<Path>>(
 ) -> io::Result<()> {
     let path = FileOperations::join_path(source_dir, name);
     if use_trash {
-        return crate::core::trash_delete::move_to_trash(&path);
+        return move_to_trash(&path);
     }
     if is_dir {
         fs::remove_dir_all(&path)

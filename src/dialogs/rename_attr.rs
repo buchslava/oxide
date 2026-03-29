@@ -12,12 +12,13 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::browser::clipboard;
-use crate::core::file_ops::FileOperations;
-use crate::app::events::AppAction;
 use crate::browser::panel::PanelOperations;
+use crate::core::file_ops::FileOperations;
 use crate::ui::text_input::{self, TextInputState};
+use crate::util::compute_panel_height;
 
 /// Which part of the F2 dialog has focus (name field, permission checkboxes, user list, or group list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,7 +195,7 @@ pub fn apply(app: &mut AppState) -> bool {
         None => return false,
     };
     let cwd = app.get_current_dir().to_string();
-    let panel_height = crate::util::compute_panel_height();
+    let panel_height = compute_panel_height();
 
     match state {
         RenameAttrDialogState::Single {
@@ -342,7 +343,7 @@ pub fn apply(app: &mut AppState) -> bool {
                     }
                 }
             }
-            let panel_height = crate::util::compute_panel_height();
+            let panel_height = compute_panel_height();
             let _ = app.active_panel_mut().refresh_files_restore_selection(
                 Some(current_name.as_str()),
                 None,
@@ -733,40 +734,39 @@ pub fn draw(
     });
 
     let (mode, perm_focus, _owner, _group, user_list, group_list, user_index, group_index) =
-        match dlg
-    {
-        RenameAttrDialogState::Single {
-            mode,
-            perm_focus,
-            owner,
-            group,
-            user_list,
-            group_list,
-            user_index,
-            group_index,
-            ..
-        }
-        | RenameAttrDialogState::Group {
-            mode,
-            perm_focus,
-            owner,
-            group,
-            user_list,
-            group_list,
-            user_index,
-            group_index,
-            ..
-        } => (
-            mode,
-            perm_focus,
-            owner,
-            group,
-            user_list,
-            group_list,
-            user_index,
-            group_index,
-        ),
-    };
+        match dlg {
+            RenameAttrDialogState::Single {
+                mode,
+                perm_focus,
+                owner,
+                group,
+                user_list,
+                group_list,
+                user_index,
+                group_index,
+                ..
+            }
+            | RenameAttrDialogState::Group {
+                mode,
+                perm_focus,
+                owner,
+                group,
+                user_list,
+                group_list,
+                user_index,
+                group_index,
+                ..
+            } => (
+                mode,
+                perm_focus,
+                owner,
+                group,
+                user_list,
+                group_list,
+                user_index,
+                group_index,
+            ),
+        };
 
     for (i, label) in PERM_LABELS.iter().enumerate() {
         let checked = mode_has_bit(*mode, PERM_BITS[i]);
@@ -846,9 +846,7 @@ pub fn draw(
         .enumerate()
         .map(|(i, u)| {
             let style = if user_start + i == ui {
-                fill_style
-                    .bg(colors.list_highlight_bg)
-                    .fg(colors.text)
+                fill_style.bg(colors.list_highlight_bg).fg(colors.text)
             } else {
                 fill_style
             };
@@ -862,9 +860,7 @@ pub fn draw(
         .enumerate()
         .map(|(i, g)| {
             let style = if group_start + i == gi {
-                fill_style
-                    .bg(colors.list_highlight_bg)
-                    .fg(colors.text)
+                fill_style.bg(colors.list_highlight_bg).fg(colors.text)
             } else {
                 fill_style
             };

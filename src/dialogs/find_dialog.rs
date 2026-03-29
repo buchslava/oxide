@@ -9,6 +9,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::core::find::run_find_search;
+use crate::core::text_format::{truncate_str, TruncateMode};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Margin, Rect},
@@ -19,10 +20,11 @@ use ratatui::{
 };
 
 use crate::app::events::AppAction;
-use crate::app::state::AppState;
+use crate::app::state::{AppState, Focus};
 use crate::browser::clipboard;
 use crate::browser::panel::PanelOperations;
 use crate::ui::text_input::{self, TextInputState};
+use crate::ui::theme::DialogPalette;
 
 pub use crate::core::find::{build_display_rows, FindDisplayRow, FindMessage, FindResult};
 
@@ -69,7 +71,6 @@ pub struct FindDialogState {
 
 /// Open Ctrl+F Find file dialog with start dir from active panel.
 pub fn open(app: &mut AppState) {
-    use crate::app::state::Focus;
     let start_dir = app.active_panel_ref().get_current_dir();
     app.find_dialog = Some(FindDialogState {
         phase: FindDialogPhase::Parameter,
@@ -100,7 +101,6 @@ pub fn open(app: &mut AppState) {
 /// Close the Find file dialog and return focus to panel.
 /// If a search was in progress, signals it to stop so the background thread exits.
 pub fn close(app: &mut AppState) {
-    use crate::app::state::Focus;
     if let Some(cancel_flag) = app.find_search_cancel.take() {
         cancel_flag.store(true, Ordering::Relaxed);
     }
@@ -246,8 +246,7 @@ pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
-) -> Option<crate::app::events::AppAction> {
-    use crate::app::events::AppAction;
+) -> Option<AppAction> {
     let phase = app
         .find_dialog
         .as_ref()
@@ -260,8 +259,7 @@ pub fn handle_key(
                 if let Some(ref mut find_dialog) = app.find_dialog {
                     find_dialog.phase = FindDialogPhase::Results;
                     let match_count = find_dialog.results.len();
-                    find_dialog.status_message =
-                        format!("Stopped. {} match(es).", match_count);
+                    find_dialog.status_message = format!("Stopped. {} match(es).", match_count);
                     find_dialog.search_current_dir.clear();
                 }
                 app.find_search_rx = None;
@@ -277,8 +275,7 @@ fn handle_key_parameter(
     app: &mut AppState,
     code: KeyCode,
     modifiers: KeyModifiers,
-) -> Option<crate::app::events::AppAction> {
-    use crate::app::events::AppAction;
+) -> Option<AppAction> {
     let dialog = app.find_dialog.as_mut()?;
     if modifiers.contains(KeyModifiers::CONTROL) {
         if code == KeyCode::Char('a') && dialog.focus <= 3 {
@@ -451,8 +448,7 @@ fn handle_key_results(
     app: &mut AppState,
     code: KeyCode,
     _modifiers: KeyModifiers,
-) -> Option<crate::app::events::AppAction> {
-    use crate::app::events::AppAction;
+) -> Option<AppAction> {
     let dialog = app.find_dialog.as_mut()?;
     let display_rows = build_display_rows(&dialog.results);
     let len = display_rows.len();
@@ -496,10 +492,7 @@ fn handle_key_results(
         KeyCode::PageUp => {
             if len > 0 {
                 let visible_rows = dialog.visible_list_rows.max(1);
-                dialog.selected_index = dialog
-                    .selected_index
-                    .saturating_sub(visible_rows)
-                    .max(0);
+                dialog.selected_index = dialog.selected_index.saturating_sub(visible_rows).max(0);
                 if dialog.selected_index < dialog.scroll_offset {
                     dialog.scroll_offset = dialog.selected_index;
                 }
@@ -536,7 +529,10 @@ const STATUS_ROWS: u16 = 2; // status line + gap
 const HINT_ROWS: u16 = 1;
 
 /// Bounding box for hit-tests and outside-dismiss (must match [`draw`]).
-pub fn dialog_rect(area: Rect, phase: FindDialogPhase) -> Rect {
+pub fn dialog_rect(
+    area: Rect,
+    phase: FindDialogPhase,
+) -> Rect {
     let (w, h) = match phase {
         FindDialogPhase::Parameter => (FIND_DIALOG_W, FIND_DIALOG_H_PARAM),
         FindDialogPhase::Searching | FindDialogPhase::Results => {
@@ -545,7 +541,12 @@ pub fn dialog_rect(area: Rect, phase: FindDialogPhase) -> Rect {
     };
     let x = area.x + area.width.saturating_sub(w) / 2;
     let y = area.y + area.height.saturating_sub(h) / 2;
-    Rect { x, y, width: w, height: h }
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }
 
 /// Same effect as pressing Esc for the current phase (stop search vs close).
@@ -619,7 +620,7 @@ pub fn draw(
 
 fn draw_parameter_form(
     f: &mut Frame,
-    d: &crate::ui::theme::DialogPalette,
+    d: &DialogPalette,
     dialog: &FindDialogState,
     inner: Rect,
     content_w: u16,
@@ -670,9 +671,7 @@ fn draw_parameter_form(
         };
         let cursor_screen = cursor_char.saturating_sub(display_offset);
         let base_style = Style::default().bg(bg).fg(d.text);
-        let selection_style = Style::default()
-            .bg(d.input_selection_bg)
-            .fg(d.text);
+        let selection_style = Style::default().bg(d.input_selection_bg).fg(d.text);
         let line = text_input::input_line_with_selection_slice(
             input,
             display_offset,
@@ -762,7 +761,7 @@ fn draw_parameter_form(
 
 fn draw_status_and_list(
     f: &mut Frame,
-    d: &crate::ui::theme::DialogPalette,
+    d: &DialogPalette,
     dialog: &mut FindDialogState,
     inner: Rect,
     content_w: u16,
@@ -892,11 +891,7 @@ fn truncate_path(
     s: &str,
     max: usize,
 ) -> String {
-    crate::core::text_format::truncate_str(
-        s,
-        max,
-        crate::core::text_format::TruncateMode::SuffixEllipsis,
-    )
+    truncate_str(s, max, TruncateMode::SuffixEllipsis)
 }
 
 #[cfg(test)]

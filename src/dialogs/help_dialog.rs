@@ -41,10 +41,7 @@ fn help_h(
     title: &'static str,
 ) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            "  ▸ ",
-            Style::default().fg(d.help_section_marker),
-        ),
+        Span::styled("  ▸ ", Style::default().fg(d.help_section_marker)),
         Span::styled(
             title,
             Style::default()
@@ -64,10 +61,7 @@ fn help_muted(
     d: &DialogPalette,
     text: &'static str,
 ) -> Line<'static> {
-    Line::from(vec![Span::styled(
-        text,
-        Style::default().fg(d.help_dim),
-    )])
+    Line::from(vec![Span::styled(text, Style::default().fg(d.help_dim))])
 }
 
 fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
@@ -75,7 +69,8 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
     let body = d.help_body;
     let dim = d.help_dim;
 
-    let k = |s: &'static str| Span::styled(s, Style::default().fg(key).add_modifier(Modifier::BOLD));
+    let k =
+        |s: &'static str| Span::styled(s, Style::default().fg(key).add_modifier(Modifier::BOLD));
     let t = |s: &'static str| Span::raw(s);
 
     vec![
@@ -120,7 +115,10 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             k("F12"),
             Span::styled(" inserts name.", Style::default().fg(body)),
         ]),
-        help_muted(d, "    Large viewer files load in background; non-printable text shown as “.”"),
+        help_muted(
+            d,
+            "    Large viewer files load in background; non-printable text shown as “.”",
+        ),
         help_spacer(),
         help_h(d, "Navigation"),
         Line::from(vec![
@@ -207,7 +205,10 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
                 Style::default().fg(body),
             ),
         ]),
-        help_muted(d, "    ZIP panels: entries removed inside the archive only. Trash N/A → option dimmed."),
+        help_muted(
+            d,
+            "    ZIP panels: entries removed inside the archive only. Trash N/A → option dimmed.",
+        ),
         Line::from(vec![
             t("    "),
             Span::styled("Also:", Style::default().fg(body)),
@@ -216,7 +217,10 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
                 Style::default().fg(body),
             ),
             k("file pattern"),
-            Span::styled(" (wildcards vs regex for Find & +/−).", Style::default().fg(body)),
+            Span::styled(
+                " (wildcards vs regex for Find & +/−).",
+                Style::default().fg(body),
+            ),
         ]),
         help_spacer(),
         help_h(d, "Shortcuts"),
@@ -412,9 +416,7 @@ pub fn draw(
     f.render_widget(
         Paragraph::new(Span::styled(
             " Esc  ·  q  close   ·   click outside to dismiss ",
-            Style::default()
-                .bg(dialog_bg)
-                .fg(d.text_muted),
+            Style::default().bg(dialog_bg).fg(d.text_muted),
         ))
         .alignment(Alignment::Center),
         hint_rect,

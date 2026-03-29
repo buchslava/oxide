@@ -6,13 +6,14 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::layout::Rect;
 
+use crate::app::events::AppAction;
 use crate::app::state::{AppState, ArchiveMessage, ArchiveProgress};
 use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
-use crate::app::events::AppAction;
+use crate::core::panel_backend::{create_archive, create_archive_with_progress};
 use crate::ui::text_input::{self, TextInputState};
+use crate::util::compute_panel_height;
 
 /// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
@@ -44,11 +45,11 @@ pub fn create_and_refresh(
     items: &[(String, bool)],
 ) {
     let loc = app.get_current_location();
-    if let Err(e) = crate::core::panel_backend::create_archive(&loc, items, name) {
+    if let Err(e) = create_archive(&loc, items, name) {
         eprintln!("Cannot create archive: {}", e);
         return;
     }
-    let panel_height = crate::util::compute_panel_height();
+    let panel_height = compute_panel_height();
     let _ = app.active_panel_mut().refresh_files_restore_selection(
         Some(name),
         None,
@@ -104,13 +105,8 @@ pub fn start_archive_background(
                 total,
             }));
         };
-        let result = crate::core::panel_backend::create_archive_with_progress(
-            &loc_clone,
-            &items,
-            &name,
-            &mut progress,
-            Some(&cancel),
-        );
+        let result =
+            create_archive_with_progress(&loc_clone, &items, &name, &mut progress, Some(&cancel));
         let name_for_selection = result.as_ref().ok().map(|_| name.clone());
         let _ = tx.send(ArchiveMessage::Done(result, name_for_selection));
     });
@@ -163,9 +159,4 @@ pub fn draw(
         d.focus,
         &app.ui_palette,
     );
-}
-
-/// Return (create_button_rect, cancel_button_rect) for archive dialog hit-testing.
-pub fn archive_button_rects(area: Rect) -> Option<(Rect, Rect)> {
-    Some(crate::ui::dialog_layout::single_input_dialog_button_rects(area))
 }

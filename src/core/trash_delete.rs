@@ -23,7 +23,8 @@ pub fn trash_available() -> bool {
 fn linux_trash_available() -> bool {
     use std::fs;
 
-    let Some(base) = dirs::data_local_dir().or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
+    let Some(base) =
+        dirs::data_local_dir().or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
     else {
         return false;
     };

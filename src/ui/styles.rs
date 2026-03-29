@@ -16,10 +16,7 @@ pub(crate) fn create_file_line_from_display(
 ) -> Line<'static> {
     let mut spans = Vec::new();
     if is_marked {
-        spans.push(Span::styled(
-            "> ",
-            Style::default().fg(list.marked_prefix),
-        ));
+        spans.push(Span::styled("> ", Style::default().fg(list.marked_prefix)));
     }
     let style = if is_dir {
         if is_selected {
@@ -34,32 +31,24 @@ pub(crate) fn create_file_line_from_display(
         }
     } else if is_symlink {
         if is_selected {
-            Style::default()
-                .fg(list.selected_fg)
-                .bg(list.selected_bg)
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
         } else {
             Style::default().fg(list.symlink_fg)
         }
     } else if is_executable {
         if is_selected {
-            Style::default()
-                .fg(list.selected_fg)
-                .bg(list.selected_bg)
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
         } else {
             Style::default().fg(list.executable_fg)
         }
     } else if is_zip {
         if is_selected {
-            Style::default()
-                .fg(list.selected_fg)
-                .bg(list.selected_bg)
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
         } else {
             Style::default().fg(list.zip_fg)
         }
     } else if is_selected {
-        Style::default()
-            .fg(list.selected_fg)
-            .bg(list.selected_bg)
+        Style::default().fg(list.selected_fg).bg(list.selected_bg)
     } else {
         Style::default().fg(list.file_fg)
     };

@@ -69,9 +69,7 @@ impl DialogPalette {
 
     #[inline]
     pub fn fill_secondary_style(self) -> Style {
-        Style::default()
-            .bg(self.dialog_bg_secondary)
-            .fg(self.text)
+        Style::default().bg(self.dialog_bg_secondary).fg(self.text)
     }
 
     #[inline]
@@ -84,9 +82,7 @@ impl DialogPalette {
 
     #[inline]
     pub fn dim_layer_style(self) -> Style {
-        Style::default()
-            .bg(self.modal_dim_bg)
-            .fg(self.modal_dim_fg)
+        Style::default().bg(self.modal_dim_bg).fg(self.modal_dim_fg)
     }
 
     #[inline]

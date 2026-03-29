@@ -184,7 +184,10 @@ impl PreparedFilePattern {
     }
 
     /// Match against a single path component (file base name), without trailing `/`.
-    pub fn matches(&self, name: &str) -> bool {
+    pub fn matches(
+        &self,
+        name: &str,
+    ) -> bool {
         let name = name.trim_end_matches('/');
         match self {
             Self::All => true,
@@ -237,7 +240,8 @@ pub fn run_find_search(
         let file_pattern_trim = file_pattern.trim();
         let ignore_pattern_trim = ignore_pattern.trim();
         let content_pattern = content_pattern.trim();
-        let name_matcher = PreparedFilePattern::new(file_pattern_trim, file_case_sens, file_pattern_regex);
+        let name_matcher =
+            PreparedFilePattern::new(file_pattern_trim, file_case_sens, file_pattern_regex);
         let ignore_matcher = if ignore_pattern_trim.is_empty() {
             None
         } else {

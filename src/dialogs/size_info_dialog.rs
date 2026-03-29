@@ -45,10 +45,10 @@ pub enum SizeInfoDialogState {
         dir_count: usize,
     },
 }
-use crate::core::file_ops::FileOperations;
-use crate::core::text_format::format_byte_size;
 use crate::app::events::AppAction;
 use crate::browser::panel::PanelOperations;
+use crate::core::file_ops::FileOperations;
+use crate::core::text_format::format_byte_size;
 
 /// Open size info (start background calculation). Ctrl+G. Result shown in panel bottom bar.
 pub fn open(app: &mut AppState) {

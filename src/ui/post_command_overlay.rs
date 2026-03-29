@@ -7,6 +7,7 @@ use crossterm::{
 };
 use std::io::{self, Write};
 
+use crate::app::state::AppState;
 
 fn countdown_secs_remaining(reveal_at: std::time::Instant) -> u64 {
     let now = std::time::Instant::now();
@@ -18,7 +19,7 @@ fn countdown_secs_remaining(reveal_at: std::time::Instant) -> u64 {
 }
 
 /// Bottom-left: `N sec` (+ trailing spaces to clear a longer previous line, e.g. `10 sec` → `9 sec`).
-pub fn paint_main_buffer_countdown(app: &crate::app::state::AppState) -> io::Result<()> {
+pub fn paint_main_buffer_countdown(app: &AppState) -> io::Result<()> {
     let Some(cd) = app.post_command_countdown.as_ref() else {
         return Ok(());
     };

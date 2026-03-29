@@ -53,9 +53,9 @@ pub enum ViewerMode {
     Text,
     Hex,
 }
-use crate::core::panel_backend;
 use crate::app::events::AppAction;
 use crate::browser::panel::PanelOperations;
+use crate::core::panel_backend;
 
 /// Default bytes per line when width unknown; also minimum.
 const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;

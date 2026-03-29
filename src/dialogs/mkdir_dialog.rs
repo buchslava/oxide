@@ -2,12 +2,12 @@
 //! Enter = create (if non-empty), Esc = cancel.
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::layout::Rect;
 
+use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::core::panel_backend;
-use crate::app::events::AppAction;
 use crate::ui::text_input::{self, TextInputState};
+use crate::util::compute_panel_height;
 
 /// State for F7 "Create a new Directory" dialog (MC-style). Single text field for the new folder name.
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
@@ -49,7 +49,7 @@ pub fn create_and_refresh(
         eprintln!("Cannot create directory: {}", e);
         return;
     }
-    let panel_height = crate::util::compute_panel_height();
+    let panel_height = compute_panel_height();
     let _ = app.active_panel_mut().refresh_files_restore_selection(
         Some(name),
         None,
@@ -103,9 +103,4 @@ pub fn draw(
         d.focus,
         &app.ui_palette,
     );
-}
-
-/// Return (create_button_rect, cancel_button_rect) for mkdir dialog hit-testing.
-pub fn mkdir_button_rects(area: Rect) -> Option<(Rect, Rect)> {
-    Some(crate::ui::dialog_layout::single_input_dialog_button_rects(area))
 }

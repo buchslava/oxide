@@ -4,6 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::app::state::AppState;
+use crate::core::location::PanelLocation;
 use crate::shell::subshell;
 
 pub(crate) fn get_or_create_subshell<'a>(
@@ -47,6 +48,6 @@ pub(crate) fn maybe_sync_panel_to_shell_cwd(
     if panel_canonical.as_ref() != Some(&shell_canonical) {
         let _ = app
             .active_panel_mut()
-            .navigate_to_location(crate::core::location::PanelLocation::fs(shell_canonical));
+            .navigate_to_location(PanelLocation::fs(shell_canonical));
     }
 }

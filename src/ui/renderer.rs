@@ -1,14 +1,22 @@
-use crate::app::state::{AppState, Focus, Operation};
+use crate::app::state::{
+    AppState, ArchiveProgress, CopyErrorState, CopyProgress, Focus, Operation,
+};
+use crate::browser::editor;
+use crate::browser::panel::{Panel, PanelOperations, ViewMode};
+use crate::browser::viewer;
 use crate::core::disk_space::disk_space_summary;
 use crate::core::file_ops::FileInfo;
 use crate::core::panel_backend;
 use crate::core::text_format::{format_byte_size, truncate_str, TruncateMode};
-use crate::browser::editor;
-use crate::browser::panel::{Panel, PanelOperations, ViewMode};
-use crate::browser::viewer;
-use crate::ui::dialog_layout::{self, DEFAULT_PAD_H};
+use crate::dialogs::{
+    archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
+    pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
+};
+use crate::ui::dialog_layout::{self, paint_modal_dim_layer, DEFAULT_PAD_H};
+use crate::ui::menu_bar_key;
 use crate::ui::styles;
-use crate::ui::theme::UiPalette;
+use crate::ui::theme::{DialogPalette, UiPalette};
+use crate::ui::toast::{self, TimedToast};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
     style::{Modifier, Style},
@@ -76,7 +84,9 @@ fn truncate_bottom_bar_name(
     }
     format!(
         "{}…",
-        name.chars().take(name_max.saturating_sub(1)).collect::<String>()
+        name.chars()
+            .take(name_max.saturating_sub(1))
+            .collect::<String>()
     )
 }
 
@@ -214,7 +224,7 @@ impl Renderer {
         }
         Self::draw_panels_view(f, app);
         if Self::modal_dim_backdrop_active(app) {
-            crate::ui::dialog_layout::paint_modal_dim_layer(f, &app.ui_palette);
+            paint_modal_dim_layer(f, &app.ui_palette);
         }
         if let Some(ref progress) = app.copy_progress {
             Self::draw_copy_progress(f, progress, &app.ui_palette);
@@ -232,40 +242,40 @@ impl Renderer {
             Self::draw_operation_confirm_dialog(f, app);
         }
         if app.mkdir_dialog.is_some() {
-            crate::dialogs::mkdir_dialog::draw(f, app);
+            mkdir_dialog::draw(f, app);
         }
         if app.pattern_select_dialog.is_some() {
-            crate::dialogs::pattern_select_dialog::draw(f, app);
+            pattern_select_dialog::draw(f, app);
         }
         if app.archive_dialog.is_some() {
-            crate::dialogs::archive_dialog::draw(f, app);
+            archive_dialog::draw(f, app);
         }
         if app.new_file_dialog.is_some() {
-            crate::dialogs::new_file_dialog::draw(f, app);
+            new_file_dialog::draw(f, app);
         }
         if app.new_file_error.is_some() {
             Self::draw_new_file_error_dialog(f, app);
         }
         if app.rename_attr_dialog.is_some() {
-            crate::dialogs::rename_attr::draw(f, app);
+            rename_attr::draw(f, app);
         }
         if app.help_dialog {
-            crate::dialogs::help_dialog::draw(f, app);
+            help_dialog::draw(f, app);
         }
         if app.settings_dialog.is_some() {
-            crate::dialogs::settings_dialog::draw(f, app);
+            settings_dialog::draw(f, app);
         }
         if app.find_dialog.is_some() {
-            crate::dialogs::find_dialog::draw(f, app);
+            find_dialog::draw(f, app);
         }
         if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
-            crate::dialogs::panel_overlay::draw(f, app);
+            panel_overlay::draw(f, app);
         }
         // Bottom-left timed toast (e.g. Ctrl+E save layout) — same pattern as editor save.
         if app.viewer_screen.is_none() && app.editor_screen.is_none() {
-            crate::ui::toast::TimedToast::clear_if_expired(&mut app.timed_toast);
+            TimedToast::clear_if_expired(&mut app.timed_toast);
             if let Some(ref t) = app.timed_toast {
-                crate::ui::toast::draw_timed_bottom_left(f, f.area(), &app.ui_palette, t);
+                toast::draw_timed_bottom_left(f, f.area(), &app.ui_palette, t);
             }
         }
     }
@@ -447,7 +457,7 @@ impl Renderer {
         content: Rect,
         options: &[(u8, &str)],
         focus_index: usize,
-        dialog: &crate::ui::theme::DialogPalette,
+        dialog: &DialogPalette,
         fill_style: Style,
         start_row: u16,
     ) {
@@ -477,7 +487,7 @@ impl Renderer {
     fn draw_copy_error_dialog(
         f: &mut Frame,
         app: &AppState,
-        err: &crate::app::state::CopyErrorState,
+        err: &CopyErrorState,
     ) {
         let d = &app.ui_palette.dialog;
         let area = f.area();
@@ -632,7 +642,7 @@ impl Renderer {
     /// MC-style copy progress overlay: navy blue background, wider, centered content, small margins. ESC: Cancel.
     fn draw_copy_progress(
         f: &mut Frame,
-        progress: &crate::app::state::CopyProgress,
+        progress: &CopyProgress,
         palette: &UiPalette,
     ) {
         let area = f.area();
@@ -681,8 +691,7 @@ impl Renderer {
         let space_line = " ".repeat(content.width as usize);
         for r in 0..content.height {
             f.render_widget(
-                Paragraph::new(space_line.as_str())
-                    .style(Style::default().bg(pr.background)),
+                Paragraph::new(space_line.as_str()).style(Style::default().bg(pr.background)),
                 Rect {
                     x: content.x,
                     y: content.y + r,
@@ -785,7 +794,7 @@ impl Renderer {
     /// Archive progress overlay (Ctrl+A): same style as copy progress — Source, Target, gauge. ESC: Cancel.
     fn draw_archive_progress(
         f: &mut Frame,
-        progress: &crate::app::state::ArchiveProgress,
+        progress: &ArchiveProgress,
         palette: &UiPalette,
     ) {
         let pr = &palette.progress;
@@ -825,8 +834,7 @@ impl Renderer {
         let space_line = " ".repeat(content.width as usize);
         for r in 0..content.height {
             f.render_widget(
-                Paragraph::new(space_line.as_str())
-                    .style(Style::default().bg(pr.background)),
+                Paragraph::new(space_line.as_str()).style(Style::default().bg(pr.background)),
                 Rect {
                     x: content.x,
                     y: content.y + r,
@@ -925,16 +933,16 @@ impl Renderer {
     /// Menu bar items (label, F-key number). Used for drawing and hit test. Bottom row.
     pub fn menu_bar_items() -> Vec<(&'static str, u16)> {
         vec![
-            ("1 Help", 1),
-            ("2 File", 2),
-            ("3 View", 3),
-            ("4 Edit", 4),
-            ("5 Copy", 5),
-            ("6 Move", 6),
-            ("7 Folder", 7),
-            ("8 Delete", 8),
-            ("9 Settings", 9),
-            ("10 Quit", 10),
+            ("1 Help", menu_bar_key::HELP),
+            ("2 File", menu_bar_key::FILE),
+            ("3 View", menu_bar_key::VIEW),
+            ("4 Edit", menu_bar_key::EDIT),
+            ("5 Copy", menu_bar_key::COPY),
+            ("6 Move", menu_bar_key::MOVE),
+            ("7 Folder", menu_bar_key::FOLDER),
+            ("8 Delete", menu_bar_key::DELETE),
+            ("9 Settings", menu_bar_key::SETTINGS),
+            ("10 Quit", menu_bar_key::QUIT),
         ]
     }
 
@@ -948,21 +956,21 @@ impl Renderer {
         }
         // In command prompt mode only F10 (Quit) is available.
         if app.focus == Focus::CommandLine {
-            return key == 10;
+            return key == menu_bar_key::QUIT;
         }
         match key {
-            3 => app
+            menu_bar_key::VIEW => app
                 .active_panel_ref()
                 .get_selected_file()
                 .map_or(false, |f| !f.is_dir && !f.is_parent_dir()),
-            4 => {
+            menu_bar_key::EDIT => {
                 panel_backend::supports_edit(&app.get_current_location())
                     && app
                         .active_panel_ref()
                         .get_selected_file()
                         .map_or(false, |f| !f.is_dir && !f.is_parent_dir())
             }
-            5 | 6 => {
+            menu_bar_key::COPY | menu_bar_key::MOVE => {
                 let source = app.get_current_dir();
                 let target = app.get_opposite_panel_dir();
                 let (items, ..) = app
@@ -970,8 +978,8 @@ impl Renderer {
                     .get_names_to_copy_with_restore_neighbors();
                 source != target && !items.is_empty()
             }
-            7 => panel_backend::supports_mkdir(&app.get_current_location()),
-            8 => {
+            menu_bar_key::FOLDER => panel_backend::supports_mkdir(&app.get_current_location()),
+            menu_bar_key::DELETE => {
                 let (items, ..) = app
                     .active_panel_ref()
                     .get_names_to_copy_with_restore_neighbors();
@@ -1048,10 +1056,7 @@ impl Renderer {
         let area = f.area();
         let c = app.ui_palette.chrome;
         let main_bg = c.main_background;
-        f.render_widget(
-            Block::default().style(Style::default().bg(main_bg)),
-            area,
-        );
+        f.render_widget(Block::default().style(Style::default().bg(main_bg)), area);
         // Rows 0..height-2: frame + panels. Row height-2: command line. Row height-1: menu bar (footer).
         let content_height = area.height.saturating_sub(2);
         let frame_rect = Rect {
@@ -1062,11 +1067,7 @@ impl Renderer {
         };
         let frame_block = Block::default()
             .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-            .border_style(
-                Style::default()
-                    .fg(c.panel_border_fg)
-                    .bg(c.panel_border_bg),
-            )
+            .border_style(Style::default().fg(c.panel_border_fg).bg(c.panel_border_bg))
             .style(Style::default().bg(main_bg));
         let inner = frame_block.inner(frame_rect);
         f.render_widget(frame_block, frame_rect);
@@ -1153,9 +1154,7 @@ impl Renderer {
             &palette,
         );
         // Vertical separator │ from path row through bottom bar
-        let sep_style = Style::default()
-            .bg(main_bg)
-            .fg(c.column_separator);
+        let sep_style = Style::default().bg(main_bg).fg(c.column_separator);
         for row in inner.y..(inner.y + panel_content_height + 2) {
             f.render_widget(
                 Paragraph::new("│").style(sep_style),
@@ -1180,9 +1179,7 @@ impl Renderer {
         sep_x: u16,
     ) {
         let c = &app.ui_palette.chrome;
-        let bar_style = Style::default()
-            .bg(c.main_background)
-            .fg(c.command_line_fg);
+        let bar_style = Style::default().bg(c.main_background).fg(c.command_line_fg);
         let left_half_w = (sep_x.saturating_sub(area.x)) as usize;
         let right_total_w = area.width.saturating_sub((sep_x - area.x) + 1) as usize;
 
@@ -1194,15 +1191,11 @@ impl Renderer {
             right_total_w
         };
 
-        let size_info_line = crate::dialogs::size_info_dialog::format_bottom_bar_line(app);
+        let size_info_line = size_info_dialog::format_bottom_bar_line(app);
         let active = app.active_panel();
 
-        let name_style_bar = Style::default()
-            .bg(c.main_background)
-            .fg(c.bottom_bar_path);
-        let size_style_bar = Style::default()
-            .bg(c.main_background)
-            .fg(c.bottom_bar_size);
+        let name_style_bar = Style::default().bg(c.main_background).fg(c.bottom_bar_path);
+        let size_style_bar = Style::default().bg(c.main_background).fg(c.bottom_bar_size);
 
         if active == 0 && size_info_line.is_some() {
             let left_text = size_info_line.as_ref().unwrap().clone();
@@ -1251,8 +1244,7 @@ impl Renderer {
             let right_pad = right_content_w.saturating_sub(right_trunc.chars().count());
             let right_display = format!("{}{}", right_trunc, " ".repeat(right_pad));
             f.render_widget(
-                Paragraph::new(right_display)
-                    .style(bar_style.fg(c.bottom_bar_success)),
+                Paragraph::new(right_display).style(bar_style.fg(c.bottom_bar_success)),
                 Rect {
                     x: sep_x + 1,
                     y: area.y,
@@ -1378,14 +1370,10 @@ impl Renderer {
             let mtime_pad = format!("{:>17}", mtime_str); // "Feb 13 2024 20:05" = 17 chars
 
             let (name_style, mark_style) = if is_selected {
-                let sel = Style::default()
-                    .fg(list.selected_fg)
-                    .bg(list.selected_bg);
+                let sel = Style::default().fg(list.selected_fg).bg(list.selected_bg);
                 (sel, sel)
             } else if file.is_dir {
-                let dir = base
-                    .fg(list.directory_fg)
-                    .add_modifier(Modifier::BOLD);
+                let dir = base.fg(list.directory_fg).add_modifier(Modifier::BOLD);
                 (dir, base)
             } else if file.is_executable {
                 (base.fg(list.executable_fg), base)
@@ -1529,8 +1517,7 @@ impl Renderer {
 
         for y in left_col.y..left_col.y + left_col.height {
             f.render_widget(
-                Paragraph::new("│")
-                    .style(Style::default().fg(palette.chrome.column_separator)),
+                Paragraph::new("│").style(Style::default().fg(palette.chrome.column_separator)),
                 Rect {
                     x: vertical_line_x,
                     y,

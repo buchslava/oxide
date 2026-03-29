@@ -9,9 +9,10 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::events::{AppAction, SettingChange};
 use crate::app::state::AppState;
 use crate::core::file_ops::SORT_MODES;
-use crate::app::events::{AppAction, SettingChange};
+use crate::ui::theme::DialogPalette;
 
 /// State for F9 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
 #[derive(Debug, Clone)]
@@ -219,7 +220,9 @@ pub fn handle_key(
                     3 => Some(AppAction::SettingChange(
                         SettingChange::AutoReopenPanelsAfterCommandDelayCycle,
                     )),
-                    4 => Some(AppAction::SettingChange(SettingChange::FilePatternModeCycle)),
+                    4 => Some(AppAction::SettingChange(
+                        SettingChange::FilePatternModeCycle,
+                    )),
                     5 => Some(AppAction::SettingChange(SettingChange::SafeDeleteToggle)),
                     _ => None,
                 },
@@ -360,9 +363,7 @@ pub fn draw(
         .unwrap_or(0);
     match state.selected_section {
         0 => {
-            let view_highlight = d
-                .list_highlight_style()
-                .remove_modifier(Modifier::BOLD);
+            let view_highlight = d.list_highlight_style().remove_modifier(Modifier::BOLD);
             let line_h = 1u16;
             let chk0 = if persisted.autosave { "[x]" } else { "[ ]" };
             let style0 = if state.content_focus == 0 {
@@ -543,7 +544,7 @@ pub fn draw(
 /// Draw panel options (View, Sort, Folders first, Show hidden). Used by F9 Settings and by panel overlay.
 pub(crate) fn draw_panel_section(
     f: &mut Frame,
-    dialog: &crate::ui::theme::DialogPalette,
+    dialog: &DialogPalette,
     area: Rect,
     fill_style: Style,
     view_index: usize,

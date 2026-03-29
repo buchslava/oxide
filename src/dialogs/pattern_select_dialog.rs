@@ -12,6 +12,7 @@ use ratatui::{
 
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
+use crate::browser::clipboard;
 use crate::ui::dialog_layout::{self, DEFAULT_PAD_H};
 use crate::ui::text_input::{self, TextInputState};
 
@@ -94,9 +95,9 @@ impl PatternSelectDialogState {
             KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
                 if self.focus == 0 {
                     if let Some(s) = self.pattern_input.get_selected_text() {
-                        crate::browser::clipboard::set(&s);
+                        clipboard::set(&s);
                     } else if !self.pattern_input.text.is_empty() {
-                        crate::browser::clipboard::set(&self.pattern_input.text);
+                        clipboard::set(&self.pattern_input.text);
                     }
                     return (Some(self), AppAction::Continue);
                 }
@@ -110,7 +111,7 @@ impl PatternSelectDialogState {
             }
             KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'v' => {
                 if self.focus == 0 {
-                    if let Some(s) = crate::browser::clipboard::get() {
+                    if let Some(s) = clipboard::get() {
                         self.pattern_input = self.pattern_input.insert_str(&s);
                     }
                 }
@@ -254,9 +255,7 @@ pub fn draw(
         &st.pattern_input,
         content.width as usize,
         Style::default().bg(input_base).fg(dlg.text),
-        Style::default()
-            .bg(dlg.input_selection_bg)
-            .fg(dlg.text),
+        Style::default().bg(dlg.input_selection_bg).fg(dlg.text),
     );
     f.render_widget(
         Paragraph::new(line).style(Style::default().bg(input_base)),
@@ -265,8 +264,7 @@ pub fn draw(
 
     let case_y = content.y + 3;
     let case_style = if st.focus == 1 {
-        dlg.list_highlight_style()
-            .remove_modifier(Modifier::BOLD)
+        dlg.list_highlight_style().remove_modifier(Modifier::BOLD)
     } else {
         fill_style
     };

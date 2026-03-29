@@ -448,7 +448,7 @@ pub fn input_line_with_selection_slice(
 }
 
 /// Draw a single-input dialog (title, prompt, one text field, Create/Cancel buttons).
-/// Uses dialog_layout and styles. Callers use dialog_layout::single_input_dialog_button_rects(area) for hit-test.
+/// Uses dialog_layout and styles. Mouse hit-test: [`dialog_layout::hit_test_single_input_dialog`](crate::ui::dialog_layout::hit_test_single_input_dialog).
 pub fn draw_single_input_dialog(
     f: &mut Frame,
     area: Rect,
@@ -491,9 +491,7 @@ pub fn draw_single_input_dialog(
         d.input_bg_unfocused
     };
     let base_style = Style::default().bg(input_bg).fg(d.text);
-    let selection_style = Style::default()
-        .bg(d.input_selection_bg)
-        .fg(d.text);
+    let selection_style = Style::default().bg(d.input_selection_bg).fg(d.text);
     let line =
         input_line_with_selection(input, content.width as usize, base_style, selection_style);
     f.render_widget(Paragraph::new(line), input_rect);

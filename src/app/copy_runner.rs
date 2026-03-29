@@ -4,11 +4,19 @@ use std::io;
 use std::path::Path;
 use std::sync::mpsc;
 
-use crate::app::state::{AppState, CopyInProgress, CopyProgress, Operation};
-use crate::core::file_ops::FileOperations;
 use crate::app::panel_refresh::{refresh_both_panels_full, restore_source_panel_and_refresh};
+use crate::app::state::{
+    AppState, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation,
+};
+use crate::core::copy_ops::{copy_item, delete_item, move_item};
+use crate::core::file_ops::FileOperations;
+use crate::core::location::PanelLocation;
+use crate::core::panel_backend::{
+    copy_items_into_archive, copy_items_to_fs, delete_items, join_path_display,
+    move_items_into_archive, move_items_to_fs,
+};
 
-fn target_fs_dir_for_copy_params(params: &crate::app::state::CopyParams) -> &Path {
+fn target_fs_dir_for_copy_params(params: &CopyParams) -> &Path {
     params
         .target_fs_path
         .as_deref()
@@ -16,13 +24,13 @@ fn target_fs_dir_for_copy_params(params: &crate::app::state::CopyParams) -> &Pat
 }
 
 fn source_item_display_path(
-    params: &crate::app::state::CopyParams,
+    params: &CopyParams,
     name: &str,
 ) -> String {
     params
         .source_location
         .as_ref()
-        .map(|loc| crate::core::panel_backend::join_path_display(loc, name))
+        .map(|loc| join_path_display(loc, name))
         .unwrap_or_else(|| {
             FileOperations::join_path(&params.source_dir, name)
                 .to_string_lossy()
@@ -32,7 +40,7 @@ fn source_item_display_path(
 
 fn target_display_for_copy_progress(
     operation: Operation,
-    params: &crate::app::state::CopyParams,
+    params: &CopyParams,
 ) -> String {
     match operation {
         Operation::Copy | Operation::Move => params
@@ -46,13 +54,13 @@ fn target_display_for_copy_progress(
 
 fn apply_panel_location_copy_step(
     c: &CopyInProgress,
-    source_loc: &crate::core::location::PanelLocation,
+    source_loc: &PanelLocation,
     name: &str,
     is_dir: bool,
     current_path: &str,
 ) -> (bool, Option<String>, Option<String>) {
     match c.params.target_location.as_ref() {
-        Some(crate::core::location::PanelLocation::Zip {
+        Some(PanelLocation::Zip {
             archive,
             path_inside,
         }) => run_copy_step_into_archive(
@@ -100,7 +108,7 @@ fn poll_pending_directory_delete(
             if c.ignore_all_errors {
                 c.current_index += 1;
             } else {
-                app.copy_error_dialog = Some(crate::app::state::CopyErrorState::new(
+                app.copy_error_dialog = Some(CopyErrorState::new(
                     c.operation,
                     format!("{}: {}", current_path, e),
                 ));
@@ -114,7 +122,7 @@ fn poll_pending_directory_delete(
         }
         Err(mpsc::TryRecvError::Disconnected) => {
             if !c.ignore_all_errors {
-                app.copy_error_dialog = Some(crate::app::state::CopyErrorState::new(
+                app.copy_error_dialog = Some(CopyErrorState::new(
                     c.operation,
                     format!("{}: delete failed", current_path),
                 ));
@@ -135,12 +143,7 @@ fn spawn_background_directory_delete(
 ) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(crate::core::copy_ops::delete_item(
-            &source_dir,
-            &entry_name,
-            true,
-            use_trash,
-        ));
+        let _ = tx.send(delete_item(&source_dir, &entry_name, true, use_trash));
     });
     app.delete_pending_rx = Some(rx);
 }
@@ -159,19 +162,9 @@ fn run_copy_step_legacy_copy_move(
     }
     let do_op = |op: Operation| {
         if op == Operation::Move {
-            crate::core::copy_ops::move_item(
-                &c.params.source_dir,
-                &c.params.target_dir,
-                name,
-                is_dir,
-            )
+            move_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
         } else {
-            crate::core::copy_ops::copy_item(
-                &c.params.source_dir,
-                &c.params.target_dir,
-                name,
-                is_dir,
-            )
+            copy_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
         }
     };
     if target_path.exists() && c.skip_all {
@@ -212,18 +205,13 @@ fn run_copy_step_legacy_delete(
         );
         return;
     }
-    match crate::core::copy_ops::delete_item(
-        &c.params.source_dir,
-        name,
-        is_dir,
-        c.use_trash_for_delete,
-    ) {
+    match delete_item(&c.params.source_dir, name, is_dir, c.use_trash_for_delete) {
         Ok(()) => c.current_index += 1,
         Err(e) => {
             if c.ignore_all_errors {
                 c.current_index += 1;
             } else {
-                app.copy_error_dialog = Some(crate::app::state::CopyErrorState::new(
+                app.copy_error_dialog = Some(CopyErrorState::new(
                     c.operation,
                     format!("{}: {}", current_path, e),
                 ));
@@ -237,7 +225,7 @@ fn run_copy_step_legacy_delete(
 pub(crate) fn start_copy_operation(
     app: &mut AppState,
     operation: Operation,
-    params: crate::app::state::CopyParams,
+    params: CopyParams,
 ) {
     let total = params.items.len();
     let initial_path = params
@@ -245,7 +233,7 @@ pub(crate) fn start_copy_operation(
         .first()
         .map(|(name, _)| {
             if let Some(loc) = params.source_location.as_ref() {
-                crate::core::panel_backend::join_path_display(loc, name)
+                join_path_display(loc, name)
             } else {
                 FileOperations::join_path(&params.source_dir, name)
                     .to_string_lossy()
@@ -263,9 +251,8 @@ pub(crate) fn start_copy_operation(
         Operation::Delete => String::new(),
     };
 
-    let use_trash_for_delete = operation == Operation::Delete
-        && app.persisted_settings.safe_delete
-        && app.trash_available;
+    let use_trash_for_delete =
+        operation == Operation::Delete && app.persisted_settings.safe_delete && app.trash_available;
 
     app.copy_in_progress = Some(CopyInProgress {
         operation,
@@ -289,7 +276,7 @@ pub(crate) fn start_copy_operation(
 
 /// One step of copy/move/delete when source is PanelLocation (Fs or Zip). Returns (advance, overwrite_name, error_message).
 fn run_copy_step_backend(
-    source_loc: &crate::core::location::PanelLocation,
+    source_loc: &PanelLocation,
     name: &str,
     is_dir: bool,
     current_path: &str,
@@ -304,8 +291,7 @@ fn run_copy_step_backend(
 
     if operation == Operation::Delete {
         let items = &[(name.to_string(), is_dir)];
-        return match crate::core::panel_backend::delete_items(source_loc, items, use_trash_for_delete)
-        {
+        return match delete_items(source_loc, items, use_trash_for_delete) {
             Ok(()) => (true, None, None),
             Err(e) => (
                 ignore_all_errors,
@@ -324,9 +310,9 @@ fn run_copy_step_backend(
 
     let items = &[(name.to_string(), is_dir)];
     let result = if operation == Operation::Move {
-        crate::core::panel_backend::move_items_to_fs(source_loc, items, target_dir)
+        move_items_to_fs(source_loc, items, target_dir)
     } else {
-        crate::core::panel_backend::copy_items_to_fs(source_loc, items, target_dir)
+        copy_items_to_fs(source_loc, items, target_dir)
     };
 
     match result {
@@ -341,7 +327,7 @@ fn run_copy_step_backend(
 
 /// One step of copy/move when target is inside a ZIP. No overwrite dialog; existing entries are overwritten.
 fn run_copy_step_into_archive(
-    source_loc: &crate::core::location::PanelLocation,
+    source_loc: &PanelLocation,
     name: &str,
     is_dir: bool,
     current_path: &str,
@@ -352,19 +338,9 @@ fn run_copy_step_into_archive(
 ) -> (bool, Option<String>, Option<String>) {
     let items = &[(name.to_string(), is_dir)];
     let result = if operation == Operation::Move {
-        crate::core::panel_backend::move_items_into_archive(
-            source_loc,
-            items,
-            archive_path,
-            path_inside,
-        )
+        move_items_into_archive(source_loc, items, archive_path, path_inside)
     } else {
-        crate::core::panel_backend::copy_items_into_archive(
-            source_loc,
-            items,
-            archive_path,
-            path_inside,
-        )
+        copy_items_into_archive(source_loc, items, archive_path, path_inside)
     };
     match result {
         Ok(()) => (true, None, None),
@@ -439,7 +415,7 @@ pub(crate) fn run_copy_step(app: &mut AppState) {
         }
         if let Some(msg) = error_msg {
             if !advance {
-                app.copy_error_dialog = Some(crate::app::state::CopyErrorState::new(c.operation, msg));
+                app.copy_error_dialog = Some(CopyErrorState::new(c.operation, msg));
                 app.copy_error_focus = 0;
             }
         }
@@ -469,39 +445,29 @@ fn perform_copy_overwrite_item_io(
     if let Some(ref loc) = c.params.source_location {
         let items = &[(name.to_string(), is_dir)];
         match c.params.target_location.as_ref() {
-            Some(crate::core::location::PanelLocation::Zip {
+            Some(PanelLocation::Zip {
                 archive,
                 path_inside,
             }) => {
                 if c.operation == Operation::Move {
-                    crate::core::panel_backend::move_items_into_archive(
-                        loc,
-                        items,
-                        archive,
-                        path_inside,
-                    )
+                    move_items_into_archive(loc, items, archive, path_inside)
                 } else {
-                    crate::core::panel_backend::copy_items_into_archive(
-                        loc,
-                        items,
-                        archive,
-                        path_inside,
-                    )
+                    copy_items_into_archive(loc, items, archive, path_inside)
                 }
             }
             _ => {
                 let target = target_fs_dir_for_copy_params(&c.params);
                 if c.operation == Operation::Move {
-                    crate::core::panel_backend::move_items_to_fs(loc, items, target)
+                    move_items_to_fs(loc, items, target)
                 } else {
-                    crate::core::panel_backend::copy_items_to_fs(loc, items, target)
+                    copy_items_to_fs(loc, items, target)
                 }
             }
         }
     } else if c.operation == Operation::Move {
-        crate::core::copy_ops::move_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
+        move_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
     } else {
-        crate::core::copy_ops::copy_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
+        copy_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
     }
 }
 
@@ -517,7 +483,7 @@ fn apply_copy_item_io_outcome(
             if progress.ignore_all_errors {
                 true
             } else {
-                app.copy_error_dialog = Some(crate::app::state::CopyErrorState::new(
+                app.copy_error_dialog = Some(CopyErrorState::new(
                     progress.operation,
                     format!("{} -> {}: {}", progress.params.source_dir, name, e),
                 ));

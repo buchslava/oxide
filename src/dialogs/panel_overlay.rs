@@ -9,8 +9,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::state::AppState;
 use crate::app::events::{AppAction, SettingChange};
+use crate::app::state::AppState;
+use crate::core::file_ops::SORT_MODES;
 use crate::dialogs::settings_dialog::draw_panel_section;
 
 const HINT_H: u16 = 1;
@@ -92,7 +93,7 @@ fn draw_overlay(
         } else {
             0
         };
-        let sort_index = crate::core::file_ops::SORT_MODES
+        let sort_index = SORT_MODES
             .iter()
             .position(|s| *s == persisted.left_sort.as_str())
             .unwrap_or(0);
@@ -108,7 +109,7 @@ fn draw_overlay(
         } else {
             0
         };
-        let sort_index = crate::core::file_ops::SORT_MODES
+        let sort_index = SORT_MODES
             .iter()
             .position(|s| *s == persisted.right_sort.as_str())
             .unwrap_or(0);

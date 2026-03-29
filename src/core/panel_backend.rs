@@ -140,8 +140,7 @@ pub fn create_archive_with_progress(
     let archive_path = FileOperations::join_path(base_dir, archive_name);
     let file = fs::File::create(&archive_path)?;
     let mut writer = ZipWriter::new(file);
-    let opts = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     let total = items.len();
     for (idx, (name, is_dir)) in items.iter().enumerate() {
@@ -539,8 +538,8 @@ fn list_all_under(
                 format!("{}/{}/", prefix_trim, dir_trim)
             };
             let file = fs::File::open(archive)?;
-            let mut arch = ZipArchive::new(file)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let mut arch =
+                ZipArchive::new(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             let mut out = Vec::new();
             for i in 0..arch.len() {
                 let entry = arch
@@ -615,8 +614,7 @@ fn zip_add_items(
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
     let mut writer = ZipWriter::new(out_file);
-    let opts = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -632,8 +630,7 @@ fn zip_add_items(
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let copy_opts = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Stored);
+        let copy_opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         writer.start_file(name, copy_opts)?;
         writer.write_all(&data)?;
     }
@@ -827,10 +824,8 @@ fn zip_write_file(
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
     let mut writer = ZipWriter::new(out_file);
-    let opts = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
-    let copy_opts =
-        SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let copy_opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
     for i in 0..archive.len() {
         let mut entry = archive

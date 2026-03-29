@@ -21,26 +21,30 @@ mod util;
 use app::copy_runner::{handle_copy_overwrite_choice, run_copy_step, start_copy_operation};
 use app::events::{AppAction, CopyErrorChoice, DeleteConfirmChoice, EventHandler};
 use app::panel_refresh::{
-    refresh_both_panels_full, refresh_both_panels_restore_selection, restore_source_panel_and_refresh,
+    refresh_both_panels_full, refresh_both_panels_restore_selection,
+    restore_source_panel_and_refresh,
 };
 use app::settings_apply::{
-    apply_persisted_setting_change, setting_change_skips_panel_resync, toggle_show_hidden_on_active_panel,
+    apply_persisted_setting_change, setting_change_skips_panel_resync,
+    toggle_show_hidden_on_active_panel,
 };
 use app::state::{
-    AppState, ArchiveMessage, Focus, Operation, PostCommandCountdown, RenameAttrDialogState,
-    RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
+    AppState, ArchiveMessage, FindDialogPhase, Focus, Operation, PostCommandCountdown,
+    RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
 };
 use app::subshell_helpers::{get_or_create_subshell, maybe_sync_panel_to_shell_cwd};
 use browser::editor::{apply_confirm_choice, close, open_editor, open_editor_path, save};
 use browser::panel::{PanelOperations, ViewMode};
 use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
+use core::location::PanelLocation;
+use core::settings::{ensure_config_dir, load, save as save_settings};
 use dialogs::find_dialog::FindDisplayRow;
+use dialogs::pattern_select_dialog::PatternSelectMode;
+use dialogs::rename_attr;
 use dialogs::{
     archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
     pattern_select_dialog, settings_dialog, size_info_dialog,
 };
-use dialogs::pattern_select_dialog::PatternSelectMode;
-use dialogs::rename_attr;
 use shell::subshell::{RelayExit, Subshell};
 use ui::post_command_overlay;
 use ui::Renderer;
@@ -80,12 +84,9 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app_settings = crate::core::settings::load();
-    let _ = crate::core::settings::ensure_config_dir();
-    log_if_err(
-        "Save settings (startup)",
-        crate::core::settings::save(&app_settings),
-    );
+    let app_settings = load();
+    let _ = ensure_config_dir();
+    log_if_err("Save settings (startup)", save_settings(&app_settings));
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let home_str = home.to_string_lossy().to_string();
     let launch_cwd = std::env::current_dir()
@@ -178,7 +179,6 @@ fn main() -> Result<(), io::Error> {
         }
 
         let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
-            use crate::app::state::FindDialogPhase;
             d.phase == FindDialogPhase::Parameter && d.focus <= 3
         });
         let mkdir_input_focused = app.mkdir_dialog.as_ref().map_or(false, |d| d.focus == 0);
@@ -408,7 +408,7 @@ fn main() -> Result<(), io::Error> {
             AppAction::ViewerClose => {
                 close_viewer(&mut app);
                 if app.find_dialog.is_some() {
-                    app.focus = crate::app::state::Focus::FindDialog;
+                    app.focus = Focus::FindDialog;
                 }
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
             }
@@ -419,7 +419,7 @@ fn main() -> Result<(), io::Error> {
             AppAction::EditorClose => {
                 close(&mut app);
                 if app.find_dialog.is_some() {
-                    app.focus = crate::app::state::Focus::FindDialog;
+                    app.focus = Focus::FindDialog;
                 }
             }
             AppAction::EditorConfirmChoice(choice) => apply_confirm_choice(&mut app, choice),
@@ -497,7 +497,7 @@ fn main() -> Result<(), io::Error> {
                     if let Some(row) = rows.get(d.selected_index) {
                         match row {
                             FindDisplayRow::Folder(path) => {
-                                let loc = crate::core::location::PanelLocation::fs(path);
+                                let loc = PanelLocation::fs(path);
                                 if app.active_panel_mut().navigate_to_location(loc).is_ok() {}
                             }
                             FindDisplayRow::File(r) => {
@@ -505,7 +505,7 @@ fn main() -> Result<(), io::Error> {
                                     r.path.parent(),
                                     r.path.file_name().map(|n| n.to_string_lossy().to_string()),
                                 ) {
-                                    let loc = crate::core::location::PanelLocation::fs(parent);
+                                    let loc = PanelLocation::fs(parent);
                                     let panel_height = util::compute_panel_height();
                                     if app.active_panel_mut().navigate_to_location(loc).is_ok() {
                                         log_if_err(
@@ -549,10 +549,7 @@ fn main() -> Result<(), io::Error> {
             AppAction::PanelNavigated => app.maybe_persist_panel_dirs(),
             AppAction::SettingChange(change) => {
                 apply_persisted_setting_change(&mut app, change);
-                log_if_err(
-                    "Save settings",
-                    crate::core::settings::save(&app.persisted_settings),
-                );
+                log_if_err("Save settings", save_settings(&app.persisted_settings));
                 if !setting_change_skips_panel_resync(change) {
                     app.sync_from_persisted_settings();
                 }
@@ -568,10 +565,7 @@ fn main() -> Result<(), io::Error> {
                 } else {
                     app.persisted_settings.right_view = view;
                 }
-                log_if_err(
-                    "Save settings",
-                    crate::core::settings::save(&app.persisted_settings),
-                );
+                log_if_err("Save settings", save_settings(&app.persisted_settings));
             }
             AppAction::ToggleShowHidden => {
                 toggle_show_hidden_on_active_panel(&mut app);
@@ -687,7 +681,9 @@ fn main() -> Result<(), io::Error> {
                             crossterm::cursor::Hide,
                             crossterm::event::EnableMouseCapture
                         )?;
-                        if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                        if let Some(AppAction::Quit) =
+                            EventHandler::process_queued_events(&mut app)?
+                        {
                             break;
                         }
                         app.focus_panel();
@@ -701,7 +697,9 @@ fn main() -> Result<(), io::Error> {
                         terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                     }
                     RelayExit::AutoReopenDelay(d) => {
-                        if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
+                        if let Some(AppAction::Quit) =
+                            EventHandler::process_queued_events(&mut app)?
+                        {
                             break;
                         }
                         app.focus_panel();

@@ -1,13 +1,15 @@
-use crate::core::settings::PersistedSettings;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
+use crate::core::settings::{self, PersistedSettings};
+use crate::core::trash_delete::trash_available;
+use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::theme::{ThemeId, UiPalette};
 use crate::ui::toast::TimedToast;
 use ratatui::layout::Rect;
 use std::io;
-use std::time::Duration;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use crate::core::copy_state::{
     ArchiveProgress, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation,
@@ -111,7 +113,7 @@ pub struct AppState {
     /// When Some, Ctrl+F "Find file" dialog is open.
     pub find_dialog: Option<FindDialogState>,
     /// When Some, + / − mark or unmark by file glob (same as Find file pattern).
-    pub pattern_select_dialog: Option<crate::dialogs::pattern_select_dialog::PatternSelectDialogState>,
+    pub pattern_select_dialog: Option<PatternSelectDialogState>,
     /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
     /// When true, F1 Help dialog is open.
@@ -153,15 +155,15 @@ pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
 pub use crate::dialogs::size_info_dialog::{SizeInfoDialogState, SizeInfoProgress};
 
 // Re-exports so AppState and other modules can use these types without circular deps.
-pub use crate::dialogs::archive_dialog::ArchiveDialogState;
-pub use crate::core::find::FindMessage;
 pub use crate::browser::editor::EditorScreenState;
+pub use crate::browser::viewer::ViewerState;
+pub use crate::core::find::FindMessage;
+pub use crate::dialogs::archive_dialog::ArchiveDialogState;
 pub use crate::dialogs::find_dialog::{FindDialogPhase, FindDialogState};
 pub use crate::dialogs::mkdir_dialog::MkdirDialogState;
 pub use crate::dialogs::new_file_dialog::NewFileDialogState;
 pub use crate::dialogs::rename_attr::{RenameAttrDialogState, RenameAttrField};
 pub use crate::dialogs::settings_dialog::SettingsDialogState;
-pub use crate::browser::viewer::ViewerState;
 
 impl AppState {
     /// Store trimmed pattern for reuse in Find and +/− (empty clears remembered pattern).
@@ -235,7 +237,7 @@ impl AppState {
             last_file_name_pattern: String::new(),
             show_hidden_files: true,
             persisted_settings: settings,
-            trash_available: crate::core::trash_delete::trash_available(),
+            trash_available: trash_available(),
             theme_id: ThemeId::default(),
             ui_palette: ThemeId::default().palette(),
         };
@@ -279,7 +281,7 @@ impl AppState {
             .as_fs_path()
             .map(|p| p.to_string_lossy().to_string());
         self.persisted_settings.active_panel = if self.active_panel == 0 { 0 } else { 1 };
-        crate::core::settings::save(&self.persisted_settings)
+        settings::save(&self.persisted_settings)
     }
 
     /// If autosave is on, write current panel dirs and active panel to persisted_settings and save to file.
@@ -311,9 +313,9 @@ impl AppState {
 
     /// Countdown is drawn on the main buffer over shell output; skip ratatui `draw` until it ends.
     pub fn post_command_countdown_on_main_buffer(&self) -> bool {
-        self.post_command_countdown.as_ref().is_some_and(|c| {
-            c.overlay_on_main_buffer && std::time::Instant::now() < c.reveal_at
-        })
+        self.post_command_countdown
+            .as_ref()
+            .is_some_and(|c| c.overlay_on_main_buffer && std::time::Instant::now() < c.reveal_at)
     }
 
     /// Set the active panel by index (0 = left, 1 = right).

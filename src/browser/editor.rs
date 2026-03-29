@@ -19,11 +19,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::app::events::AppAction;
-use crate::app::state::AppState;
+use crate::app::state::{AppState, Focus};
 use crate::browser::panel::PanelOperations;
 use crate::core::location::PanelLocation;
+use crate::core::panel_backend::{join_path_display, read_file, write_file};
 use crate::ui::theme::DialogPalette;
-use crate::ui::toast;
+use crate::ui::toast::{self, TimedToast};
+use crate::util::compute_panel_height;
 
 /// State when the embedded code editor is open (F4).
 pub struct EditorScreenState {
@@ -122,23 +124,20 @@ pub fn open_editor(app: &mut AppState) -> bool {
     let loc = app.get_current_location();
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
-            let (content, opened_with_invalid_utf8) =
-                match crate::core::panel_backend::read_file(&loc, &file.name) {
-                    Ok(bytes) => (
-                        String::from_utf8_lossy(&bytes).into_owned(),
-                        std::str::from_utf8(&bytes).is_err(),
-                    ),
-                    Err(_) => return false,
-                };
-            let file_path_str = crate::core::panel_backend::join_path_display(&loc, &file.name);
+            let (content, opened_with_invalid_utf8) = match read_file(&loc, &file.name) {
+                Ok(bytes) => (
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                    std::str::from_utf8(&bytes).is_err(),
+                ),
+                Err(_) => return false,
+            };
+            let file_path_str = join_path_display(&loc, &file.name);
             let lang = get_lang_from_path(&file_path_str);
             let theme = vesper();
             let editor = Editor::new(lang, &content, theme);
             let (edit_location, edit_name) = match &loc {
-                crate::core::location::PanelLocation::Zip { .. } => {
-                    (Some(loc), Some(file.name.clone()))
-                }
-                crate::core::location::PanelLocation::Fs(_) => (None, None),
+                PanelLocation::Zip { .. } => (Some(loc), Some(file.name.clone())),
+                PanelLocation::Fs(_) => (None, None),
             };
             app.editor_screen = Some(EditorScreenState {
                 file_path: file_path_str,
@@ -630,10 +629,10 @@ fn write_editor_buffer(
             } else {
                 name.clone()
             };
-            crate::core::panel_backend::write_file(loc, &target_name, content)?;
+            write_file(loc, &target_name, content)?;
             if redirect {
                 ed.edit_name = Some(target_name.clone());
-                ed.file_path = crate::core::panel_backend::join_path_display(loc, &target_name);
+                ed.file_path = join_path_display(loc, &target_name);
                 ed.opened_with_invalid_utf8 = false;
             }
             Ok(redirect)
@@ -641,10 +640,7 @@ fn write_editor_buffer(
         (None, None) => {
             let path = if redirect {
                 let p = Path::new(&ed.file_path);
-                let stem = p
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("file");
+                let stem = p.file_name().and_then(|n| n.to_str()).unwrap_or("file");
                 p.with_file_name(entry_name_with_text_suffix(stem))
             } else {
                 PathBuf::from(&ed.file_path)
@@ -693,7 +689,7 @@ pub fn save(app: &mut AppState) {
 }
 
 fn panel_height() -> usize {
-    crate::util::compute_panel_height()
+    compute_panel_height()
 }
 
 fn refresh_panels_after_editor_close(app: &mut AppState) {
@@ -735,7 +731,7 @@ pub fn close(app: &mut AppState) {
     app.editor_confirm_pending = false;
     app.clear_timed_toast();
     if app.find_dialog.is_some() {
-        app.focus = crate::app::state::Focus::FindDialog;
+        app.focus = Focus::FindDialog;
     }
     refresh_panels_after_editor_close(app);
 }
@@ -759,7 +755,7 @@ pub fn apply_confirm_choice(
             app.editor_screen = None;
             app.clear_timed_toast();
             if app.find_dialog.is_some() {
-                app.focus = crate::app::state::Focus::FindDialog;
+                app.focus = Focus::FindDialog;
             }
             refresh_panels_after_editor_close(app);
         }
@@ -767,7 +763,7 @@ pub fn apply_confirm_choice(
             app.editor_screen = None;
             app.clear_timed_toast();
             if app.find_dialog.is_some() {
-                app.focus = crate::app::state::Focus::FindDialog;
+                app.focus = Focus::FindDialog;
             }
             refresh_panels_after_editor_close(app);
         }
@@ -782,7 +778,7 @@ pub fn draw(
     f: &mut Frame,
     app: &mut AppState,
 ) {
-    crate::ui::toast::TimedToast::clear_if_expired(&mut app.timed_toast);
+    TimedToast::clear_if_expired(&mut app.timed_toast);
     if let Some(ref mut ed) = app.editor_screen {
         let area = f.area();
         let content_height = area.height.saturating_sub(1);
@@ -810,11 +806,8 @@ pub fn draw(
                 height: 1,
             };
             f.render_widget(
-                Paragraph::new(hint).style(
-                    Style::default()
-                        .bg(main_bg)
-                        .fg(app.ui_palette.viewer.muted),
-                ),
+                Paragraph::new(hint)
+                    .style(Style::default().bg(main_bg).fg(app.ui_palette.viewer.muted)),
                 r,
             );
         }
@@ -880,10 +873,7 @@ fn draw_search_bar(
         width: inner.width,
         height: 1,
     };
-    f.render_widget(
-        Paragraph::new(hint).style(style.fg(d.text_muted)),
-        hint_row,
-    );
+    f.render_widget(Paragraph::new(hint).style(style.fg(d.text_muted)), hint_row);
     let cursor_col = (2 + cursor_pos).min(inner.width as usize);
     f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
 }

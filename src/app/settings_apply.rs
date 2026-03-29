@@ -1,8 +1,10 @@
 //! Apply F9 / panel overlay setting toggles to `AppState` and persist side effects.
 
-use crate::app::state::AppState;
 use crate::app::events::SettingChange;
+use crate::app::state::AppState;
 use crate::browser::panel::PanelOperations;
+use crate::core::file_ops::cycle_sort_mode;
+use crate::core::settings::save;
 use crate::util;
 
 fn cycle_view_one_two(view: &mut String) {
@@ -41,12 +43,12 @@ pub(crate) fn apply_persisted_setting_change(
                 .auto_reopen_panels_after_command_delay_secs = next;
         }
         SettingChange::FilePatternModeCycle => {
-            app.persisted_settings.file_pattern_mode = if app.persisted_settings.file_pattern_uses_regex()
-            {
-                "wildcard".to_string()
-            } else {
-                "regex".to_string()
-            };
+            app.persisted_settings.file_pattern_mode =
+                if app.persisted_settings.file_pattern_uses_regex() {
+                    "wildcard".to_string()
+                } else {
+                    "regex".to_string()
+                };
         }
         SettingChange::LeftViewCycle => cycle_view_one_two(&mut app.persisted_settings.left_view),
         SettingChange::RightViewCycle => cycle_view_one_two(&mut app.persisted_settings.right_view),
@@ -58,19 +60,19 @@ pub(crate) fn apply_persisted_setting_change(
         }
         SettingChange::LeftSortCycle => {
             app.persisted_settings.left_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.left_sort, true);
+                cycle_sort_mode(&app.persisted_settings.left_sort, true);
         }
         SettingChange::RightSortCycle => {
             app.persisted_settings.right_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.right_sort, true);
+                cycle_sort_mode(&app.persisted_settings.right_sort, true);
         }
         SettingChange::LeftSortCyclePrev => {
             app.persisted_settings.left_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.left_sort, false);
+                cycle_sort_mode(&app.persisted_settings.left_sort, false);
         }
         SettingChange::RightSortCyclePrev => {
             app.persisted_settings.right_sort =
-                crate::core::file_ops::cycle_sort_mode(&app.persisted_settings.right_sort, false);
+                cycle_sort_mode(&app.persisted_settings.right_sort, false);
         }
         SettingChange::LeftDirsFirstToggle => {
             app.persisted_settings.left_dirs_first = !app.persisted_settings.left_dirs_first;
@@ -106,10 +108,7 @@ pub(crate) fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
         app.persisted_settings.left_show_hidden = new_show;
         app.show_hidden_files = new_show;
         let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
-        util::log_if_err(
-            "Save settings",
-            crate::core::settings::save(&app.persisted_settings),
-        );
+        util::log_if_err("Save settings", save(&app.persisted_settings));
         util::log_if_err(
             "Refresh panel",
             app.left_panel_mut().refresh_files_restore_selection(
@@ -127,10 +126,7 @@ pub(crate) fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
             .right_panel()
             .get_selected_file()
             .map(|f| f.name.clone());
-        util::log_if_err(
-            "Save settings",
-            crate::core::settings::save(&app.persisted_settings),
-        );
+        util::log_if_err("Save settings", save(&app.persisted_settings));
         util::log_if_err(
             "Refresh panel",
             app.right_panel_mut().refresh_files_restore_selection(
