@@ -292,6 +292,14 @@ pub fn handle_editor_key(
                 }
                 return Some(AppAction::Continue);
             }
+            KeyCode::Delete => {
+                let mut chars: Vec<char> = query.chars().collect();
+                if *cursor < chars.len() {
+                    chars.remove(*cursor);
+                    *query = chars.into_iter().collect();
+                }
+                return Some(AppAction::Continue);
+            }
             KeyCode::Char(c) if !ctrl => {
                 let mut chars: Vec<char> = query.chars().collect();
                 let pos = (*cursor).min(chars.len());
@@ -533,6 +541,33 @@ pub fn handle_editor_key(
             ed.editor.clear_selection();
         }
         ed.editor.set_cursor(new_cursor);
+        ed.editor.focus(&ed.area);
+        return Some(AppAction::Continue);
+    }
+
+    // Forward delete (Del): ratatui-code-editor only handles Backspace, not KeyCode::Delete.
+    if key.code == KeyCode::Delete && !ctrl {
+        let mut cursor = ed.editor.get_cursor();
+        let mut selection = ed.editor.get_selection();
+        let len = ed.editor.code_ref().len_chars();
+        let code = ed.editor.code_mut();
+        code.tx();
+        code.set_state_before(cursor, selection);
+        if let Some(ref sel) = selection {
+            if !sel.is_empty() {
+                let (start, end) = sel.sorted();
+                code.remove(start, end);
+                cursor = start;
+                selection = None;
+            }
+        } else if cursor < len {
+            code.remove(cursor, cursor + 1);
+        }
+        code.set_state_after(cursor, selection);
+        code.commit();
+        ed.editor.set_cursor(cursor);
+        ed.editor.set_selection(selection);
+        ed.editor.reset_highlight_cache();
         ed.editor.focus(&ed.area);
         return Some(AppAction::Continue);
     }

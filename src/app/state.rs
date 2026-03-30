@@ -473,6 +473,20 @@ impl AppState {
         }
     }
 
+    /// Remove the character after the cursor (forward delete). Cursor is a byte offset into `command_line`.
+    pub fn command_line_delete_forward(&mut self) {
+        if self.command_line_cursor >= self.command_line.len() {
+            return;
+        }
+        let tail = &self.command_line[self.command_line_cursor..];
+        let Some(ch) = tail.chars().next() else {
+            return;
+        };
+        let n = ch.len_utf8();
+        self.command_line
+            .drain(self.command_line_cursor..self.command_line_cursor + n);
+    }
+
     pub fn command_line_move_left(&mut self) {
         if self.command_line_cursor > 0 {
             self.command_line_cursor -= 1;

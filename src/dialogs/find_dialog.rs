@@ -387,6 +387,18 @@ fn handle_key_parameter(
                 *input = std::mem::take(input).backspace();
             }
         }
+        KeyCode::Delete => {
+            if dialog.focus <= 3 {
+                let input = match dialog.focus {
+                    0 => &mut dialog.start_dir_input,
+                    1 => &mut dialog.file_pattern_input,
+                    2 => &mut dialog.ignore_pattern_input,
+                    3 => &mut dialog.content_pattern_input,
+                    _ => return Some(AppAction::Continue),
+                };
+                *input = std::mem::take(input).delete_forward();
+            }
+        }
         KeyCode::Left => {
             if dialog.focus <= 3 {
                 let shift = modifiers.contains(KeyModifiers::SHIFT);

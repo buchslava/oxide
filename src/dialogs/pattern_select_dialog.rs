@@ -155,6 +155,10 @@ impl PatternSelectDialogState {
                 self.pattern_input = self.pattern_input.backspace();
                 (Some(self), AppAction::Continue)
             }
+            KeyCode::Delete if self.focus == 0 => {
+                self.pattern_input = self.pattern_input.delete_forward();
+                (Some(self), AppAction::Continue)
+            }
             KeyCode::Left if self.focus == 0 => {
                 self.pattern_input = self
                     .pattern_input

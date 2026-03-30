@@ -165,6 +165,42 @@ impl TextInputState {
         self
     }
 
+    /// Delete the character after the cursor or the selection (forward delete). Returns new state (pure transition).
+    pub fn delete_forward(mut self) -> Self {
+        let sel = self.selection_bounds();
+        self.anchor = None;
+        if let Some((s, e)) = sel {
+            let byte_start = self.text.char_indices().nth(s).map(|(i, _)| i).unwrap_or(0);
+            let byte_end = self
+                .text
+                .char_indices()
+                .nth(e)
+                .map(|(i, _)| i)
+                .unwrap_or(self.text.len());
+            self.text.drain(byte_start..byte_end);
+            self.cursor = s;
+            return self;
+        }
+        let len_chars = self.text.chars().count();
+        if self.cursor >= len_chars {
+            return self;
+        }
+        let byte_start = self
+            .text
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+        let byte_end = self
+            .text
+            .char_indices()
+            .nth(self.cursor + 1)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+        self.text.drain(byte_start..byte_end);
+        self
+    }
+
     /// Move cursor left. If shift, extend selection; else clear selection.
     pub fn move_left(
         self,
@@ -340,6 +376,9 @@ pub fn handle_single_input_key(
         }
         KeyCode::Backspace if focus == 0 => {
             (input.backspace(), focus, SingleInputKeyResult::Continue)
+        }
+        KeyCode::Delete if focus == 0 => {
+            (input.delete_forward(), focus, SingleInputKeyResult::Continue)
         }
         KeyCode::Left if focus == 0 => (
             input.move_left(modifiers.contains(KeyModifiers::SHIFT)),

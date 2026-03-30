@@ -790,6 +790,13 @@ impl EventHandler {
                 }
                 AppAction::Continue
             }
+            KeyCode::Delete => {
+                app.command_line_delete_forward();
+                if app.command_line.is_empty() {
+                    app.focus_panel();
+                }
+                AppAction::Continue
+            }
             KeyCode::Left => {
                 app.command_line_move_left();
                 AppAction::Continue

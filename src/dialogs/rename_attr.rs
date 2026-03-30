@@ -486,6 +486,16 @@ pub fn handle_key(
                 }
             }
         }
+        KeyCode::Delete => {
+            if let RenameAttrDialogState::Single {
+                name_input, focus, ..
+            } = d
+            {
+                if *focus == RenameAttrField::Name {
+                    *name_input = std::mem::take(name_input).delete_forward();
+                }
+            }
+        }
         KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
             if let RenameAttrDialogState::Single {
                 name_input, focus, ..
