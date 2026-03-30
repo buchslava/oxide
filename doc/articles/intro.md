@@ -75,3 +75,20 @@ There’s a setting—**Auto reopen panels after command/executable** (F9 → **
 
 ---
 
+
+<!--
+
+No dialog on Copy and Move, only in mouse op
+
+Space - select file group
+
+Ctrl+N also in arc
+
+Ctrl+A
+
+Ctrl+G
+
+F2
+
+Adaptive bottom menu
+-->
