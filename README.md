@@ -47,6 +47,40 @@ cargo install --path .
 # Installs xd to ~/.cargo/bin
 ```
 
+### Portable tarball installer (Linux & macOS)
+
+The repo includes a POSIX shell installer and a helper script that packages the release binary plus `install.sh` into a gzip-compressed tarball.
+
+**Create a release archive** (run on the OS and CPU architecture you want to ship; the archive name includes `uname` output, e.g. `linux-x86_64` or `darwin-arm64`):
+
+```bash
+./scripts/make-dist.sh
+```
+
+This runs `cargo build --release` and writes `dist/xd-<version>-<os>-<arch>.tar.gz` (the `dist/` directory is gitignored).
+
+**Install from the tarball** on the target machine:
+
+```bash
+tar xzf xd-0.1.0-linux-x86_64.tar.gz   # use the file name you built or downloaded
+./install.sh
+```
+
+By default, `install.sh` copies `xd` into `$HOME/.local/bin` when that directory is writable; otherwise it uses `/usr/local/bin` and may invoke `sudo`. Override the destination:
+
+```bash
+./install.sh -p /path/to/bin
+# or
+PREFIX=/path/to/bin ./install.sh
+```
+
+**Install a local release build without packaging:**
+
+```bash
+cargo build --release
+./install/install.sh -p "$HOME/.local/bin" target/release/xd
+```
+
 To create a Debian (.deb) package, see [PACKAGING_DEB.md](doc/PACKAGING_DEB.md).
 
 ## Usage

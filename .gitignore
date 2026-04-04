@@ -1,4 +1,7 @@
+.DS_Store
+**/.DS_Store
 /target
+/dist
 
 # Optional: Midnight Commander source for reference (clone into project root)
 /mc
