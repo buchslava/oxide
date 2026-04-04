@@ -1,9 +1,12 @@
 # Intro
 
 My first brush with a PC was two blue Norton Commander panels in 1991. Back then it felt like magic.
-Time went on.
 
-Fortran, Clarion, FoxPro, Pascal, Smalltalk, C, Oracle, Java, Postgres, Node.js, TypeScript, Rust…  
+![NC](images/nc.jpg)
+
+Time went on...
+
+>Fortran, Clarion, FoxPro, Pascal, Smalltalk, C, Oracle, Java, Postgres, Node.js, TypeScript, Rust…  
 MS-DOS, Windows, Linux, macOS…  
 Norton Commander, Far Manager, Midnight Commander…
 
@@ -24,7 +27,7 @@ If you’ve read this far, you’ve probably guessed: I decided to build somethi
 
 The stack is **Rust**—a **systems programming** language at heart (think kernels, runtimes, and tools that sit close to the machine). I won’t give the full sales pitch. It learns from what went wrong before, fixes whole classes of old mistakes more honestly than most alternatives, and still carries forward the good ideas from earlier generations. On top of that it’s built for real systems work: memory-safe without a garbage collector, fast, and practical for desktop and CLI apps—not just slides and benchmarks.
 
-There’s also a great community and a rich crate ecosystem. For the console UI I went all-in on **Ratatui**—and honestly, it’s a joy: a mature, batteries-included TUI toolkit (layouts, widgets, styling, the works) that feels like building a real UI instead of hand-drawing escape codes. It sits on solid terminal backends, the docs and examples actually help, and the project is alive—exactly what you want when you’re not writing a toy demo.
+There’s also a great community and a rich crate ecosystem. For the console UI I went all-in on [Ratatui](https://ratatui.rs/)—and honestly, it’s a joy: a mature, batteries-included TUI toolkit (layouts, widgets, styling, the works) that feels like building a real UI instead of hand-drawing escape codes. It sits on solid terminal backends, the docs and examples actually help, and the project is alive—exactly what you want when you’re not writing a toy demo.
 
 So—meet **Oxide**. The name is a nod to the Rust ecosystem.
 
@@ -52,8 +55,6 @@ You’d normally use **Enter** to move into folders and open files. But with foc
 
 Maybe you’re wondering why the file names show up so fast in the clip above. That’s on purpose: in **command-line mode**, **F12** inserts the **currently selected file name** from the active panel at the **cursor**—handy when you’re building a command and don’t want to retype paths by hand.
 
----
-
 ## Time to read the command output
 
 ### The problem
@@ -73,22 +74,126 @@ There’s a setting—**Auto reopen panels after command/executable** (F9 → **
 
 ![Return to panels after command — delay](images/exec-delay.gif)
 
+## Copy and move without the options dialog
+
+### The problem
+
+You’ve already got **source** and **target** in front of you—the two panels show the directories, and your selection is what you want to transfer. Stopping at another screen to re-type or re-confirm paths feels like **extra work** on the common path.
+
+### How Midnight Commander handles it
+
+**F5** (copy) and **F6** (move) open a **dialog first**: you can adjust source and target, filters, and other options before anything runs. That flexibility is real, but when the panels already match your intent, it’s another **round of keys** every time.
+
+### How Oxide handles it
+
+Keyboard **F5** and **F6** use the **active** and **opposite** panel paths and your **current selection**—the operation **starts** without that intermediate form. You still get the usual **overwrite** and **error** prompts when something collides mid-run.
+
+**Mouse:** choosing **Copy** or **Move** from the **menu bar** still opens a short **confirmation** (with paths), so a slip of the pointer doesn’t start a large transfer by accident.
+
+![Copy and move from the keyboard in Oxide](images/file-copy.gif)
+
+## File group selection
+
+### The problem
+
+You often need a **hand-picked set** of files—not just one row under the cursor—for copy, move, or size checks. That should be **obvious** which lines are in the set, and the keys should work on **Mac** keyboards too, not only on layouts with a dedicated **Insert** key.
+
+### How Midnight Commander handles it
+
+**Insert** toggles the mark on the current file (you can use the **mouse** as well). It’s a solid model on classic keyboards, but **Insert** is missing or awkward on many **Apple** machines, and **MC’s color scheme** as a whole—skins, directory styling, selected rows—often leaves **marked** files looking much like everything else, so the batch is easy to lose in the panel.
+
+### How Oxide handles it
+
+**Space** toggles the **mark** on the current row and moves **down** one line—no **Insert** required. Marked entries get a **`> `** prefix and a **separate color** from the cursor row, so the group stays visually distinct.
+
+**Ctrl+G** shows **combined size** for the same scope as **F5**/**F6**: **all marked** rows, or the **single highlighted** file when nothing is marked.
+
+![Marked file group, copy, and size info in Oxide](images/file-group.gif)
+
+## Toggling hidden files
+
+### The problem
+
+Directories are full of **dotfiles** and other **hidden** names—config, caches, VCS metadata. Most of the time they **clutter** the list and you want them **gone**. Then you’re debugging, editing a config, or hunting a `.env`, and you need them **visible again**—**right now**, without a scavenger hunt through menus.
+
+### How Midnight Commander handles it
+
+The usual route is **F9** → **Options** → **Panel options** (labels vary a bit by build and skin), then find and flip **Show hidden files**. It works, but it’s **several steps** off the file list, with **menu focus** and wording you don’t touch every day—easy to fumble when you’re in a hurry.
+
+### How Oxide handles it
+
+**Ctrl+H** toggles **hidden files** for the **active panel** immediately: the listing **refreshes** in place.
+
+![Toggling hidden files with Ctrl+H in Oxide](images/hidden-files.gif)
+
+## Creating a new empty file
+
+### The problem
+
+You want an **empty file** with a chosen name **in the directory the panel is showing**—to become **config**, **text**, notes, or whatever you open in an editor next—and you’d rather do it with a **small dialog** (pick the name, confirm) than by typing **`touch`** or another **command** in the file manager’s **command line**.
+
+### How Midnight Commander handles it
+
+Stock **MC** doesn’t give you a **single shortcut** for “create empty file here.” The usual habit is the **command line** or **subshell**: run **`touch`** with a name.
+
+### How Oxide handles it
+
+**Ctrl+N** opens a **short dialog**: type the **file name**, **Enter** to create an **empty** file in the **active panel**’s current directory. **Esc** (or cancel) backs out without touching the disk. If the name **already exists**, you get a clear **error** instead of a silent overwrite.
+
+![Creating a new file with Ctrl+N in Oxide](images/new-file.gif)
+
+The same flow works when the **active panel** is **inside a ZIP** archive—not only on a normal filesystem folder.
+
+## Creating a ZIP archive
+
+### The problem
+
+You’ve **marked** or **highlighted** a set of files and folders and want a **single `.zip`** in the **current directory**—without hand-writing **`zip`** or **`tar`** flags in the **command line** every time.
+
+### How Midnight Commander handles it
+
+There’s no **standard shortcut** in stock **MC** that means “zip exactly what I’ve selected here.” People fall back on the **command line** (**`zip`**, **`tar`**, scripts), or external tools—same tradeoff as **new file**: powerful if you know the invocations, **slower** if you just want the archive **next to** the listing.
+
+### How Oxide handles it
+
+**Ctrl+A** (with the **active panel** on a **filesystem** folder—not **inside** an open zip) opens the **archive** dialog: enter the **`.zip` file name**, **Enter** to start. Oxide packs the **current selection** (marked set, or the single **highlighted** row) into that archive and shows **progress**; the **original files stay** on disk—you’re creating a **copy** into the zip, not moving them away.
+
+![Creating a ZIP archive with Ctrl+A in Oxide](images/archive-1.gif)
+
+The clip below goes further: **open** the new archive in a panel like a folder, **copy** more files **into** it with **F5**, and use **Ctrl+N** to add a **new empty file** **inside** the archive—same patterns as on a normal directory.
+
+![ZIP panel: copy in and new file](images/archive-2.gif)
+
+## Rename, mode, and ownership together
+
+### The problem
+
+You want to fix a **file name** and adjust **Unix permissions** (and often **owner** / **group**) in one go. When those jobs live in **different** places—rename here, **chmod** elsewhere—you make **two** round-trips and it’s easy to apply **half** the change.
+
+### How Midnight Commander handles it
+
+**Rename** usually goes through **F6** **move**: you point the operation at the **same directory** and type a **new name** in the target field—powerful, but it’s still the **move** workflow. **Mode** and ownership are elsewhere: **F9** → **File** (or **Command**) → **chmod** / **chown**-style dialogs—**labels vary** by build, but it’s a **separate** trip through the **menu**.
+
+### How Oxide handles it
+
+**F2** opens **Rename / Attributes** on the **active panel**’s **filesystem** listing: one screen where you can edit the **name**, tick **permission** bits, and pick **user** and **group**. **Tab** cycles the **focus** between those areas; **Enter** applies the lot. If **several** files are **marked**, **F2** switches to **group** mode: **permissions** and **ownership** apply to **all** of them together (rename stays **single-file** only).
+
+![F2 rename and attributes in Oxide](images/attributes.gif)
+
+## Adaptive bottom menu
+
+This one’s a bit of a **fresh twist**: the **bottom row of F-key hints** isn’t carved in stone. Some actions simply **don’t apply** to whatever you’ve got highlighted—**Edit** on a **folder**, **View** on something that isn’t a normal file, **Delete** when there’s **nothing real** to remove (hello, **`..`**), **Copy**/**Move** when both panels are sitting on the **same** path. Showing them all as if they worked would be **misleading**.
+
+So Oxide **dims** what you **can’t** use right now. The layout stays familiar; you just get an honest read of what’s **on** vs **off** for this row and this panel.
+
+Here’s a quick tour in motion:
+
+![Adaptive bottom function-key row in Oxide](images/adaptive-menu.gif)
+
 ---
 
+So no—this isn’t **the** final word; it’s the **first** lap. **Oxide** is the name of the story, and everything above is still **opening scenes**: a few habits that annoyed me in the old two-panel world, and how this build tries to answer them without throwing away what worked.
 
-<!--
+There’s plenty left to tell—details you only notice after **living** in the app for a while, rough edges I keep **sanding**, and the occasional choice that looks odd until you see **why** it’s there. If any of this **clicked** with you, I’d be glad to share **more** as the thing grows.
 
-No dialog on Copy and Move, only in mouse op
-
-Space - select file group
-
-Ctrl+N also in arc
-
-Ctrl+A
-
-Ctrl+G
-
-F2
-
-Adaptive bottom menu
--->
+**To be continued.**

@@ -1,12 +1,12 @@
 # 1. Generate palette
-ffmpeg -i "./exec-delay.mov" \
+ffmpeg -i "./adaptive-menu.mov" \
 -ss 0 -t 4 \
 -vf "fps=8,scale=600:-1:flags=lanczos,palettegen=max_colors=128" \
 palette.png
 
 # 2. Create GIF
-ffmpeg -i "./exec-delay.mov" \
+ffmpeg -i "./adaptive-menu.mov" \
 -ss 0 -t 4 \
 -i palette.png \
 -filter_complex "fps=8,scale=600:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5" \
--loop 0 exec-delay.gif
+-loop 0 adaptive-menu.gif
