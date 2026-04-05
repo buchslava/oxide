@@ -168,6 +168,7 @@ pub struct PanelListPalette {
     pub zip_fg: Color,
     pub symlink_fg: Color,
     pub file_fg: Color,
+    /// `> ` and folder-diff `C ` / `S ` / `X ` in panel file lists.
     pub marked_prefix: Color,
 }
 
@@ -180,7 +181,7 @@ impl PanelListPalette {
         zip_fg: Color::Rgb(160, 120, 255),
         symlink_fg: Color::Magenta,
         file_fg: Color::White,
-        marked_prefix: Color::Yellow,
+        marked_prefix: Color::Rgb(120, 175, 255),
     };
 }
 
@@ -214,23 +215,93 @@ impl ViewerPalette {
     }
 }
 
+// --- Ctrl+D two-file diff (aligned lines, synchronized scroll) ---
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiffViewerPalette {
+    pub background: Color,
+    pub text: Color,
+    pub header_path: Color,
+    pub muted: Color,
+    pub column_border: Color,
+    /// Row on the opposite pane when the other side has no line (typically same as [`Self::background`]).
+    pub gap_bg: Color,
+    /// Text color for gap cells (usually matches `gap_bg` when padding is spaces).
+    pub gap_fg: Color,
+    pub removed_bg: Color,
+    pub removed_fg: Color,
+    pub added_bg: Color,
+    pub added_fg: Color,
+    pub changed_old_bg: Color,
+    pub changed_old_fg: Color,
+    pub changed_new_bg: Color,
+    pub changed_new_fg: Color,
+    pub line_number_fg: Color,
+    /// Intra-line removed chars (left pane, changed rows).
+    pub char_removed_bg: Color,
+    pub char_removed_fg: Color,
+    /// Intra-line inserted chars (right pane, changed rows).
+    pub char_added_bg: Color,
+    pub char_added_fg: Color,
+}
+
+impl DiffViewerPalette {
+    /// Side-by-side diff: dark canvas, **green** for modified lines (both panes), **light blue**
+    /// for lines only on one side, empty padding matches background (reference-style alignment).
+    pub const OXIDE: Self = Self {
+        background: Color::Rgb(26, 26, 30),
+        text: Color::Rgb(245, 245, 250),
+        header_path: Color::Rgb(200, 220, 255),
+        muted: Color::Rgb(130, 135, 150),
+        column_border: Color::Rgb(75, 80, 95),
+        // Same as background: opposite pane reads as empty space, not a dashed stripe.
+        gap_bg: Color::Rgb(26, 26, 30),
+        gap_fg: Color::Rgb(26, 26, 30),
+        removed_bg: Color::Rgb(72, 108, 148),
+        removed_fg: Color::Rgb(248, 250, 255),
+        added_bg: Color::Rgb(72, 108, 148),
+        added_fg: Color::Rgb(248, 250, 255),
+        changed_old_bg: Color::Rgb(42, 120, 72),
+        changed_old_fg: Color::Rgb(255, 255, 255),
+        changed_new_bg: Color::Rgb(42, 120, 72),
+        changed_new_fg: Color::Rgb(255, 255, 255),
+        line_number_fg: Color::Rgb(150, 155, 170),
+        char_removed_bg: Color::Rgb(32, 95, 58),
+        char_removed_fg: Color::Rgb(255, 255, 255),
+        char_added_bg: Color::Rgb(58, 150, 92),
+        char_added_fg: Color::Rgb(255, 255, 255),
+    };
+}
+
 // --- Toasts (ratatui widget + crossterm main-buffer overlay) ---
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToastPalette {
     pub background: Color,
     pub foreground: Color,
+    /// Warnings and errors (e.g. editor limit, settings save failure).
+    pub alert_background: Color,
+    pub alert_foreground: Color,
 }
 
 impl ToastPalette {
     pub const OXIDE: Self = Self {
         background: Color::Rgb(60, 60, 60),
         foreground: Color::Rgb(140, 200, 140),
+        alert_background: Color::Rgb(120, 28, 32),
+        alert_foreground: Color::Rgb(255, 236, 236),
     };
 
     #[inline]
     pub fn ratatui_style(self) -> Style {
         Style::default().bg(self.background).fg(self.foreground)
+    }
+
+    #[inline]
+    pub fn ratatui_style_alert(self) -> Style {
+        Style::default()
+            .bg(self.alert_background)
+            .fg(self.alert_foreground)
     }
 
     #[inline]
@@ -262,6 +333,7 @@ pub struct UiPalette {
     pub chrome: ChromePalette,
     pub panel_list: PanelListPalette,
     pub viewer: ViewerPalette,
+    pub diff_viewer: DiffViewerPalette,
     pub toast: ToastPalette,
 }
 
@@ -272,6 +344,7 @@ impl UiPalette {
         chrome: ChromePalette::OXIDE,
         panel_list: PanelListPalette::OXIDE,
         viewer: ViewerPalette::OXIDE,
+        diff_viewer: DiffViewerPalette::OXIDE,
         toast: ToastPalette::OXIDE,
     };
 }

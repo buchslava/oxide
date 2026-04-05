@@ -434,6 +434,17 @@ pub fn handle_key(
                 if c == 'o' {
                     return Some(AppAction::Suspend);
                 }
+                if c == 'h' {
+                    if let RenameAttrDialogState::Single {
+                        name_input, focus, ..
+                    } = d
+                    {
+                        if *focus == RenameAttrField::Name {
+                            *name_input = std::mem::take(name_input).backspace();
+                            return Some(AppAction::Continue);
+                        }
+                    }
+                }
             }
             if c == ' ' {
                 let is_perm = match d {

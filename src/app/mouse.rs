@@ -25,7 +25,8 @@ const NUMBERED_OPTIONS_FIRST_ROW: u16 = 2;
 /// When false, mouse must not scroll panels, click the file list, or use the bottom menu bar
 /// (dialogs and progress overlays are modal).
 fn panels_mouse_enabled(app: &AppState) -> bool {
-    app.viewer_screen.is_none()
+    app.diff_viewer_screen.is_none()
+        && app.viewer_screen.is_none()
         && app.editor_screen.is_none()
         && !app.editor_confirm_pending
         && app.copy_overwrite_dialog.is_none()
@@ -315,8 +316,10 @@ pub(crate) fn handle_mouse_event(
                         };
                         if let Some(file) = panel.get_selected_file() {
                             let name_lower = file.name.trim_end_matches('/').to_lowercase();
-                            let is_zip = name_lower.ends_with(".zip");
-                            if file.is_dir || is_zip {
+                            let is_archive = name_lower.ends_with(".zip")
+                                || name_lower.ends_with(".tar.gz")
+                                || name_lower.ends_with(".tgz");
+                            if file.is_dir || is_archive {
                                 panel.enter_directory()?;
                                 app.sync_process_cwd_to_active_panel_if_no_autosave();
                                 return Ok(Some(AppAction::PanelNavigated));
@@ -625,10 +628,8 @@ fn menu_bar_copy_or_move_confirm(
     debug_assert!(matches!(op, Operation::Copy | Operation::Move));
     let source = app.get_current_dir().to_string();
     let target = app.get_opposite_panel_dir().to_string();
-    if source == target {
-        if op == Operation::Move {
-            app.focus_command_line();
-        }
+    if source == target && op == Operation::Move {
+        app.focus_command_line();
         return None;
     }
     let (names, restore_after, restore_before) = app
@@ -640,9 +641,19 @@ fn menu_bar_copy_or_move_confirm(
         }
         return None;
     }
+    let target_names = if source == target {
+        Some(
+            names
+                .iter()
+                .map(|(n, _)| crate::core::copy_state::same_folder_copy_dest_name(n))
+                .collect(),
+        )
+    } else {
+        None
+    };
     let opposite = app.get_opposite_panel_location();
     let (target_location, target_fs_path) = match &opposite {
-        PanelLocation::Zip { .. } => (Some(opposite), None),
+        PanelLocation::Archive { .. } => (Some(opposite), None),
         PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
     };
     let params = CopyParams {
@@ -652,6 +663,7 @@ fn menu_bar_copy_or_move_confirm(
         target_location,
         target_fs_path,
         items: names,
+        target_names,
         restore_selection_after: restore_after,
         restore_selection_before: restore_before,
     };
@@ -676,6 +688,7 @@ fn menu_bar_delete_confirm(app: &mut AppState) -> Option<AppAction> {
             target_location: None,
             target_fs_path: None,
             items: names,
+            target_names: None,
             restore_selection_after: restore_after,
             restore_selection_before: restore_before,
         },

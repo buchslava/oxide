@@ -1,18 +1,45 @@
-//! Panel location: either a filesystem path or a path inside a ZIP archive.
+//! Panel location: either a filesystem path or a path inside a supported archive (ZIP, tar.gz).
 //! Used to make panel logic generic over "disk" and "archive" backends.
 
 use std::path::{Path, PathBuf};
 
-/// Current panel location: filesystem directory or virtual directory inside a ZIP.
+/// Supported archive container on disk.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ArchiveFormat {
+    Zip,
+    TarGz,
+}
+
+/// Current panel location: filesystem directory or virtual directory inside an archive.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PanelLocation {
     /// A directory on disk.
     Fs(PathBuf),
-    /// A path inside a ZIP archive. `path_inside` is stored with forward slashes, no leading slash.
-    Zip {
+    /// Path inside an archive. `path_inside` uses forward slashes, no leading slash.
+    Archive {
+        format: ArchiveFormat,
         archive: PathBuf,
         path_inside: String,
     },
+}
+
+/// Detect archive format from a file name (e.g. path's file name).
+pub fn archive_format_for_path(path: &Path) -> Option<ArchiveFormat> {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .and_then(archive_format_for_filename)
+}
+
+/// Whether `name` refers to an archive file we can open as a panel (e.g. `.zip`, `.tar.gz`).
+pub fn archive_format_for_filename(name: &str) -> Option<ArchiveFormat> {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".zip") {
+        Some(ArchiveFormat::Zip)
+    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+        Some(ArchiveFormat::TarGz)
+    } else {
+        None
+    }
 }
 
 impl PanelLocation {
@@ -24,9 +51,10 @@ impl PanelLocation {
     pub fn display_string(&self) -> String {
         match self {
             PanelLocation::Fs(p) => p.to_string_lossy().to_string(),
-            PanelLocation::Zip {
+            PanelLocation::Archive {
                 archive,
                 path_inside,
+                ..
             } => {
                 let archive_display = archive.to_string_lossy();
                 if path_inside.is_empty() {
@@ -43,24 +71,25 @@ impl PanelLocation {
         matches!(self, PanelLocation::Fs(_))
     }
 
-    /// Parent location: for Fs the parent path; for Zip either parent dir inside archive or Fs(archive dir).
+    /// Parent location: for Fs the parent path; for Archive either parent dir inside archive or Fs(archive dir).
     pub fn parent(&self) -> Option<PanelLocation> {
         match self {
             PanelLocation::Fs(p) => p.parent().map(PanelLocation::fs),
-            PanelLocation::Zip {
+            PanelLocation::Archive {
+                format,
                 archive,
                 path_inside,
             } => {
                 let trimmed = path_inside.trim_end_matches('/');
                 if trimmed.is_empty() {
-                    // Top of archive: parent is the directory containing the archive
                     archive.parent().map(PanelLocation::fs)
                 } else {
                     let parent_inside = trimmed
                         .rsplit_once('/')
                         .map(|(p, _)| p.to_string())
                         .unwrap_or_default();
-                    Some(PanelLocation::Zip {
+                    Some(PanelLocation::Archive {
+                        format: *format,
                         archive: archive.clone(),
                         path_inside: parent_inside,
                     })
@@ -69,7 +98,7 @@ impl PanelLocation {
         }
     }
 
-    /// Enter a child: directory or (when in Fs) a .zip file. Returns new location or None if not enterable.
+    /// Enter a child: directory or (when in Fs) an archive file. Returns new location or None if not enterable.
     pub fn enter(
         &self,
         name: &str,
@@ -84,20 +113,18 @@ impl PanelLocation {
                 let child = p.join(name);
                 if is_dir {
                     Some(PanelLocation::Fs(child))
+                } else if let Some(format) = archive_format_for_filename(name) {
+                    Some(PanelLocation::Archive {
+                        format,
+                        archive: child,
+                        path_inside: String::new(),
+                    })
                 } else {
-                    // Enter .zip as archive root
-                    let lower = name.to_lowercase();
-                    if lower.ends_with(".zip") {
-                        Some(PanelLocation::Zip {
-                            archive: child,
-                            path_inside: String::new(),
-                        })
-                    } else {
-                        None
-                    }
+                    None
                 }
             }
-            PanelLocation::Zip {
+            PanelLocation::Archive {
+                format,
                 archive,
                 path_inside,
             } => {
@@ -110,7 +137,8 @@ impl PanelLocation {
                 } else {
                     format!("{}/{}", prefix, name)
                 };
-                Some(PanelLocation::Zip {
+                Some(PanelLocation::Archive {
+                    format: *format,
                     archive: archive.clone(),
                     path_inside: new_inside,
                 })
@@ -122,7 +150,7 @@ impl PanelLocation {
     pub fn as_fs_path(&self) -> Option<&Path> {
         match self {
             PanelLocation::Fs(p) => Some(p.as_path()),
-            PanelLocation::Zip { .. } => None,
+            PanelLocation::Archive { .. } => None,
         }
     }
 }

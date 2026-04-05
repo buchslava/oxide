@@ -3,9 +3,13 @@ use crate::app::state::{
 };
 use crate::browser::editor;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
+use crate::browser::diff_viewer::{
+    self, clear_folder_compare_if_stale, FolderCompareState, FolderDiffTag,
+};
 use crate::browser::viewer;
 use crate::core::disk_space::disk_space_summary;
 use crate::core::file_ops::FileInfo;
+use crate::core::location::archive_format_for_filename;
 use crate::core::panel_backend;
 use crate::core::text_format::{format_byte_size, truncate_str, TruncateMode};
 use crate::dialogs::{
@@ -153,13 +157,11 @@ fn size_display(file: &FileInfo) -> String {
     }
 }
 
-fn is_zip_file(file: &FileInfo) -> bool {
-    !file.is_dir
-        && file
-            .name
-            .trim_end_matches('/')
-            .to_ascii_lowercase()
-            .ends_with(".zip")
+fn is_archive_file(file: &FileInfo) -> bool {
+    if file.is_dir {
+        return false;
+    }
+    archive_format_for_filename(file.name.trim_end_matches('/')).is_some()
 }
 
 /// Truncate file display to fit column width (chars). Prevents wrapping/uglification in double-column view.
@@ -214,6 +216,10 @@ impl Renderer {
         f: &mut Frame,
         app: &mut AppState,
     ) {
+        if app.diff_viewer_screen.is_some() {
+            diff_viewer::draw(f, app);
+            return;
+        }
         if app.viewer_screen.is_some() {
             viewer::draw(f, app);
             return;
@@ -970,7 +976,13 @@ impl Renderer {
                         .get_selected_file()
                         .map_or(false, |f| !f.is_dir && !f.is_parent_dir())
             }
-            menu_bar_key::COPY | menu_bar_key::MOVE => {
+            menu_bar_key::COPY => {
+                let (items, ..) = app
+                    .active_panel_ref()
+                    .get_names_to_copy_with_restore_neighbors();
+                !items.is_empty()
+            }
+            menu_bar_key::MOVE => {
                 let source = app.get_current_dir();
                 let target = app.get_opposite_panel_dir();
                 let (items, ..) = app
@@ -1053,6 +1065,7 @@ impl Renderer {
         f: &mut Frame,
         app: &mut AppState,
     ) {
+        clear_folder_compare_if_stale(app);
         let area = f.area();
         let c = app.ui_palette.chrome;
         let main_bg = c.main_background;
@@ -1137,6 +1150,8 @@ impl Renderer {
 
         let active_panel = app.active_panel();
         let palette = app.ui_palette;
+        // Clone avoids overlapping `&mut AppState` (panels) with `folder_compare` borrows; size is O(entries).
+        let folder_compare = app.folder_compare.clone();
         Self::draw_single_panel(
             f,
             app.left_panel_mut(),
@@ -1144,6 +1159,8 @@ impl Renderer {
             "Left Panel",
             active_panel == 0,
             &palette,
+            true,
+            folder_compare.as_ref(),
         );
         Self::draw_single_panel(
             f,
@@ -1152,6 +1169,8 @@ impl Renderer {
             "Right Panel",
             active_panel == 1,
             &palette,
+            false,
+            folder_compare.as_ref(),
         );
         // Vertical separator │ from path row through bottom bar
         let sep_style = Style::default().bg(main_bg).fg(c.column_separator);
@@ -1313,13 +1332,31 @@ impl Renderer {
         _title: &str,
         is_active_panel: bool,
         palette: &UiPalette,
+        is_left_panel: bool,
+        folder_compare: Option<&FolderCompareState>,
     ) {
         match panel.get_view_mode() {
             ViewMode::SingleColumn => {
-                Self::draw_single_column_view(f, panel, area, is_active_panel, palette)
+                Self::draw_single_column_view(
+                    f,
+                    panel,
+                    area,
+                    is_active_panel,
+                    palette,
+                    is_left_panel,
+                    folder_compare,
+                )
             }
             ViewMode::DoubleColumn => {
-                Self::draw_double_column_view(f, panel, area, is_active_panel, palette)
+                Self::draw_double_column_view(
+                    f,
+                    panel,
+                    area,
+                    is_active_panel,
+                    palette,
+                    is_left_panel,
+                    folder_compare,
+                )
             }
         }
     }
@@ -1330,6 +1367,8 @@ impl Renderer {
         area: Rect,
         is_active_panel: bool,
         palette: &UiPalette,
+        is_left_panel: bool,
+        folder_compare: Option<&FolderCompareState>,
     ) {
         // One-column view: no header row; data rows have name + size + mtime (like two-column: no redundant left padding).
         // Mark: only "> " when marked (no leading spaces when unmarked, to match two-column).
@@ -1357,8 +1396,19 @@ impl Renderer {
             let actual_index = i + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
+            let folder_tag =
+                folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
 
-            let mark_cell = if is_marked { "> " } else { "" };
+            let mark_cell = if is_marked {
+                "> "
+            } else {
+                match folder_tag {
+                    Some(FolderDiffTag::ContentDiff) => "C ",
+                    Some(FolderDiffTag::SizeDiff) => "S ",
+                    Some(FolderDiffTag::AbsentOnOther) => "X ",
+                    None => "",
+                }
+            };
             let name_display = truncate_for_width(file, name_w);
             let size_str = size_display(file);
             let mtime_str = file
@@ -1375,10 +1425,10 @@ impl Renderer {
             } else if file.is_dir {
                 let dir = base.fg(list.directory_fg).add_modifier(Modifier::BOLD);
                 (dir, base)
+            } else if is_archive_file(file) {
+                (base.fg(list.zip_fg), base)
             } else if file.is_executable {
                 (base.fg(list.executable_fg), base)
-            } else if is_zip_file(file) {
-                (base.fg(list.zip_fg), base)
             } else if file.is_symlink {
                 (base.fg(list.symlink_fg), base)
             } else {
@@ -1390,8 +1440,24 @@ impl Renderer {
                 .saturating_sub(mark_cell.len());
             let pad_after_name = " ".repeat(pad_len);
 
+            let mark_cell_style = if mark_cell.is_empty() {
+                if is_selected {
+                    mark_style
+                } else {
+                    base
+                }
+            } else {
+                Style::default()
+                    .fg(list.marked_prefix)
+                    .bg(if is_selected {
+                        list.selected_bg
+                    } else {
+                        palette.chrome.main_background
+                    })
+            };
+
             let spans = vec![
-                Span::styled(mark_cell, if is_selected { mark_style } else { base }),
+                Span::styled(mark_cell, mark_cell_style),
                 Span::styled(name_display, name_style),
                 Span::styled(pad_after_name, if is_selected { mark_style } else { base }),
                 Span::styled(
@@ -1430,6 +1496,8 @@ impl Renderer {
         area: Rect,
         is_active_panel: bool,
         palette: &UiPalette,
+        is_left_panel: bool,
+        folder_compare: Option<&FolderCompareState>,
     ) {
         let panel_height = (area.height as usize).max(1);
         let files_per_column = panel_height;
@@ -1469,6 +1537,8 @@ impl Renderer {
             let actual_index = i + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
+            let folder_tag =
+                folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
             let display = truncate_for_width(file, max_left_w);
             let line = styles::create_file_line_from_display(
                 &display,
@@ -1476,9 +1546,10 @@ impl Renderer {
                 file.is_dir,
                 file.is_symlink,
                 file.is_executable,
-                is_zip_file(file),
+                is_archive_file(file),
                 is_selected,
                 is_marked,
+                folder_tag,
             );
             let line_area = Rect {
                 x: left_col.x,
@@ -1495,6 +1566,8 @@ impl Renderer {
             let actual_index = i + left_files.len() + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
+            let folder_tag =
+                folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
             let display = truncate_for_width(file, max_right_w);
             let line = styles::create_file_line_from_display(
                 &display,
@@ -1502,9 +1575,10 @@ impl Renderer {
                 file.is_dir,
                 file.is_symlink,
                 file.is_executable,
-                is_zip_file(file),
+                is_archive_file(file),
                 is_selected,
                 is_marked,
+                folder_tag,
             );
             let line_area = Rect {
                 x: right_col.x,

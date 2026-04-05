@@ -4,7 +4,11 @@
 
 ## Overview
 
-Oxide is a terminal user interface (TUI) file manager with a dual-panel layout. The compiled binary is named **xd**.
+Oxide is a terminal user interface (TUI) file manager with a dual-panel layout. The compiled binary is named **xd**. For background on the project and technical choices, see [the intro article](doc/articles/intro.md).
+
+![Oxide](doc/articles/images/adaptive-menu.gif)
+
+> **Warning:** This is a **pilot** build. It has **not** been fully tested end-to-end, and it may contain bugs or rough edges. So far it has seen real use only from the author—mostly on **macOS**, with lighter use on **Linux**. Be careful with important files and production workflows until you are comfortable with how it behaves.
 
 ### Features
 
@@ -20,6 +24,19 @@ For Linux (Debian/Ubuntu), see [BUILD_LINUX.md](doc/BUILD_LINUX.md) for system d
 - On Unix: `libc`, `nix` (for permissions, subshell PTY)
 
 For theory on the subshell, PTY, terminals, and file descriptors, see [SHELL_PTY_TERMINAL.md](doc/SHELL_PTY_TERMINAL.md).
+
+### Alternative manifest (`Cargo.old.toml`)
+
+The default [Cargo.toml](Cargo.toml) tracks current dependency versions. If you are on **older hardware** or a **restricted toolchain** where those versions do not build or run well, use [Cargo.old.toml](Cargo.old.toml) instead: it pins **older, more conservative** dependency versions for the same crate.
+
+Replace the manifest and build as usual (keep a backup of [Cargo.toml](Cargo.toml) if you need to switch back):
+
+```bash
+cp Cargo.toml Cargo.toml.bak && cp Cargo.old.toml Cargo.toml
+cargo build --release
+```
+
+To restore the default dependency set: `cp Cargo.toml.bak Cargo.toml` (or `git checkout -- Cargo.toml` if you have not committed the swap).
 
 ### Build commands
 
@@ -91,34 +108,7 @@ xd
 
 See [FEATURES.md](doc/FEATURES.md) for key bindings and feature details.
 
-## Dependencies
-
-- `chrono` — Date/time
-- `ratatui` — TUI framework
-- `crossterm` — Terminal I/O
-- `dirs` — Home directory
-- `ratatui-code-editor` — Embedded editor
-- `libc`, `nix` — Unix-only (permissions, subshell PTY)
-
-## Cursor / AI assistant skills
-
-This repo includes [agent skills](https://github.com/sickn33/antigravity-awesome-skills) under `.cursor/skills/` for use in Cursor Chat (e.g. `@rust-pro`). They are vendored from the community collection [**antigravity-awesome-skills**](https://github.com/sickn33/antigravity-awesome-skills) (MIT).
-
-| Skill | Location | Upstream source |
-|--------|----------|-----------------|
-| **rust-pro** | `.cursor/skills/rust-pro/SKILL.md` | [`skills/rust-pro`](https://github.com/sickn33/antigravity-awesome-skills/tree/main/skills/rust-pro) |
-| **rust-async-patterns** | `.cursor/skills/rust-async-patterns/SKILL.md` | [`skills/rust-async-patterns`](https://github.com/sickn33/antigravity-awesome-skills/tree/main/skills/rust-async-patterns) (includes `resources/implementation-playbook.md`) |
-| **posix-shell-pro** | `.cursor/skills/posix-shell-pro/SKILL.md` | [`skills/posix-shell-pro`](https://github.com/sickn33/antigravity-awesome-skills/tree/main/skills/posix-shell-pro) |
-
-The upstream `posix-shell-pro` skill references a playbook file that is not shipped in that repository; this project adds `.cursor/skills/posix-shell-pro/resources/implementation-playbook.md` as a short pointer so that instruction is not a dead link.
-
-### Project-local skills
-
-Design and architecture notes maintained in-repo (YAML frontmatter for id/tags). Reference them in Chat via path or `@`-mention if your Cursor setup indexes them; you can also copy or symlink into `.cursor/skills/` for the same layout as vendored skills.
-
-| Topic | File |
-|-------|------|
-| Single Responsibility Principle (SRP) | [`skills/principles/single_responsibility.md`](skills/principles/single_responsibility.md) |
+For Rust crate dependencies and Cursor / AI assistant skills (vendored and project-local), see [DEPENDENCIES_AND_SKILLS.md](doc/DEPENDENCIES_AND_SKILLS.md).
 
 ## License
 

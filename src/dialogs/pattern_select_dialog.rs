@@ -183,6 +183,10 @@ impl PatternSelectDialogState {
                     .move_end(modifiers.contains(KeyModifiers::SHIFT));
                 (Some(self), AppAction::Continue)
             }
+            KeyCode::Char(c) if self.focus == 0 && text_input::is_ctrl_backspace(modifiers, c) => {
+                self.pattern_input = self.pattern_input.backspace();
+                (Some(self), AppAction::Continue)
+            }
             KeyCode::Char(c) if self.focus == 0 && c.is_ascii() && !c.is_control() => {
                 self.pattern_input = self.pattern_input.insert_char(c);
                 (Some(self), AppAction::Continue)

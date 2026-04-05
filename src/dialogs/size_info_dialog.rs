@@ -4,8 +4,6 @@
 
 use std::sync::mpsc;
 
-use crossterm::event::{KeyCode, KeyModifiers};
-
 use crate::app::state::AppState;
 
 /// Message from background size-calculation thread.
@@ -45,7 +43,6 @@ pub enum SizeInfoDialogState {
         dir_count: usize,
     },
 }
-use crate::app::events::AppAction;
 use crate::browser::panel::PanelOperations;
 use crate::core::file_ops::FileOperations;
 use crate::core::text_format::format_byte_size;
@@ -105,24 +102,6 @@ pub fn open(app: &mut AppState) {
 pub fn close(app: &mut AppState) {
     app.size_info_dialog = None;
     app.size_info_pending_rx = None;
-}
-
-/// Handle a key when size info is displayed. Any key (except Ctrl+O) closes and returns to attributes.
-pub fn handle_key(
-    app: &mut AppState,
-    code: KeyCode,
-    modifiers: KeyModifiers,
-) -> Option<AppAction> {
-    if app.size_info_dialog.is_none() {
-        return None;
-    }
-    if let KeyCode::Char(c) = code {
-        if modifiers.contains(KeyModifiers::CONTROL) && c == 'o' {
-            return Some(AppAction::Suspend);
-        }
-    }
-    close(app);
-    Some(AppAction::SizeInfoClose)
 }
 
 /// Format the compact line for the panel bottom bar when size info is active. None when not active.

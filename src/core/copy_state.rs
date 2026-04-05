@@ -28,6 +28,9 @@ pub struct CopyProgress {
 /// source_location: when Some, use panel_backend (handles Zip and Fs); when None, use legacy copy_ops with source_dir.
 /// target_location: when Some(Zip), copy/move into that archive at its path_inside; when None, use target_fs_path.
 /// restore_selection_after/before: after delete/move, try to select this file (after first, else before).
+///
+/// `target_names`: when set (same length as `items`), each entry is written under that name in the target
+/// (F5 same-folder clone: `foo` → `foo.copy`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopyParams {
     pub source_dir: String,
@@ -39,8 +42,30 @@ pub struct CopyParams {
     /// When Some, use this as target path for panel_backend copy/move to FS (when opposite panel is Fs).
     pub target_fs_path: Option<PathBuf>,
     pub items: Vec<(String, bool)>,
+    /// Destination names in the target dir/archive; None means same as source [`Self::items`] names.
+    pub target_names: Option<Vec<String>>,
     pub restore_selection_after: Option<String>,
     pub restore_selection_before: Option<String>,
+}
+
+impl CopyParams {
+    /// Destination file/dir name for `items[index]` (defaults to `src_name`).
+    pub fn dest_name_for_index(
+        &self,
+        index: usize,
+        src_name: &str,
+    ) -> String {
+        self.target_names
+            .as_ref()
+            .and_then(|v| v.get(index))
+            .cloned()
+            .unwrap_or_else(|| src_name.to_string())
+    }
+}
+
+/// Destination entry name when copying into the same folder (F5): `foo` / `foo/` → `foo.copy`.
+pub fn same_folder_copy_dest_name(src_name: &str) -> String {
+    format!("{}.copy", src_name.trim_end_matches('/'))
 }
 
 /// In-progress copy/move state: operation, current index, "rewrite all" / "skip all" / "ignore all errors" flags.

@@ -12,21 +12,32 @@ use crate::ui::theme::UiPalette;
 
 // --- Timed overlay (ratatui) ---
 
+/// Visual style for [`TimedToast`]: default strip vs red alert strip.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToastKind {
+    #[default]
+    Info,
+    Alert,
+}
+
 /// One-line message shown until [`Self::until`].
 #[derive(Debug, Clone)]
 pub struct TimedToast {
     pub until: Instant,
     pub message: String,
+    pub kind: ToastKind,
 }
 
 impl TimedToast {
-    pub fn new(
+    pub fn with_kind(
         duration: Duration,
         message: String,
+        kind: ToastKind,
     ) -> Self {
         Self {
             until: Instant::now() + duration,
             message,
+            kind,
         }
     }
 
@@ -60,6 +71,9 @@ pub fn draw_timed_bottom_left(
         width: w,
         height: 1,
     };
-    let style = palette.toast.ratatui_style();
+    let style = match toast.kind {
+        ToastKind::Info => palette.toast.ratatui_style(),
+        ToastKind::Alert => palette.toast.ratatui_style_alert(),
+    };
     f.render_widget(Paragraph::new(toast.message.as_str()).style(style), rect);
 }

@@ -1,7 +1,10 @@
 //! File viewer (F3): view file as text or hex dump. ESC to close.
 
 use std::io;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+
+use crate::util;
 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -12,16 +15,22 @@ use ratatui::{
 };
 
 use crate::app::state::AppState;
+use crate::core::file_ops::FileOperations;
+use crate::core::location::PanelLocation;
 use crate::ui::theme::ViewerPalette;
+
+/// Building the text line index scans the whole file; keep text mode off above this size (hex stays responsive).
+pub const MAX_TEXT_VIEW_BYTES: usize = 64 * 1024 * 1024;
 
 /// Viewer is either loading file in background (Esc still closes) or ready with content.
 pub enum ViewerState {
-    /// File is being read on a background thread; Esc closes without waiting.
+    /// File is being read on a background thread; Esc sets `cancel` and closes without waiting.
     Loading {
         file_path: String,
         rx: mpsc::Receiver<io::Result<Vec<u8>>>,
         /// When set (e.g. from Find file content search), scroll to this 1-based line when ready.
         initial_line: Option<u64>,
+        cancel: Arc<AtomicBool>,
     },
     /// Content loaded; normal view.
     Ready(ViewerScreenState),
@@ -75,6 +84,9 @@ fn hex_bytes_per_line_from_width(width: u16) -> usize {
 
 /// Close the viewer and return to panels.
 pub fn close_viewer(app: &mut AppState) {
+    if let Some(ViewerState::Loading { cancel, .. }) = app.viewer_screen.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+    }
     app.viewer_screen = None;
 }
 
@@ -88,14 +100,33 @@ pub fn open_viewer(app: &mut AppState) -> bool {
             let file_path_str = panel_backend::join_path_display(&loc, &file.name);
             let loc_clone = loc.clone();
             let name = file.name.clone();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_thread = Arc::clone(&cancel);
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
-                let _ = tx.send(panel_backend::read_file(&loc_clone, &name));
+                let result = match &loc_clone {
+                    PanelLocation::Fs(p) => {
+                        let path = FileOperations::join_path(p, &name);
+                        util::read_path_chunked(&path, &cancel_thread)
+                    }
+                    _ => {
+                        if cancel_thread.load(Ordering::Relaxed) {
+                            Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "viewer load cancelled",
+                            ))
+                        } else {
+                            panel_backend::read_file(&loc_clone, &name)
+                        }
+                    }
+                };
+                let _ = tx.send(result);
             });
             app.viewer_screen = Some(ViewerState::Loading {
                 file_path: file_path_str,
                 rx,
                 initial_line: None,
+                cancel,
             });
             return true;
         }
@@ -111,14 +142,18 @@ pub fn open_viewer_path(
 ) -> bool {
     let path_clone = path.clone();
     let file_path_str = path.display().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_thread = Arc::clone(&cancel);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(std::fs::read(&path_clone));
+        let result = util::read_path_chunked(&path_clone, &cancel_thread);
+        let _ = tx.send(result);
     });
     app.viewer_screen = Some(ViewerState::Loading {
         file_path: file_path_str,
         rx,
         initial_line: line,
+        cancel,
     });
     true
 }
@@ -144,10 +179,15 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
             let scroll = initial_line
                 .map(|l| (l as usize).saturating_sub(1))
                 .unwrap_or(0);
+            let view_mode = if content.len() > MAX_TEXT_VIEW_BYTES {
+                ViewerMode::Hex
+            } else {
+                ViewerMode::Text
+            };
             app.viewer_screen = Some(ViewerState::Ready(ViewerScreenState {
                 file_path,
                 content,
-                view_mode: ViewerMode::Text,
+                view_mode,
                 scroll,
                 hex_cursor: 0,
                 area: Rect::default(),
@@ -236,12 +276,25 @@ pub fn handle_viewer_key(
             }
             let height = visible_lines(v);
             if key.code == KeyCode::Char('h') || key.code == KeyCode::Char('H') {
-                v.view_mode = match v.view_mode {
-                    ViewerMode::Text => ViewerMode::Hex,
-                    ViewerMode::Hex => ViewerMode::Text,
-                };
-                v.scroll = 0;
-                v.hex_cursor = 0;
+                match v.view_mode {
+                    ViewerMode::Text => {
+                        v.view_mode = ViewerMode::Hex;
+                        v.scroll = 0;
+                        v.hex_cursor = 0;
+                    }
+                    ViewerMode::Hex => {
+                        if v.content.len() > MAX_TEXT_VIEW_BYTES {
+                            app.set_timed_toast_alert(
+                                std::time::Duration::from_secs(4),
+                                "Text mode needs a full-file index; use hex for files over 64 MB.",
+                            );
+                        } else {
+                            v.view_mode = ViewerMode::Text;
+                            v.scroll = 0;
+                            v.hex_cursor = 0;
+                        }
+                    }
+                }
                 return Some(AppAction::Continue);
             }
             if v.view_mode == ViewerMode::Hex && !v.content.is_empty() {
@@ -296,6 +349,59 @@ pub fn handle_viewer_key(
                 _ => {}
             }
             Some(AppAction::Continue)
+        }
+    }
+}
+
+const VIEWER_MOUSE_SCROLL_LINES: usize = 3;
+
+fn apply_viewer_scroll_wheel(
+    v: &mut ViewerScreenState,
+    delta_display_lines: isize,
+) {
+    let height = visible_lines(v);
+    if v.view_mode == ViewerMode::Hex && !v.content.is_empty() {
+        let content_rect = Rect {
+            x: 0,
+            y: 0,
+            width: v.area.width,
+            height: v.area.height.saturating_sub(2).max(1),
+        };
+        let chunks = Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
+            .split(content_rect);
+        let bpl = hex_bpl_two_columns(chunks[0].width, chunks[1].width).max(1);
+        let len = v.content.len();
+        let total_lines = (len + bpl - 1) / bpl;
+        let max_scroll = total_lines.saturating_sub(height as usize).max(0);
+        let s = v.scroll as isize + delta_display_lines;
+        v.scroll = s.clamp(0, max_scroll as isize) as usize;
+        return;
+    }
+    let total_lines = line_count(v);
+    let max_scroll = total_lines.saturating_sub(height).max(0);
+    let s = v.scroll as isize + delta_display_lines;
+    v.scroll = s.clamp(0, max_scroll as isize) as usize;
+}
+
+/// Capture mouse while the viewer is open; wheel scrolls text/hex like ↑↓ (see [`VIEWER_MOUSE_SCROLL_LINES`]).
+pub fn handle_viewer_mouse(
+    app: &mut AppState,
+    mouse_event: crossterm::event::MouseEvent,
+) -> bool {
+    use crossterm::event::MouseEventKind;
+    let Some(state) = app.viewer_screen.as_mut() else {
+        return false;
+    };
+    match state {
+        ViewerState::Loading { .. } => true,
+        ViewerState::Ready(v) => {
+            let n = VIEWER_MOUSE_SCROLL_LINES as isize;
+            match mouse_event.kind {
+                MouseEventKind::ScrollUp => apply_viewer_scroll_wheel(v, -n),
+                MouseEventKind::ScrollDown => apply_viewer_scroll_wheel(v, n),
+                _ => {}
+            }
+            true
         }
     }
 }

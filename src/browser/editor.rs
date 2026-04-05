@@ -5,9 +5,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 use ratatui_code_editor::editor::Editor;
@@ -16,16 +16,42 @@ use ratatui_code_editor::theme::vesper;
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use crate::app::events::AppAction;
 use crate::app::state::{AppState, Focus};
 use crate::browser::panel::PanelOperations;
+use crate::util;
+use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{join_path_display, read_file, write_file};
-use crate::ui::theme::DialogPalette;
+use crate::core::text_format::format_byte_size;
+use crate::core::file_ops::FileInfo;
+use crate::ui::theme::{DialogPalette, ViewerPalette};
 use crate::ui::toast::{self, TimedToast};
 use crate::util::compute_panel_height;
+
+/// Match [`ratatui_code_editor`] render: `digits.max(5) + 2` columns for the line-number gutter.
+fn editor_gutter_width(editor: &Editor, area_width: u16) -> u16 {
+    let total_lines = editor.code_ref().len_lines().max(1);
+    let digits = total_lines.to_string().len().max(5);
+    let w = (digits + 2) as u16;
+    w.min(area_width)
+}
+
+/// Slightly lighter than the main editor canvas so the gutter reads as a separate strip.
+fn editor_gutter_background(main_bg: Color) -> Color {
+    match main_bg {
+        Color::Rgb(r, g, b) => Color::Rgb(
+            r.saturating_add(10),
+            g.saturating_add(10),
+            b.saturating_add(12),
+        ),
+        _ => Color::Rgb(42, 42, 48),
+    }
+}
 
 /// State when the embedded code editor is open (F4).
 pub struct EditorScreenState {
@@ -47,6 +73,42 @@ pub struct EditorScreenState {
     pub edit_name: Option<String>,
     /// True when the file bytes were not valid UTF-8 at open; F2 saves as `name.text` to avoid overwriting binary.
     pub opened_with_invalid_utf8: bool,
+}
+
+/// Files above this size show a warning before load; loading runs in a background thread (Esc cancels).
+pub const EDITOR_LARGE_FILE_WARN_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Hard cap for the embedded editor: [`Editor::new`] runs on the UI thread and the type is not `Send`,
+/// so larger files would freeze the app (Esc cannot run until decoding finishes). Refuse before/after read.
+pub const EDITOR_MAX_EMBEDDED_BYTES: u64 = 128 * 1024 * 1024;
+
+/// How to read the file when finishing a background load (same as open path).
+#[derive(Debug, Clone)]
+pub enum EditorOpenSpec {
+    Fs { path: PathBuf },
+    Archive { loc: PanelLocation, name: String },
+}
+
+/// F4 UI: warning for huge files, loading with cancel, or the actual editor.
+pub enum EditorViewState {
+    WarnLargeFile {
+        file_path: String,
+        size_bytes: u64,
+        spec: EditorOpenSpec,
+    },
+    Loading {
+        file_path: String,
+        rx: mpsc::Receiver<io::Result<Vec<u8>>>,
+        cancel: Arc<AtomicBool>,
+        spec: EditorOpenSpec,
+    },
+    /// Raw bytes received from worker; [`Editor::new`] not run yet so Esc can cancel before that freeze.
+    BytesLoaded {
+        file_path: String,
+        bytes: Vec<u8>,
+        spec: EditorOpenSpec,
+    },
+    Ready(EditorScreenState),
 }
 
 /// User choice in the "Save changes?" dialog when exiting editor with unsaved changes.
@@ -83,13 +145,180 @@ fn get_lang_from_path(path: &str) -> &'static str {
     }
 }
 
+fn editor_too_large_toast(app: &mut AppState) {
+    app.set_timed_toast_alert(
+        Duration::from_secs(8),
+        format!(
+            "Embedded editor limit is {} (buffer built on UI thread). Use an external editor for larger files.",
+            format_byte_size(EDITOR_MAX_EMBEDDED_BYTES),
+        ),
+    );
+}
+
+fn editor_source_size(
+    loc: &PanelLocation,
+    file: &FileInfo,
+) -> io::Result<u64> {
+    match loc {
+        PanelLocation::Fs(p) => {
+            let path = FileOperations::join_path(p, &file.name);
+            Ok(std::fs::metadata(&path)?.len())
+        }
+        PanelLocation::Archive { .. } => Ok(file.size),
+    }
+}
+
+fn editor_ready_from_bytes(
+    file_path: String,
+    bytes: Vec<u8>,
+    spec: EditorOpenSpec,
+) -> EditorScreenState {
+    let opened_with_invalid_utf8 = std::str::from_utf8(&bytes).is_err();
+    let content = String::from_utf8_lossy(&bytes).into_owned();
+    let lang = get_lang_from_path(&file_path);
+    let theme = vesper();
+    let editor = Editor::new(lang, &content, theme);
+    let (edit_location, edit_name) = match spec {
+        EditorOpenSpec::Fs { .. } => (None, None),
+        EditorOpenSpec::Archive { loc, name } => (Some(loc), Some(name)),
+    };
+    EditorScreenState {
+        file_path,
+        initial_content: content,
+        editor,
+        area: Rect::default(),
+        search_query: None,
+        search_query_cursor: 0,
+        selection_extend_mode: false,
+        edit_location,
+        edit_name,
+        opened_with_invalid_utf8,
+    }
+}
+
+fn start_editor_loading(
+    app: &mut AppState,
+    file_path: String,
+    spec: EditorOpenSpec,
+) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_t = Arc::clone(&cancel);
+    let (tx, rx) = mpsc::channel();
+    let spec_thread = spec.clone();
+    std::thread::spawn(move || {
+        let result = match spec_thread {
+                EditorOpenSpec::Fs { path } => util::read_path_chunked(&path, &cancel_t),
+            EditorOpenSpec::Archive { loc, name } => {
+                if cancel_t.load(Ordering::Relaxed) {
+                    Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "editor load cancelled",
+                    ))
+                } else {
+                    read_file(&loc, &name)
+                }
+            }
+        };
+        let _ = tx.send(result);
+    });
+    app.editor_screen = Some(EditorViewState::Loading {
+        file_path,
+        rx,
+        cancel,
+        spec,
+    });
+}
+
+fn cancel_editor_background(app: &mut AppState) {
+    if let Some(EditorViewState::Loading { cancel, .. }) = app.editor_screen.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Poll background editor file read (bytes only — does **not** call [`Editor::new`], so the UI stays responsive).
+/// Call **before** [`EventHandler::handle_events`] so Esc can clear [`EditorViewState::BytesLoaded`] before
+/// [`finish_editor_pending_decode`] runs. See [`finish_editor_pending_decode`].
+pub fn poll_editor_loading(app: &mut AppState) -> bool {
+    let rx = match &mut app.editor_screen {
+        Some(EditorViewState::Loading { rx, .. }) => rx,
+        _ => return false,
+    };
+    match rx.try_recv() {
+        Ok(Ok(bytes)) => {
+            let (file_path, spec) = match std::mem::take(&mut app.editor_screen) {
+                Some(EditorViewState::Loading {
+                    file_path,
+                    spec,
+                    ..
+                }) => (file_path, spec),
+                _ => return false,
+            };
+            app.editor_screen = Some(EditorViewState::BytesLoaded {
+                file_path,
+                bytes,
+                spec,
+            });
+            app.editor_confirm_pending = false;
+            app.clear_timed_toast();
+            true
+        }
+        Ok(Err(_)) => {
+            app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = Focus::FindDialog;
+            }
+            true
+        }
+        Err(mpsc::TryRecvError::Empty) => false,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = Focus::FindDialog;
+            }
+            true
+        }
+    }
+}
+
+/// After input is processed, build [`Editor`] from pending bytes. Can block for large (but capped) files; must run **after** Esc handling.
+pub fn finish_editor_pending_decode(app: &mut AppState) -> bool {
+    let (file_path, bytes, spec) = match app.editor_screen.take() {
+        Some(EditorViewState::BytesLoaded {
+            file_path,
+            bytes,
+            spec,
+        }) => (file_path, bytes, spec),
+        other => {
+            // Must restore: `take()` already ran; dropping Ready/Warn/Loading would clear the editor.
+            app.editor_screen = other;
+            return false;
+        }
+    };
+    if bytes.len() as u64 > EDITOR_MAX_EMBEDDED_BYTES {
+        drop(bytes);
+        editor_too_large_toast(app);
+        if app.find_dialog.is_some() {
+            app.focus = Focus::FindDialog;
+        }
+        return true;
+    }
+    let ready = editor_ready_from_bytes(file_path, bytes, spec);
+    app.editor_screen = Some(EditorViewState::Ready(ready));
+    app.editor_confirm_pending = false;
+    app.clear_timed_toast();
+    true
+}
+
 /// Paste the given text as-is at the editor cursor (same as Ctrl+V). Replaces selection if any.
 /// Returns Some(Continue) when the editor is open and paste was applied (or text was empty); None when not in editor.
 pub fn paste_text_as_is(
     app: &mut AppState,
     text: &str,
 ) -> Option<AppAction> {
-    let ed = app.editor_screen.as_mut()?;
+    let ed = match app.editor_screen.as_mut()? {
+        EditorViewState::Ready(ed) => ed,
+        _ => return None,
+    };
     if text.is_empty() {
         return Some(AppAction::Continue);
     }
@@ -124,6 +353,34 @@ pub fn open_editor(app: &mut AppState) -> bool {
     let loc = app.get_current_location();
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
+            let file_path_str = join_path_display(&loc, &file.name);
+            let spec = match &loc {
+                PanelLocation::Fs(p) => EditorOpenSpec::Fs {
+                    path: FileOperations::join_path(p, &file.name),
+                },
+                PanelLocation::Archive { .. } => EditorOpenSpec::Archive {
+                    loc: loc.clone(),
+                    name: file.name.clone(),
+                },
+            };
+            let size = match editor_source_size(&loc, file) {
+                Ok(s) => s,
+                Err(_) => return false,
+            };
+            if size > EDITOR_MAX_EMBEDDED_BYTES {
+                editor_too_large_toast(app);
+                return false;
+            }
+            if size > EDITOR_LARGE_FILE_WARN_BYTES {
+                app.editor_screen = Some(EditorViewState::WarnLargeFile {
+                    file_path: file_path_str,
+                    size_bytes: size,
+                    spec,
+                });
+                app.editor_confirm_pending = false;
+                app.clear_timed_toast();
+                return true;
+            }
             let (content, opened_with_invalid_utf8) = match read_file(&loc, &file.name) {
                 Ok(bytes) => (
                     String::from_utf8_lossy(&bytes).into_owned(),
@@ -131,15 +388,14 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 ),
                 Err(_) => return false,
             };
-            let file_path_str = join_path_display(&loc, &file.name);
             let lang = get_lang_from_path(&file_path_str);
             let theme = vesper();
             let editor = Editor::new(lang, &content, theme);
             let (edit_location, edit_name) = match &loc {
-                PanelLocation::Zip { .. } => (Some(loc), Some(file.name.clone())),
+                PanelLocation::Archive { .. } => (Some(loc.clone()), Some(file.name.clone())),
                 PanelLocation::Fs(_) => (None, None),
             };
-            app.editor_screen = Some(EditorScreenState {
+            app.editor_screen = Some(EditorViewState::Ready(EditorScreenState {
                 file_path: file_path_str,
                 initial_content: content,
                 editor,
@@ -150,7 +406,7 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 edit_location,
                 edit_name,
                 opened_with_invalid_utf8,
-            });
+            }));
             app.editor_confirm_pending = false;
             app.clear_timed_toast();
             return true;
@@ -168,6 +424,24 @@ pub fn open_editor_path(
         return false;
     }
     let file_path_str = path.display().to_string();
+    let size = match std::fs::metadata(&path) {
+        Ok(m) => m.len(),
+        Err(_) => return false,
+    };
+    if size > EDITOR_MAX_EMBEDDED_BYTES {
+        editor_too_large_toast(app);
+        return false;
+    }
+    if size > EDITOR_LARGE_FILE_WARN_BYTES {
+        app.editor_screen = Some(EditorViewState::WarnLargeFile {
+            file_path: file_path_str,
+            size_bytes: size,
+            spec: EditorOpenSpec::Fs { path },
+        });
+        app.editor_confirm_pending = false;
+        app.clear_timed_toast();
+        return true;
+    }
     let (content, opened_with_invalid_utf8) = match std::fs::read(&path) {
         Ok(bytes) => (
             String::from_utf8_lossy(&bytes).into_owned(),
@@ -178,7 +452,7 @@ pub fn open_editor_path(
     let lang = get_lang_from_path(&file_path_str);
     let theme = vesper();
     let editor = Editor::new(lang, &content, theme);
-    app.editor_screen = Some(EditorScreenState {
+    app.editor_screen = Some(EditorViewState::Ready(EditorScreenState {
         file_path: file_path_str,
         initial_content: content,
         editor,
@@ -189,7 +463,7 @@ pub fn open_editor_path(
         edit_location: None,
         edit_name: None,
         opened_with_invalid_utf8,
-    });
+    }));
     app.editor_confirm_pending = false;
     app.clear_timed_toast();
     true
@@ -246,7 +520,68 @@ pub fn handle_editor_key(
     app: &mut AppState,
     key: KeyEvent,
 ) -> Option<AppAction> {
-    let ed = app.editor_screen.as_mut()?;
+    if matches!(
+        app.editor_screen,
+        Some(EditorViewState::WarnLargeFile { .. })
+    ) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('\x1b') => {
+                app.editor_screen = None;
+                if app.find_dialog.is_some() {
+                    app.focus = Focus::FindDialog;
+                }
+                return Some(AppAction::Continue);
+            }
+            KeyCode::Enter => {
+                let (file_path, spec, size_bytes) = match app.editor_screen.take() {
+                    Some(EditorViewState::WarnLargeFile {
+                        file_path,
+                        spec,
+                        size_bytes,
+                    }) => (file_path, spec, size_bytes),
+                    _ => return Some(AppAction::Continue),
+                };
+                if size_bytes > EDITOR_MAX_EMBEDDED_BYTES {
+                    editor_too_large_toast(app);
+                    if app.find_dialog.is_some() {
+                        app.focus = Focus::FindDialog;
+                    }
+                    return Some(AppAction::Continue);
+                }
+                start_editor_loading(app, file_path, spec);
+                return Some(AppAction::Continue);
+            }
+            _ => return Some(AppAction::Continue),
+        }
+    }
+    if matches!(app.editor_screen, Some(EditorViewState::Loading { .. })) {
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
+            cancel_editor_background(app);
+            app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = Focus::FindDialog;
+            }
+            return Some(AppAction::Continue);
+        }
+        return Some(AppAction::Continue);
+    }
+    if matches!(
+        app.editor_screen,
+        Some(EditorViewState::BytesLoaded { .. })
+    ) {
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
+            app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = Focus::FindDialog;
+            }
+            return Some(AppAction::Continue);
+        }
+        return Some(AppAction::Continue);
+    }
+    let ed = match app.editor_screen.as_mut()? {
+        EditorViewState::Ready(ed) => ed,
+        _ => return None,
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     #[cfg(target_os = "macos")]
     let cmd_like =
@@ -613,7 +948,7 @@ pub fn handle_editor_key(
 }
 
 /// Handle mouse when embedded editor is open. Returns true if handled.
-/// Clicks on the bottom (hint) row are not passed to the editor so the cursor cannot move there.
+/// Clicks on the top (file path) or bottom (hint) row are not passed to the editor.
 pub fn handle_editor_mouse(
     app: &mut AppState,
     mouse_event: crossterm::event::MouseEvent,
@@ -621,15 +956,20 @@ pub fn handle_editor_mouse(
     if app.editor_confirm_pending {
         return false;
     }
-    if let Some(ref mut ed) = app.editor_screen {
-        let hint_row = ed.area.y + ed.area.height;
-        if mouse_event.row >= hint_row {
-            return true;
+    match app.editor_screen {
+        Some(EditorViewState::Ready(ref mut ed)) => {
+            let hint_row = ed.area.y + ed.area.height;
+            if mouse_event.row < ed.area.y || mouse_event.row >= hint_row {
+                return true;
+            }
+            let _ = ed.editor.mouse(mouse_event, &ed.area);
+            true
         }
-        let _ = ed.editor.mouse(mouse_event, &ed.area);
-        return true;
+        Some(EditorViewState::WarnLargeFile { .. })
+        | Some(EditorViewState::Loading { .. })
+        | Some(EditorViewState::BytesLoaded { .. }) => true,
+        None => false,
     }
-    false
 }
 
 /// Display name for save confirmation toast (zip entry name or file basename).
@@ -696,7 +1036,7 @@ fn write_editor_buffer(
 
 /// F2 save: write content to file and update initial_content. Works for FS and files inside ZIP.
 pub fn save(app: &mut AppState) {
-    if let Some(ref mut ed) = app.editor_screen {
+    if let Some(EditorViewState::Ready(ref mut ed)) = app.editor_screen {
         let content = ed.editor.get_content();
         match write_editor_buffer(ed, content.as_bytes()) {
             Err(e) => eprintln!("Save failed: {}", e),
@@ -723,12 +1063,8 @@ pub fn save(app: &mut AppState) {
     }
 }
 
-fn panel_height() -> usize {
-    compute_panel_height()
-}
-
 fn refresh_panels_after_editor_close(app: &mut AppState) {
-    let panel_height = panel_height();
+    let panel_height = compute_panel_height();
     let selected_name = app
         .active_panel_mut()
         .get_selected_file()
@@ -762,6 +1098,7 @@ fn refresh_panels_after_editor_close(app: &mut AppState) {
 
 /// ESC with no unsaved changes: close editor and refresh panels.
 pub fn close(app: &mut AppState) {
+    cancel_editor_background(app);
     app.editor_screen = None;
     app.editor_confirm_pending = false;
     app.clear_timed_toast();
@@ -779,7 +1116,7 @@ pub fn apply_confirm_choice(
     app.editor_confirm_pending = false;
     match choice {
         EditorConfirmChoice::Save => {
-            if let Some(ref mut ed) = app.editor_screen {
+            if let Some(EditorViewState::Ready(ref mut ed)) = app.editor_screen {
                 let content = ed.editor.get_content();
                 if let Err(e) = write_editor_buffer(ed, content.as_bytes()) {
                     eprintln!("Save failed: {}", e);
@@ -795,6 +1132,7 @@ pub fn apply_confirm_choice(
             refresh_panels_after_editor_close(app);
         }
         EditorConfirmChoice::Discard => {
+            cancel_editor_background(app);
             app.editor_screen = None;
             app.clear_timed_toast();
             if app.find_dialog.is_some() {
@@ -806,33 +1144,165 @@ pub fn apply_confirm_choice(
     }
 }
 
+fn draw_editor_warn_or_loading(
+    f: &mut Frame,
+    app: &AppState,
+    file_path: &str,
+    size_for_warning: Option<u64>,
+    preparing_editor: bool,
+) {
+    let area = f.area();
+    let vp: ViewerPalette = app.ui_palette.viewer;
+    let content_style = Style::default().bg(vp.background).fg(vp.text);
+    let header_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    let content_rect = Rect {
+        x: area.x,
+        y: area.y + 1,
+        width: area.width,
+        height: area.height.saturating_sub(2),
+    };
+    let bottom_rect = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(1),
+        width: area.width,
+        height: 1,
+    };
+    let subtitle = if size_for_warning.is_some() {
+        "Large file"
+    } else if preparing_editor {
+        "Preparing editor"
+    } else {
+        "Loading…"
+    };
+    let header = Line::from(vec![
+        Span::styled(file_path, Style::default().fg(vp.header_path)),
+        Span::raw("  "),
+        Span::styled(subtitle, Style::default().fg(vp.muted)),
+    ]);
+    f.render_widget(Paragraph::new(header).style(content_style), header_rect);
+    let msg: String = if let Some(sz) = size_for_warning {
+        format!(
+            "Size {}. Embedded editor loads the full file into memory (max {}).\n\nEnter: continue  Esc: cancel",
+            format_byte_size(sz),
+            format_byte_size(EDITOR_MAX_EMBEDDED_BYTES),
+        )
+    } else if preparing_editor {
+        "File read finished. Next step builds the editor buffer (very large files may take a while).\n\nEsc: cancel — return to panels without opening".to_string()
+    } else {
+        "Reading file in background — Esc to cancel".to_string()
+    };
+    f.render_widget(
+        Paragraph::new(msg)
+            .style(content_style)
+            .wrap(Wrap { trim: true }),
+        content_rect,
+    );
+    let bottom_text = if size_for_warning.is_some() {
+        " Enter: load file  Esc: cancel "
+    } else {
+        " Esc: cancel "
+    };
+    f.render_widget(
+        Paragraph::new(bottom_text).style(content_style.fg(vp.muted)),
+        bottom_rect,
+    );
+}
+
 /// Draw the embedded editor and, if editor_confirm_pending, the "Save changes?" dialog.
-/// The bottom row is reserved for the hint; the editor content area excludes it so the cursor
-/// cannot reach that line.
+/// The top row shows the file path (same style as F3 viewer); the bottom row is the hint.
+/// The editor content area excludes both so the cursor cannot reach those lines.
 pub fn draw(
     f: &mut Frame,
     app: &mut AppState,
 ) {
     TimedToast::clear_if_expired(&mut app.timed_toast);
-    if let Some(ref mut ed) = app.editor_screen {
+    match app.editor_screen {
+        Some(EditorViewState::WarnLargeFile {
+            ref file_path,
+            size_bytes,
+            ..
+        }) => {
+            draw_editor_warn_or_loading(f, app, file_path, Some(size_bytes), false);
+            return;
+        }
+        Some(EditorViewState::Loading {
+            ref file_path, ..
+        }) => {
+            draw_editor_warn_or_loading(f, app, file_path, None, false);
+            return;
+        }
+        Some(EditorViewState::BytesLoaded {
+            ref file_path, ..
+        }) => {
+            draw_editor_warn_or_loading(f, app, file_path, None, true);
+            return;
+        }
+        None => return,
+        _ => {}
+    }
+    if let Some(EditorViewState::Ready(ref mut ed)) = app.editor_screen {
         let area = f.area();
-        let content_height = area.height.saturating_sub(1);
+        let vp: ViewerPalette = app.ui_palette.viewer;
+        let header_height = 1u16;
+        let bottom_height = 1u16;
+        let content_height = area.height.saturating_sub(header_height + bottom_height);
         ed.area = Rect {
             x: area.x,
-            y: area.y,
+            y: area.y + header_height,
             width: area.width,
             height: content_height,
         };
         let main_bg = app.ui_palette.chrome.main_background;
         f.render_widget(Block::default().style(Style::default().bg(main_bg)), area);
+
+        let header_rect = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: header_height,
+        };
+        let header_fill = Style::default().bg(vp.background).fg(vp.text);
+        let total_lines = ed.editor.code_ref().len_lines();
+        let right_info = format!("EDIT | {} lines", total_lines);
+        let path_span = ed.file_path.as_str();
+        let pad_len = (header_rect.width as usize)
+            .saturating_sub(path_span.len() + right_info.len())
+            .max(1);
+        let header_line = Line::from(vec![
+            Span::styled(path_span, Style::default().fg(vp.header_path)),
+            Span::raw(" ".repeat(pad_len)),
+            Span::styled(right_info, Style::default().fg(vp.muted)),
+        ]);
+        f.render_widget(
+            Paragraph::new(header_line).style(header_fill),
+            header_rect,
+        );
+
         f.render_widget(&ed.editor, ed.area);
+        let gutter_w = editor_gutter_width(&ed.editor, ed.area.width);
+        if gutter_w > 0 {
+            let gutter_bg = editor_gutter_background(main_bg);
+            let buf = f.buffer_mut();
+            for row in 0..ed.area.height {
+                let py = ed.area.y + row;
+                for col in 0..gutter_w {
+                    let px = ed.area.x + col;
+                    buf[(px, py)].set_bg(gutter_bg);
+                }
+            }
+        }
         if let Some((cx, cy)) = ed.editor.get_visible_cursor(&ed.area) {
             f.set_cursor_position((cx, cy));
         }
-        if area.height > 0 {
+        if area.height > bottom_height {
             let hint =
                 " F3: start/stop selection | ←→↑↓ extend | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
-            let row = area.bottom().saturating_sub(1);
+            let row = area.bottom().saturating_sub(bottom_height);
             let w = hint.chars().count().min(area.width as usize) as u16;
             let r = Rect {
                 x: area.x,
@@ -842,7 +1312,7 @@ pub fn draw(
             };
             f.render_widget(
                 Paragraph::new(hint)
-                    .style(Style::default().bg(main_bg).fg(app.ui_palette.viewer.muted)),
+                    .style(Style::default().bg(main_bg).fg(vp.muted)),
                 r,
             );
         }

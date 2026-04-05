@@ -7,4 +7,6 @@
 
 mod palette;
 
-pub use palette::{DialogPalette, PanelListPalette, ThemeId, UiPalette, ViewerPalette};
+pub use palette::{
+    DialogPalette, DiffViewerPalette, PanelListPalette, ThemeId, UiPalette, ViewerPalette,
+};

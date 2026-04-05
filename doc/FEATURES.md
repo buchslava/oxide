@@ -3,18 +3,21 @@
 ## Features
 
 - **Two-panel layout** — Single- or double-column view modes
+- **Resilient refresh** — **Ctrl+R** and other refreshes re-read the current listing. If the folder you are in was removed (for example deleted from the other panel or from a subshell), the panel moves to the nearest existing parent directory instead of failing with a missing-path error. The same applies if an archive file opened as a virtual folder was deleted on disk.
 - **Full keyboard navigation** — Arrow keys, Tab, Enter, F-keys
 - **File operations** — Copy, move, delete with overwrite and error handling
-- **Safe delete (F9 → General)** — When **on** (default), **F8** delete moves filesystem files and folders to the **OS trash** where supported (macOS; Linux when a standard trash location is writable). When **off**, or when trash is not available on the platform, delete is **permanent**. Deleting entries inside a **ZIP** panel still removes them from the archive only (not the system trash). Stored in `~/.oxide/settings.json`.
-- **Viewer (F3)** — Text and hex modes, scroll. Large files are read in a background thread so Esc closes immediately; a "Loading…" screen is shown until the read completes. In text mode, binary and non-printable characters are shown as `.` to avoid terminal corruption
-- **Embedded editor (F4)** — Syntax highlighting, Ctrl+F search, save/discard
+- **Archives** — Browse **`.zip`**, **`.tar.gz`**, and **`.tgz`** as virtual folders (same operations as on disk where supported). **Ctrl+A** creates an archive; use a **`.zip`** or **`.tar.gz`** / **`.tgz`** file name to pick the format
+- **Safe delete (F9 → General)** — When **on** (default), **F8** delete moves filesystem files and folders to the **OS trash** where supported (macOS; Linux when a standard trash location is writable). When **off**, or when trash is not available on the platform, delete is **permanent**. Deleting entries inside a **ZIP** or **tar.gz** panel still removes them from the archive only (not the system trash). Stored in `~/.oxide/settings.json`.
+- **Viewer (F3)** — Text and hex modes; scroll with **↑↓**, **PgUp/PgDn**, and **mouse wheel**. Large files are read in a background thread so Esc closes immediately; a "Loading…" screen is shown until the read completes. In text mode, binary and non-printable characters are shown as `.` to avoid terminal corruption
+- **Compare files (Ctrl+D)** — Mark **exactly two** non-directory files with **Space** (they can be on one panel or split across left and right). Opens a full-screen **side-by-side diff**: line numbers in each gutter, patience line diff, synchronized scrolling, wrapped long lines, and **intra-line** highlights on changed lines (insert/delete runs). **↑↓**, **PgUp/PgDn**, **Home**/**End**, and **mouse wheel** scroll; **Esc** closes. Reads both files in the background (like F3). If the mark count is not two, a short **toast** explains what to do. Works on normal directories and inside **ZIP** / **tar.gz** panels (same read path as the viewer)
+- **Embedded editor (F4)** — Syntax highlighting, Ctrl+F search, save/discard; **mouse wheel** scrolls in the editor surface
 - **Create directory (F7)**
 - **Rename / Attributes (F2)** — Change name, permissions, owner/group (Unix)
 - **Size info (Ctrl+G)** — Total size of selected files/folders shown in the panel bottom bar. Requires at least one selected item. Shows progress during calculation, then final total. Any key or mouse click dismisses (Ctrl+O spawns shell instead).
 - **Hidden files (Ctrl+H)** — Shown by default; Ctrl+H toggles visibility in both panels
 - **Shell relay (Ctrl+O)** — Spawn subshell, run commands, return to panels
 - **Command line** — Run shell commands; F12 inserts the current (selected) file name at the cursor without running (Enter runs the command)
-- **Mouse support** — Clicks, scroll
+- **Mouse support** — Clicks and wheel on the panels; when **F3**, **F4**, or **Ctrl+D diff** is open, the wheel scrolls that view instead of the file list
 - **Disk space display** — Shows usage on Unix
 - **Find file (Ctrl+F)** — Search under a start directory by file name pattern (and optional text-in-file). **File pattern mode** (wildcards vs regex) is set in **F9 → General**. **Wildcards:** `*` and `?`; use **`|`** to give several alternative globs in one field (e.g. `Screenshot*|*.zip|file*`). **`|`** is only split into multiple globs in wildcard mode — in **regex** mode, `|` is normal regex alternation. **Ignore pattern** (optional) uses the same wildcard/regex rules as the file pattern, but is matched against the **path relative to the start directory** (forward slashes); if it matches, that hit is skipped. Example: file pattern `*.zip`, ignore `*node_modules*` finds zip files but not under any `node_modules` segment.
 
@@ -66,6 +69,7 @@ When focus is on the command line (e.g. after typing a character or F6):
 | Ctrl+O | Shell |
 | Ctrl+R | Refresh |
 | Ctrl+T | View mode |
+| Ctrl+D | Compare two marked files (full-screen diff viewer) |
 | Type char | Focus command line and insert character |
 | Tab/Esc | Panel focus |
 
@@ -91,6 +95,7 @@ While the dialog is open: **Tab / ↑↓** move between fields and options; **En
 | Ctrl+C/V | Copy/Paste |
 | F2 | Save |
 | Ctrl+F | Find |
+| Mouse wheel | Scroll |
 | Esc | Exit |
 
 ### Viewer (F3)
@@ -99,6 +104,21 @@ While the dialog is open: **Tab / ↑↓** move between fields and options; **En
 |------|--------|
 | H | Hex/text toggle |
 | ↑↓ PgUp/PgDn | Scroll |
+| Home / End | Jump to start / end of file |
+| Mouse wheel | Scroll |
 | Esc | Close |
 
 In text mode, control and binary characters are displayed as `.` (same convention as the hex dump ASCII column) so the terminal is not corrupted.
+
+### Diff viewer (Ctrl+D)
+
+Requires **exactly two marked** non-directory files (**Space**). Stable order: marks on the **left** panel first (by list index), then the **right** panel—so one file per panel compares as left vs right.
+
+| Keys | Action |
+|------|--------|
+| ↑↓ PgUp/PgDn | Scroll (both sides stay aligned) |
+| Home / End | Top / bottom of diff |
+| Mouse wheel | Scroll |
+| Esc | Close |
+
+Side-by-side columns show **old** (first marked file) and **new** (second). Insert-only and delete-only rows pad the opposite column so rows line up. **Changed** lines use a character-level diff for finer highlighting on top of the line-level colors.

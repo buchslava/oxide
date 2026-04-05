@@ -1,4 +1,5 @@
-//! F9 "Settings" dialog. Two-column: section list (General, Left panel, Right panel, Info) and content. Esc or click outside closes.
+//! F9 "Settings" dialog. Two-column: section list (General, Left panel, Right panel, Info) and details.
+//! Tab / Shift+Tab switch focus between columns; Esc or click outside closes.
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
@@ -92,36 +93,9 @@ pub fn handle_key(
         KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'o' => {
             return Some(AppAction::Suspend);
         }
-        KeyCode::Left => {
-            // Switch to left column (section list)
-            if !state.focus_left {
-                state.focus_left = true;
-                state.content_focus = 0;
-            }
-            return Some(AppAction::Continue);
-        }
-        KeyCode::Right => {
-            // Switch to right column (options)
-            if state.focus_left {
-                state.focus_left = false;
-            }
-            return Some(AppAction::Continue);
-        }
-        KeyCode::Tab => {
-            if state.focus_left {
-                state.focus_left = false;
-            } else if state.selected_section == 0 {
-                state.content_focus = (state.content_focus + 1) % 6;
-            } else if state.selected_section == 1 || state.selected_section == 2 {
-                state.content_focus = (state.content_focus + 1) % 4;
-            }
-            return Some(AppAction::Continue);
-        }
-        KeyCode::BackTab => {
-            if !state.focus_left {
-                state.focus_left = true;
-                state.content_focus = 0;
-            }
+        KeyCode::Tab | KeyCode::BackTab => {
+            // Only Tab / Shift+Tab switch between the sections list (left) and details (right).
+            state.focus_left = !state.focus_left;
             return Some(AppAction::Continue);
         }
         KeyCode::Up => {
@@ -134,7 +108,7 @@ pub fn handle_key(
             // Right column: Up = previous item or move focus up
             match state.selected_section {
                 0 => {
-                    state.content_focus = (state.content_focus + 1) % 6;
+                    state.content_focus = (state.content_focus + 6 - 1) % 6;
                 }
                 1 => {
                     if state.content_focus == 1 {
@@ -205,7 +179,6 @@ pub fn handle_key(
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
             if state.focus_left {
-                state.focus_left = false;
                 return Some(AppAction::Continue);
             }
             let action = match state.selected_section {
@@ -316,31 +289,66 @@ pub fn draw(
     let left_area = chunks[0];
     let right_area = chunks[1];
 
+    let accent = d.accent;
+    let muted = d.text_muted;
+    let left_block = Block::default()
+        .borders(Borders::ALL)
+        .title(if state.focus_left {
+            Line::from(Span::styled(
+                " Sections ",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ))
+        } else {
+            Line::from(Span::styled(" Sections ", Style::default().fg(muted)))
+        })
+        .border_style(Style::default().fg(if state.focus_left {
+            accent
+        } else {
+            muted
+        }))
+        .style(Style::default().bg(d.dialog_bg));
+
+    let right_block = Block::default()
+        .borders(Borders::ALL)
+        .title(if !state.focus_left {
+            Line::from(Span::styled(
+                " Details ",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ))
+        } else {
+            Line::from(Span::styled(" Details ", Style::default().fg(muted)))
+        })
+        .border_style(Style::default().fg(if state.focus_left {
+            muted
+        } else {
+            accent
+        }))
+        .style(Style::default().bg(d.dialog_bg_secondary));
+
+    let right_inner = right_block.inner(right_area);
+    let fill_w = right_inner.width.max(1) as usize;
+    let fill_h = right_inner.height.max(1) as usize;
+    let fill_right = Paragraph::new(
+        std::iter::repeat(Line::from(Span::raw(" ".repeat(fill_w))))
+            .take(fill_h)
+            .collect::<Vec<_>>(),
+    )
+    .style(right_fill_style)
+    .block(right_block);
+    f.render_widget(fill_right, right_area);
+
     // Left column: section list
     let list_items: Vec<ListItem> = SETTINGS_SECTIONS
         .iter()
         .map(|s| ListItem::new(*s).style(fill_style))
         .collect();
     let list = List::new(list_items)
-        .block(Block::default().borders(Borders::NONE))
+        .block(left_block)
         .highlight_style(highlight_style)
         .highlight_symbol("▸ ");
     let mut list_state = ListState::default();
     list_state.select(Some(state.selected_section));
     f.render_stateful_widget(list, left_area, &mut list_state);
-
-    // Right column: different background, then content by section
-    let right_inner = right_area.inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    });
-    let fill_right = Paragraph::new(
-        std::iter::repeat(Line::from(Span::raw(" ".repeat(right_area.width as usize))))
-            .take(right_area.height as usize)
-            .collect::<Vec<_>>(),
-    )
-    .style(right_fill_style);
-    f.render_widget(fill_right, right_area);
 
     let persisted = &app.persisted_settings;
     let left_view_index = if persisted.left_view.as_str() == "one" {
@@ -534,7 +542,7 @@ pub fn draw(
         height: hint_h,
     };
     f.render_widget(
-        Paragraph::new("↑↓ List  ← → Column  Tab  Options  Space/Enter  Toggle  Esc  Close")
+        Paragraph::new("↑↓ Navigate  Tab  Sections ↔ Details  Space/Enter  Toggle  Esc  Close")
             .style(fill_style.fg(d.text_muted))
             .alignment(Alignment::Center),
         hint_rect,

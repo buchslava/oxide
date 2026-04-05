@@ -37,6 +37,25 @@ fn linux_trash_available() -> bool {
 }
 
 /// Move `path` to the OS trash. File or directory.
+///
+/// On macOS we use `NSFileManager::trashItemAtURL` instead of the trash crate’s default Finder +
+/// AppleScript path. Finder plays its delete sound for every call; batch deletes (many files)
+/// were unbearable. `trashItemAtURL` is silent. Trade-off: on some macOS versions Trash’s
+/// “Put Back” may not appear for these items (see trash-rs / macos-trash issues).
 pub fn move_to_trash(path: &Path) -> io::Result<()> {
-    trash::delete(path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    #[cfg(target_os = "macos")]
+    {
+        use trash::TrashContext;
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+
+        let mut ctx = TrashContext::new();
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        return ctx
+            .delete(path)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        trash::delete(path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
 }

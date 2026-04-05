@@ -3,7 +3,7 @@ use crate::core::settings::{self, PersistedSettings};
 use crate::core::trash_delete::trash_available;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::theme::{ThemeId, UiPalette};
-use crate::ui::toast::TimedToast;
+use crate::ui::toast::{TimedToast, ToastKind};
 use ratatui::layout::Rect;
 use std::io;
 use std::sync::atomic::AtomicBool;
@@ -78,8 +78,8 @@ pub struct AppState {
     pub delete_pending_rx: Option<mpsc::Receiver<io::Result<()>>>,
     /// When set, copy/move/delete just completed; refresh source panel with (after, before) and clear.
     pub source_panel_restore: Option<(String, Option<String>, Option<String>)>,
-    /// When Some, the embedded code editor is open (F4). None = panels view.
-    pub editor_screen: Option<EditorScreenState>,
+    /// When Some, the embedded code editor is open (F4): warning, loading, or ready. None = panels view.
+    pub editor_screen: Option<crate::browser::editor::EditorViewState>,
     /// When true, show "Save changes?" (1=Save, 2=Discard, 3/Esc=Cancel) before exiting editor.
     pub editor_confirm_pending: bool,
     /// Editor confirm dialog: focused option index 0=Save, 1=Discard, 2=Cancel.
@@ -90,6 +90,10 @@ pub struct AppState {
     pub post_command_countdown: Option<PostCommandCountdown>,
     /// When Some, the file viewer is open (F3). Loading = reading file in background; Ready = content available. None = panels or editor view.
     pub viewer_screen: Option<ViewerState>,
+    /// When Some, Ctrl+D two-file diff viewer is open (full screen, synchronized scroll).
+    pub diff_viewer_screen: Option<crate::browser::diff_viewer::DiffViewerState>,
+    /// When Some, Ctrl+D compared both panel directories: `C `/`S `/`X ` prefixes until either cwd changes.
+    pub folder_compare: Option<crate::browser::diff_viewer::FolderCompareState>,
     /// When Some, F7 "Create directory" dialog is open (text field for new folder name).
     pub mkdir_dialog: Option<MkdirDialogState>,
     /// When Some, Ctrl+A "Archive" dialog is open (text field for archive file name).
@@ -155,7 +159,6 @@ pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
 pub use crate::dialogs::size_info_dialog::{SizeInfoDialogState, SizeInfoProgress};
 
 // Re-exports so AppState and other modules can use these types without circular deps.
-pub use crate::browser::editor::EditorScreenState;
 pub use crate::browser::viewer::ViewerState;
 pub use crate::core::find::FindMessage;
 pub use crate::dialogs::archive_dialog::ArchiveDialogState;
@@ -211,6 +214,8 @@ impl AppState {
             timed_toast: None,
             post_command_countdown: None,
             viewer_screen: None,
+            diff_viewer_screen: None,
+            folder_compare: None,
             mkdir_dialog: None,
             archive_dialog: None,
             new_file_dialog: None,
@@ -304,7 +309,25 @@ impl AppState {
         duration: Duration,
         message: impl Into<String>,
     ) {
-        self.timed_toast = Some(TimedToast::new(duration, message.into()));
+        self.set_timed_toast_kind(duration, message, ToastKind::Info);
+    }
+
+    /// Same as [`Self::set_timed_toast`] but with a red alert background (warnings / errors).
+    pub fn set_timed_toast_alert(
+        &mut self,
+        duration: Duration,
+        message: impl Into<String>,
+    ) {
+        self.set_timed_toast_kind(duration, message, ToastKind::Alert);
+    }
+
+    fn set_timed_toast_kind(
+        &mut self,
+        duration: Duration,
+        message: impl Into<String>,
+        kind: ToastKind,
+    ) {
+        self.timed_toast = Some(TimedToast::with_kind(duration, message.into(), kind));
     }
 
     pub fn clear_timed_toast(&mut self) {
@@ -402,7 +425,7 @@ impl AppState {
         let loc = self.get_opposite_panel_location();
         match &loc {
             PanelLocation::Fs(p) => p.clone(),
-            PanelLocation::Zip { archive, .. } => archive
+            PanelLocation::Archive { archive, .. } => archive
                 .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("/")),

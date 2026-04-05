@@ -33,8 +33,15 @@ use app::state::{
     RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
 };
 use app::subshell_helpers::{get_or_create_subshell, maybe_sync_panel_to_shell_cwd};
-use browser::editor::{apply_confirm_choice, close, open_editor, open_editor_path, save};
+use browser::editor::{
+    apply_confirm_choice, close, finish_editor_pending_decode, open_editor, open_editor_path,
+    poll_editor_loading, save,
+};
 use browser::panel::{PanelOperations, ViewMode};
+use browser::diff_viewer::{
+    close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, try_compare_panel_directories,
+    try_open_diff,
+};
 use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
 use core::location::PanelLocation;
 use core::settings::{ensure_config_dir, load, save as save_settings};
@@ -70,6 +77,29 @@ fn opposite_panel_path_from_settings(
     home: &str,
 ) -> String {
     saved.unwrap_or_else(|| home.to_string())
+}
+
+/// Restore the shell after the TUI: clear the alternate buffer when we are still on it, then leave
+/// alternate screen, release raw mode, reset SGR/wrap, show the cursor, and flush so nothing lingers
+/// in the emulator’s compositor.
+fn restore_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    clear_alternate_buffer: bool,
+) -> io::Result<()> {
+    if clear_alternate_buffer {
+        terminal.clear()?;
+    }
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture,
+        DisableBracketedPaste
+    )?;
+    let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
+    terminal.show_cursor()?;
+    io::stdout().flush()?;
+    Ok(())
 }
 
 fn main() -> Result<(), io::Error> {
@@ -120,28 +150,14 @@ fn main() -> Result<(), io::Error> {
 
     // Process any events from EnterAlternateScreen (never discard keys).
     if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            crossterm::event::DisableMouseCapture,
-            DisableBracketedPaste
-        )?;
-        terminal.show_cursor()?;
+        restore_terminal(&mut terminal, true)?;
         return Ok(());
     }
     // Show first frame; brief delay then process queue so first keypress is handled, not discarded.
     terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
     std::thread::sleep(std::time::Duration::from_millis(50));
     if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            crossterm::event::DisableMouseCapture,
-            DisableBracketedPaste
-        )?;
-        terminal.show_cursor()?;
+        restore_terminal(&mut terminal, true)?;
         return Ok(());
     }
 
@@ -176,6 +192,11 @@ fn main() -> Result<(), io::Error> {
             } else {
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
             }
+        }
+
+        // Editor: recv file bytes from worker before input so Esc can clear BytesLoaded before Editor::new.
+        if poll_editor_loading(&mut app) {
+            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
 
         let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
@@ -258,6 +279,9 @@ fn main() -> Result<(), io::Error> {
 
         // Poll viewer file loading (background thread); Esc stays responsive for large files.
         if poll_viewer_loading(&mut app) {
+            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+        }
+        if poll_diff_loading(&mut app) {
             terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
 
@@ -411,6 +435,33 @@ fn main() -> Result<(), io::Error> {
                     app.focus = Focus::FindDialog;
                 }
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            }
+            AppAction::OpenDiffViewer => {
+                if try_open_diff(&mut app) {
+                    // Two-file full-screen diff opened.
+                } else {
+                    let n = marked_non_dir_file_count(&app);
+                    if n == 0 {
+                        try_compare_panel_directories(&mut app);
+                        app.set_timed_toast(
+                            std::time::Duration::from_secs(4),
+                            "Panel diff: C same size · different content, S size, X only here — chdir either panel clears.",
+                        );
+                    } else if n == 1 {
+                        app.set_timed_toast(
+                            std::time::Duration::from_secs(3),
+                            "Mark one more file, then Ctrl+D (two files required).",
+                        );
+                    } else {
+                        app.set_timed_toast(
+                            std::time::Duration::from_secs(3),
+                            "Mark exactly two files for diff; unmark the rest (Ctrl+D).",
+                        );
+                    }
+                }
+            }
+            AppAction::DiffViewerClose => {
+                close_diff_viewer(&mut app);
             }
             AppAction::OpenEditor => {
                 open_editor(&mut app);
@@ -575,7 +626,7 @@ fn main() -> Result<(), io::Error> {
                     app.set_timed_toast(Duration::from_secs(3), "Panel layout saved to settings.");
                 }
                 Err(e) => {
-                    app.set_timed_toast(
+                    app.set_timed_toast_alert(
                         Duration::from_secs(5),
                         format!("Could not save settings: {}", e),
                     );
@@ -592,6 +643,9 @@ fn main() -> Result<(), io::Error> {
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
                 let _ = std::io::stdout().flush();
+                // Clear the alternate buffer while still on it so the emulator does not composite stale panel cells after 1049l.
+                terminal.clear()?;
+                let _ = terminal.flush();
                 let prepared = Subshell::prepare_for_relay();
                 {
                     let mut stdout = std::io::stdout().lock();
@@ -653,6 +707,8 @@ fn main() -> Result<(), io::Error> {
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
                 let _ = std::io::stdout().flush();
+                terminal.clear()?;
+                let _ = terminal.flush();
                 let prepared = Subshell::prepare_for_relay();
                 {
                     let mut stdout = std::io::stdout().lock();
@@ -722,16 +778,17 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::Continue => {}
         }
+
+        if finish_editor_pending_decode(&mut app) {
+            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+        }
+
     }
 
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture,
-        DisableBracketedPaste
+    restore_terminal(
+        &mut terminal,
+        !app.post_command_countdown_on_main_buffer(),
     )?;
-    terminal.show_cursor()?;
 
     Ok(())
 }

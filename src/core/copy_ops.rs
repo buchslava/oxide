@@ -44,16 +44,17 @@ pub fn copy_dir_recursive<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Copy one item (file or directory) from source_dir/name to target_dir/name.
-/// is_dir: true = copy recursively as directory.
-pub fn copy_item<P: AsRef<Path>>(
+/// Copy from `source_dir/src_name` to `target_dir/dst_name` (file or directory tree).
+/// Use the same string for `src_name` and `dst_name` when the basename is unchanged.
+pub fn copy_item_as<P: AsRef<Path>>(
     source_dir: P,
     target_dir: P,
-    name: &str,
+    src_name: &str,
+    dst_name: &str,
     is_dir: bool,
 ) -> io::Result<()> {
-    let src = FileOperations::join_path(source_dir, name);
-    let dst = FileOperations::join_path(target_dir, name);
+    let src = FileOperations::join_path(source_dir, src_name.trim_end_matches('/'));
+    let dst = FileOperations::join_path(target_dir, dst_name.trim_end_matches('/'));
     if is_dir {
         copy_dir_recursive(&src, &dst)
     } else {
@@ -61,20 +62,21 @@ pub fn copy_item<P: AsRef<Path>>(
     }
 }
 
-/// Move one item (file or directory) from source_dir/name to target_dir/name.
+/// Move from `source_dir/src_name` to `target_dir/dst_name`.
 /// Uses rename when possible; on EXDEV (cross-filesystem) copies then removes source.
-pub fn move_item<P: AsRef<Path>>(
+pub fn move_item_as<P: AsRef<Path>>(
     source_dir: P,
     target_dir: P,
-    name: &str,
+    src_name: &str,
+    dst_name: &str,
     is_dir: bool,
 ) -> io::Result<()> {
-    let src = FileOperations::join_path(&source_dir, name);
-    let dst = FileOperations::join_path(&target_dir, name);
+    let src = FileOperations::join_path(&source_dir, src_name.trim_end_matches('/'));
+    let dst = FileOperations::join_path(&target_dir, dst_name.trim_end_matches('/'));
     match fs::rename(&src, &dst) {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(EXDEV) => {
-            copy_item(&source_dir, &target_dir, name, is_dir)?;
+            copy_item_as(&source_dir, &target_dir, src_name, dst_name, is_dir)?;
             if is_dir {
                 fs::remove_dir_all(&src)
             } else {

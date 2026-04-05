@@ -5,7 +5,9 @@ use crate::browser::clipboard;
 pub use crate::browser::editor::EditorConfirmChoice;
 use crate::browser::editor::{handle_editor_key, handle_editor_mouse, paste_text_as_is};
 use crate::browser::panel::PanelOperations;
-use crate::browser::viewer::handle_viewer_key;
+use crate::browser::diff_viewer::{handle_diff_key, handle_diff_mouse};
+use crate::browser::viewer::{handle_viewer_key, handle_viewer_mouse};
+use crate::core::copy_state::same_folder_copy_dest_name;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir, supports_new_file};
 use crate::dialogs::{
@@ -46,6 +48,10 @@ pub enum AppAction {
     OpenViewer,
     /// ESC in viewer: close viewer.
     ViewerClose,
+    /// Ctrl+D: two marked non-dir files → full-screen diff; no marks → compare both panel dirs (C/S/X prefixes).
+    OpenDiffViewer,
+    /// ESC in diff viewer: close.
+    DiffViewerClose,
     /// F7: open "Create a new Directory" dialog (MC-style).
     OpenMkdirDialog,
     /// Enter in mkdir dialog: create directory and close (name from dialog field).
@@ -186,6 +192,7 @@ impl EventHandler {
             || app.editor_confirm_pending
             || app.copy_progress.is_some()
             || app.archive_progress.is_some()
+            || app.diff_viewer_screen.is_some()
     }
 
     /// Drain the crossterm queue without blocking; return the last key/mouse action, if any.
@@ -252,6 +259,10 @@ impl EventHandler {
     ) -> io::Result<Option<AppAction>> {
         match ev {
             Event::Key(key) => {
+                // When diff viewer is open (Ctrl+D), it gets keys before the file viewer.
+                if let Some(action) = handle_diff_key(app, key) {
+                    return Ok(Some(action));
+                }
                 // When viewer is open, it gets keys first (e.g. opened from Find F3; Find stays open behind).
                 if let Some(action) = handle_viewer_key(app, key) {
                     return Ok(Some(action));
@@ -470,12 +481,15 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // Size info dialog
+                // Size info banner: Ctrl+O still opens subshell; any other key dismisses the banner
+                // and is handled as usual (do not consume the first key after Ctrl+G).
                 if app.size_info_dialog.is_some() {
-                    return Ok(Some(
-                        size_info_dialog::handle_key(app, key.code, key.modifiers)
-                            .unwrap_or(AppAction::Continue),
-                    ));
+                    if let KeyCode::Char(c) = key.code {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'o' {
+                            return Ok(Some(AppAction::Suspend));
+                        }
+                    }
+                    size_info_dialog::close(app);
                 }
                 // F2 "Rename / Attributes" dialog
                 if app.rename_attr_dialog.is_some() {
@@ -546,29 +560,38 @@ impl EventHandler {
                     KeyCode::F(5) => {
                         let source = app.get_current_dir().to_string();
                         let target = app.get_opposite_panel_dir().to_string();
-                        if source != target {
-                            let (items, restore_after, restore_before) = app
-                                .active_panel_mut()
-                                .get_names_to_copy_with_restore_neighbors();
-                            if !items.is_empty() {
-                                let opposite = app.get_opposite_panel_location();
-                                let (target_location, target_fs_path) = match &opposite {
-                                    PanelLocation::Zip { .. } => (Some(opposite), None),
-                                    PanelLocation::Fs(_) => {
-                                        (None, Some(app.get_opposite_panel_target_fs_path()))
-                                    }
-                                };
-                                return Ok(Some(AppAction::Copy(CopyParams {
-                                    source_dir: source,
-                                    target_dir: target,
-                                    source_location: Some(app.get_current_location()),
-                                    target_location,
-                                    target_fs_path,
-                                    items,
-                                    restore_selection_after: restore_after,
-                                    restore_selection_before: restore_before,
-                                })));
-                            }
+                        let (items, restore_after, restore_before) = app
+                            .active_panel_mut()
+                            .get_names_to_copy_with_restore_neighbors();
+                        if !items.is_empty() {
+                            let target_names = if source == target {
+                                Some(
+                                    items
+                                        .iter()
+                                        .map(|(n, _)| same_folder_copy_dest_name(n))
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            };
+                            let opposite = app.get_opposite_panel_location();
+                            let (target_location, target_fs_path) = match &opposite {
+                                PanelLocation::Archive { .. } => (Some(opposite), None),
+                                PanelLocation::Fs(_) => {
+                                    (None, Some(app.get_opposite_panel_target_fs_path()))
+                                }
+                            };
+                            return Ok(Some(AppAction::Copy(CopyParams {
+                                source_dir: source,
+                                target_dir: target,
+                                source_location: Some(app.get_current_location()),
+                                target_location,
+                                target_fs_path,
+                                items,
+                                target_names,
+                                restore_selection_after: restore_after,
+                                restore_selection_before: restore_before,
+                            })));
                         }
                     }
                     KeyCode::F(6) => {
@@ -581,7 +604,7 @@ impl EventHandler {
                             if !items.is_empty() {
                                 let opposite = app.get_opposite_panel_location();
                                 let (target_location, target_fs_path) = match &opposite {
-                                    PanelLocation::Zip { .. } => (Some(opposite), None),
+                                    PanelLocation::Archive { .. } => (Some(opposite), None),
                                     PanelLocation::Fs(_) => {
                                         (None, Some(app.get_opposite_panel_target_fs_path()))
                                     }
@@ -593,6 +616,7 @@ impl EventHandler {
                                     target_location,
                                     target_fs_path,
                                     items,
+                                    target_names: None,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
                                 })));
@@ -638,6 +662,7 @@ impl EventHandler {
                                     target_location: None,
                                     target_fs_path: None,
                                     items,
+                                    target_names: None,
                                     restore_selection_after: restore_after,
                                     restore_selection_before: restore_before,
                                 },
@@ -651,6 +676,12 @@ impl EventHandler {
                 Ok(Some(AppAction::Continue))
             }
             Event::Mouse(mouse_event) => {
+                if handle_diff_mouse(app, mouse_event) {
+                    return Ok(Some(AppAction::Continue));
+                }
+                if handle_viewer_mouse(app, mouse_event) {
+                    return Ok(Some(AppAction::Continue));
+                }
                 if handle_editor_mouse(app, mouse_event) {
                     return Ok(Some(AppAction::Continue));
                 }
@@ -663,6 +694,7 @@ impl EventHandler {
                     if let Some(action) = paste_text_as_is(app, &data) {
                         return Ok(Some(action));
                     }
+                    return Ok(Some(AppAction::Continue));
                 }
                 if Self::paste_into_focused_input(app, &data) {
                     return Ok(Some(AppAction::Continue));
@@ -895,6 +927,7 @@ impl EventHandler {
                 AppAction::Continue
             }
             'e' => AppAction::PersistPanelState,
+            'd' | '\x04' => AppAction::OpenDiffViewer,
             _ => AppAction::Continue,
         }
     }

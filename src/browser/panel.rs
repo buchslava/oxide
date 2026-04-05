@@ -1,5 +1,7 @@
 use std::collections::HashSet;
+use std::fs::metadata;
 use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::core::file_ops::FileInfo;
 use crate::core::find::PreparedFilePattern;
@@ -7,6 +9,30 @@ use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
 
 /// Index of a non–parent-dir entry whose name matches `name` (trimmed trailing `/`).
+fn fs_path_is_listable(path: &Path) -> bool {
+    metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+/// Walk up from `path` until a listable directory is found (handles deleted cwd).
+fn climb_to_valid_fs_path(path: &Path) -> PathBuf {
+    let mut p = path.to_path_buf();
+    loop {
+        if fs_path_is_listable(&p) {
+            return p;
+        }
+        match p.parent() {
+            None => return PathBuf::from("/"),
+            Some(parent) if parent.as_os_str().is_empty() => return PathBuf::from("/"),
+            Some(parent) => {
+                if parent == p {
+                    return PathBuf::from("/");
+                }
+                p = parent.to_path_buf();
+            }
+        }
+    }
+}
+
 fn index_of_non_parent_file_named(
     files: &[FileInfo],
     name: &str,
@@ -175,9 +201,10 @@ impl Panel {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .map(|s| s.to_string()),
-                PanelLocation::Zip {
+                PanelLocation::Archive {
                     archive,
                     path_inside,
+                    ..
                 } => {
                     let inside = path_inside.trim_end_matches('/');
                     if inside.is_empty() {
@@ -206,6 +233,48 @@ impl Panel {
             }
         }
         Ok(())
+    }
+
+    /// If the current path no longer exists (e.g. directory deleted), move to the nearest listable parent.
+    fn climb_to_existing_path(&mut self) {
+        match &self.current_location {
+            PanelLocation::Fs(path) => {
+                if !fs_path_is_listable(path) {
+                    let new_path = climb_to_valid_fs_path(path);
+                    self.current_location = PanelLocation::fs(new_path);
+                    self.current_dir_display = self.current_location.display_string();
+                }
+            }
+            PanelLocation::Archive { archive, .. } => {
+                if !archive.exists() {
+                    self.current_location = archive
+                        .parent()
+                        .map(|p| PanelLocation::fs(p.to_path_buf()))
+                        .unwrap_or_else(|| PanelLocation::fs("/"));
+                    self.current_dir_display = self.current_location.display_string();
+                }
+            }
+        }
+    }
+
+    fn try_list_current_location(&mut self) -> io::Result<Vec<FileInfo>> {
+        match panel_backend::list(
+            &self.current_location,
+            self.show_hidden,
+            &self.sort_mode,
+            self.dirs_first,
+        ) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                self.climb_to_existing_path();
+                panel_backend::list(
+                    &self.current_location,
+                    self.show_hidden,
+                    &self.sort_mode,
+                    self.dirs_first,
+                )
+            }
+            other => other,
+        }
     }
 
     /// Reference to current location (for backend operations).
@@ -408,10 +477,13 @@ impl PanelOperations for Panel {
                 }
                 return Ok(());
             }
-            // Enter on a file: only .zip is enterable (open archive)
+            // Enter on a file: supported archive extensions (open as virtual folder)
             let name_clean = file.name.trim_end_matches('/');
             let lower = name_clean.to_lowercase();
-            if lower.ends_with(".zip") {
+            if lower.ends_with(".zip")
+                || lower.ends_with(".tar.gz")
+                || lower.ends_with(".tgz")
+            {
                 if let Some(new_loc) = self.current_location.enter(name_clean, false) {
                     self.navigate_to_location(new_loc)?;
                 }
@@ -424,13 +496,9 @@ impl PanelOperations for Panel {
     /// Prefer [`Panel::refresh_files_restore_selection`] when the listing may be unchanged except for
     /// adds/removes and you need to keep the highlighted file and behavior consistent with other code paths.
     fn refresh_files(&mut self) -> io::Result<()> {
+        self.climb_to_existing_path();
         self.marked_indices.clear();
-        self.files = panel_backend::list(
-            &self.current_location,
-            self.show_hidden,
-            &self.sort_mode,
-            self.dirs_first,
-        )?;
+        self.files = self.try_list_current_location()?;
         self.selected_index = 0;
         self.scroll_offset = 0;
         if !self.files.is_empty() && self.selected_index >= self.files.len() {
@@ -674,6 +742,16 @@ impl PanelOperations for Panel {
 }
 
 impl Panel {
+    /// Clear all marks (Space). Used before Ctrl+D panel-directory compare.
+    pub fn clear_marks(&mut self) {
+        self.marked_indices.clear();
+    }
+
+    /// Yields each marked file index once. Iteration order is unspecified; sort by index if you need list order.
+    pub fn iter_marked_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.marked_indices.iter().copied()
+    }
+
     /// Whether hidden files are shown (for Ctrl+H and settings sync).
     pub fn get_show_hidden(&self) -> bool {
         self.show_hidden
@@ -759,12 +837,8 @@ impl Panel {
             .map(|f| f.name.trim_end_matches('/').to_string());
 
         self.marked_indices.clear();
-        self.files = panel_backend::list(
-            &self.current_location,
-            self.show_hidden,
-            &self.sort_mode,
-            self.dirs_first,
-        )?;
+        self.climb_to_existing_path();
+        self.files = self.try_list_current_location()?;
         self.selected_index = 0;
         self.scroll_offset = 0;
 
@@ -828,5 +902,40 @@ impl Panel {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn unique_tmp_under_temp() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "oxide_panel_climb_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn climb_to_valid_fs_path_finds_nearest_existing_dir() {
+        let root = unique_tmp_under_temp();
+        let _ = fs::remove_dir_all(&root);
+        let deep = root.join("x").join("y").join("z");
+        fs::create_dir_all(&deep).unwrap();
+        assert_eq!(climb_to_valid_fs_path(&deep), deep);
+        fs::remove_dir_all(root.join("x")).unwrap();
+        assert_eq!(climb_to_valid_fs_path(&deep), root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fs_path_is_listable_false_for_missing() {
+        let p = unique_tmp_under_temp().join("nope");
+        assert!(!fs_path_is_listable(&p));
     }
 }

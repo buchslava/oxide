@@ -1,4 +1,4 @@
-//! Non-TUI domain logic: paths/locations, filesystem & zip panel backend, copy state, settings persistence,
+//! Non-TUI domain logic: paths/locations, filesystem & archive (ZIP, tar.gz) panel backend, copy state, settings persistence,
 //! find (glob/traversal), text/size formatting, disk summary.
 //! Ratatui/crossterm stay in `ui`, dialog modules, `events`, `main` loop wiring, etc.
 

@@ -8,7 +8,7 @@ use crate::app::panel_refresh::{refresh_both_panels_full, restore_source_panel_a
 use crate::app::state::{
     AppState, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation,
 };
-use crate::core::copy_ops::{copy_item, delete_item, move_item};
+use crate::core::copy_ops::{copy_item_as, delete_item, move_item_as};
 use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{
@@ -55,17 +55,20 @@ fn target_display_for_copy_progress(
 fn apply_panel_location_copy_step(
     c: &CopyInProgress,
     source_loc: &PanelLocation,
-    name: &str,
+    src_name: &str,
+    dest_name: &str,
     is_dir: bool,
     current_path: &str,
 ) -> (bool, Option<String>, Option<String>) {
     match c.params.target_location.as_ref() {
-        Some(PanelLocation::Zip {
+        Some(PanelLocation::Archive {
             archive,
             path_inside,
+            ..
         }) => run_copy_step_into_archive(
             source_loc,
-            name,
+            src_name,
+            dest_name,
             is_dir,
             current_path,
             archive,
@@ -77,7 +80,8 @@ fn apply_panel_location_copy_step(
             let target_dir = target_fs_dir_for_copy_params(&c.params);
             run_copy_step_backend(
                 source_loc,
-                name,
+                src_name,
+                dest_name,
                 is_dir,
                 current_path,
                 target_dir,
@@ -154,17 +158,31 @@ fn run_copy_step_legacy_copy_move(
     name: &str,
     is_dir: bool,
 ) {
-    let target_path = FileOperations::join_path(&c.params.target_dir, name);
+    let dest_name = c.params.dest_name_for_index(c.current_index, name);
+    let target_path =
+        FileOperations::join_path(&c.params.target_dir, dest_name.trim_end_matches('/'));
     if target_path.exists() && !c.overwrite_all && !c.skip_all {
-        app.copy_overwrite_dialog = Some(name.to_string());
+        app.copy_overwrite_dialog = Some(dest_name.clone());
         app.copy_overwrite_focus = 0;
         return;
     }
     let do_op = |op: Operation| {
         if op == Operation::Move {
-            move_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
+            move_item_as(
+                &c.params.source_dir,
+                &c.params.target_dir,
+                name,
+                &dest_name,
+                is_dir,
+            )
         } else {
-            copy_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
+            copy_item_as(
+                &c.params.source_dir,
+                &c.params.target_dir,
+                name,
+                &dest_name,
+                is_dir,
+            )
         }
     };
     if target_path.exists() && c.skip_all {
@@ -277,7 +295,8 @@ pub(crate) fn start_copy_operation(
 /// One step of copy/move/delete when source is PanelLocation (Fs or Zip). Returns (advance, overwrite_name, error_message).
 fn run_copy_step_backend(
     source_loc: &PanelLocation,
-    name: &str,
+    src_name: &str,
+    dest_name: &str,
     is_dir: bool,
     current_path: &str,
     target_dir: &Path,
@@ -287,10 +306,10 @@ fn run_copy_step_backend(
     ignore_all_errors: bool,
     use_trash_for_delete: bool,
 ) -> (bool, Option<String>, Option<String>) {
-    let target_path = target_dir.join(name.trim_end_matches('/'));
+    let target_path = target_dir.join(dest_name.trim_end_matches('/'));
 
     if operation == Operation::Delete {
-        let items = &[(name.to_string(), is_dir)];
+        let items = &[(src_name.to_string(), is_dir)];
         return match delete_items(source_loc, items, use_trash_for_delete) {
             Ok(()) => (true, None, None),
             Err(e) => (
@@ -302,17 +321,25 @@ fn run_copy_step_backend(
     }
 
     if target_path.exists() && !overwrite_all && !skip_all {
-        return (false, Some(name.to_string()), None);
+        return (false, Some(dest_name.to_string()), None);
     }
     if target_path.exists() && skip_all {
         return (true, None, None);
     }
 
-    let items = &[(name.to_string(), is_dir)];
-    let result = if operation == Operation::Move {
-        move_items_to_fs(source_loc, items, target_dir)
+    let items = &[(src_name.to_string(), is_dir)];
+    let dest_slice = dest_name.trim_end_matches('/');
+    let src_slice = src_name.trim_end_matches('/');
+    let dest_opt = if dest_slice == src_slice {
+        None
     } else {
-        copy_items_to_fs(source_loc, items, target_dir)
+        Some(dest_name.to_string())
+    };
+    let dest_names = dest_opt.as_ref().map(|d| std::slice::from_ref(d));
+    let result = if operation == Operation::Move {
+        move_items_to_fs(source_loc, items, target_dir, dest_names)
+    } else {
+        copy_items_to_fs(source_loc, items, target_dir, dest_names)
     };
 
     match result {
@@ -320,7 +347,7 @@ fn run_copy_step_backend(
         Err(e) => (
             ignore_all_errors,
             None,
-            Some(format!("{} -> {}: {}", current_path, name, e)),
+            Some(format!("{} -> {}: {}", current_path, dest_name, e)),
         ),
     }
 }
@@ -328,7 +355,8 @@ fn run_copy_step_backend(
 /// One step of copy/move when target is inside a ZIP. No overwrite dialog; existing entries are overwritten.
 fn run_copy_step_into_archive(
     source_loc: &PanelLocation,
-    name: &str,
+    src_name: &str,
+    dest_name: &str,
     is_dir: bool,
     current_path: &str,
     archive_path: &Path,
@@ -336,11 +364,20 @@ fn run_copy_step_into_archive(
     operation: Operation,
     ignore_all_errors: bool,
 ) -> (bool, Option<String>, Option<String>) {
-    let items = &[(name.to_string(), is_dir)];
+    let items = &[(src_name.to_string(), is_dir)];
     let result = if operation == Operation::Move {
         move_items_into_archive(source_loc, items, archive_path, path_inside)
+    } else if dest_name.trim_end_matches('/') == src_name.trim_end_matches('/') {
+        copy_items_into_archive(source_loc, items, archive_path, path_inside, None)
     } else {
-        copy_items_into_archive(source_loc, items, archive_path, path_inside)
+        let d = dest_name.to_string();
+        copy_items_into_archive(
+            source_loc,
+            items,
+            archive_path,
+            path_inside,
+            Some(std::slice::from_ref(&d)),
+        )
     };
     match result {
         Ok(()) => (true, None, None),
@@ -369,13 +406,15 @@ pub(crate) fn run_copy_step(app: &mut AppState) {
         return;
     }
 
-    let (name, is_dir, current_path, use_panel_backend) = {
+    let (name, dest_name, is_dir, current_path, use_panel_backend) = {
         let Some(c) = app.copy_in_progress.as_ref() else {
             return;
         };
         let (name, is_dir) = &c.params.items[c.current_index];
+        let dest_name = c.params.dest_name_for_index(c.current_index, name);
         (
             name.clone(),
+            dest_name,
             *is_dir,
             source_item_display_path(&c.params, name),
             c.params.source_location.is_some(),
@@ -403,7 +442,14 @@ pub(crate) fn run_copy_step(app: &mut AppState) {
             let Some(source_loc) = c.params.source_location.as_ref() else {
                 return;
             };
-            apply_panel_location_copy_step(c, source_loc, &name, is_dir, &current_path)
+            apply_panel_location_copy_step(
+                c,
+                source_loc,
+                &name,
+                &dest_name,
+                is_dir,
+                &current_path,
+            )
         };
         let Some(c) = app.copy_in_progress.as_mut() else {
             return;
@@ -442,32 +488,49 @@ fn perform_copy_overwrite_item_io(
     name: &str,
     is_dir: bool,
 ) -> io::Result<()> {
+    let idx = c.current_index;
+    let dest_name = c.params.dest_name_for_index(idx, name);
     if let Some(ref loc) = c.params.source_location {
         let items = &[(name.to_string(), is_dir)];
+        let same_dest = dest_name.trim_end_matches('/') == name.trim_end_matches('/');
+        let dest_names = (!same_dest).then_some(std::slice::from_ref(&dest_name));
         match c.params.target_location.as_ref() {
-            Some(PanelLocation::Zip {
+            Some(PanelLocation::Archive {
                 archive,
                 path_inside,
+                ..
             }) => {
                 if c.operation == Operation::Move {
                     move_items_into_archive(loc, items, archive, path_inside)
                 } else {
-                    copy_items_into_archive(loc, items, archive, path_inside)
+                    copy_items_into_archive(loc, items, archive, path_inside, dest_names)
                 }
             }
             _ => {
                 let target = target_fs_dir_for_copy_params(&c.params);
                 if c.operation == Operation::Move {
-                    move_items_to_fs(loc, items, target)
+                    move_items_to_fs(loc, items, target, dest_names)
                 } else {
-                    copy_items_to_fs(loc, items, target)
+                    copy_items_to_fs(loc, items, target, dest_names)
                 }
             }
         }
     } else if c.operation == Operation::Move {
-        move_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
+        move_item_as(
+            &c.params.source_dir,
+            &c.params.target_dir,
+            name,
+            &dest_name,
+            is_dir,
+        )
     } else {
-        copy_item(&c.params.source_dir, &c.params.target_dir, name, is_dir)
+        copy_item_as(
+            &c.params.source_dir,
+            &c.params.target_dir,
+            name,
+            &dest_name,
+            is_dir,
+        )
     }
 }
 

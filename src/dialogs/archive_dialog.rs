@@ -1,5 +1,5 @@
 //! Ctrl+A "Archive" dialog (MC-style). Single text field for the archive file name;
-//! selected items are zipped into it; originals are kept. Enter = create (if non-empty), Esc = cancel.
+//! selected items are packed into it (ZIP or tar.gz by file name); originals are kept. Enter = create (if non-empty), Esc = cancel.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
@@ -15,7 +15,7 @@ use crate::core::panel_backend::{create_archive, create_archive_with_progress};
 use crate::ui::text_input::{self, TextInputState};
 use crate::util::compute_panel_height;
 
-/// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. archive.zip).
+/// State for Ctrl+A "Archive" dialog. Single text field for the archive file name (e.g. `archive.zip` or `archive.tar.gz`).
 /// focus: 0 = textarea, 1 = Create, 2 = Cancel.
 #[derive(Debug)]
 pub struct ArchiveDialogState {

@@ -302,6 +302,15 @@ pub enum SingleInputKeyResult {
 /// Number of focus targets: 0 = text input, 1 = primary button (Create), 2 = Cancel.
 const FOCUS_COUNT: usize = 3;
 
+/// Terminal Backspace is often sent as Ctrl+H (ASCII BS). Crossterm reports it as `Char('h')` with CONTROL.
+#[inline]
+pub fn is_ctrl_backspace(
+    modifiers: KeyModifiers,
+    c: char,
+) -> bool {
+    modifiers.contains(KeyModifiers::CONTROL) && c == 'h'
+}
+
 /// Pure key handler: (input, focus) + key → (new_input, new_focus, result). No mutation.
 #[must_use]
 pub fn handle_single_input_key(
@@ -367,6 +376,9 @@ pub fn handle_single_input_key(
                     }
                     return (input, focus, SingleInputKeyResult::Continue);
                 }
+            }
+            if is_ctrl_backspace(modifiers, c) && focus == 0 {
+                return (input.backspace(), focus, SingleInputKeyResult::Continue);
             }
             if focus == 0 && c.is_ascii() && !c.is_control() {
                 (input.insert_char(c), focus, SingleInputKeyResult::Continue)
