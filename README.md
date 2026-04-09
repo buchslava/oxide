@@ -6,7 +6,7 @@
 
 Oxide is a terminal user interface (TUI) file manager with a dual-panel layout. The compiled binary is named **xd**. For background on the project and technical choices, see [the intro article](doc/articles/intro.md).
 
-![Oxide](doc/articles/images/adaptive-menu.gif)
+![Oxide](doc/articles/images/intro.png)
 
 > **Warning:** This is a **pilot** build. It has **not** been fully tested end-to-end, and it may contain bugs or rough edges. So far it has seen real use only from the author—mostly on **macOS**, with lighter use on **Linux**. Be careful with important files and production workflows until you are comfortable with how it behaves.
 
