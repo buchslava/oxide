@@ -416,48 +416,34 @@ pub fn handle_single_input_key(
     }
 }
 
-/// Cursor x position for drawing the text input (content area and width).
-pub fn input_cursor_x(
-    content_rect: Rect,
-    input: &TextInputState,
-) -> u16 {
-    let col = input.cursor_column() as u16;
-    content_rect.x + col.min(content_rect.width.saturating_sub(1))
+/// First character index (0-based) into the logical line so the caret stays inside a viewport
+/// of `viewport_width` columns — same idea as a single-line field in common desktop UIs.
+#[inline]
+pub fn horizontal_display_offset(
+    cursor_char: usize,
+    viewport_width: usize,
+) -> usize {
+    if viewport_width == 0 {
+        return 0;
+    }
+    if cursor_char + 1 <= viewport_width {
+        0
+    } else {
+        cursor_char + 1 - viewport_width
+    }
 }
 
-/// Build a Line with normal and selection spans for the given input (full line, no scroll).
-/// Pads to `width` with spaces. Use for single-input dialog and rename name field.
-pub fn input_line_with_selection(
+/// Terminal column (`x`) for the block caret after horizontal scrolling.
+pub fn input_cursor_x_scrolled(
+    content_rect: Rect,
     input: &TextInputState,
-    width: usize,
-    base_style: Style,
-    selection_style: Style,
-) -> Line<'static> {
-    let chars: Vec<char> = input.text.chars().collect();
-    let len = chars.len();
-    let sel = input.selection_bounds();
-    let mut spans = Vec::new();
-    let mut i = 0;
-    while i < len.min(width) {
-        let in_sel = sel.map(|(s, e)| i >= s && i < e).unwrap_or(false);
-        let style = if in_sel { selection_style } else { base_style };
-        let j = (i + 1..=len.min(width))
-            .find(|&k| {
-                sel.map(|(s, e)| (k >= s && k < e) != (i >= s && i < e))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(len.min(width));
-        let s: String = chars[i..j].iter().collect();
-        if !s.is_empty() {
-            spans.push(Span::styled(s, style));
-        }
-        i = j;
-    }
-    let pad = width.saturating_sub(len);
-    if pad > 0 {
-        spans.push(Span::styled(" ".repeat(pad), base_style));
-    }
-    Line::from(spans)
+    display_offset: usize,
+) -> u16 {
+    let cursor_char = input.cursor_column();
+    let col_in_view = cursor_char.saturating_sub(display_offset);
+    let max_col = content_rect.width.saturating_sub(1) as usize;
+    let col = col_in_view.min(max_col);
+    content_rect.x.saturating_add(col as u16)
 }
 
 /// Build a Line with selection for a visible slice (display_offset..display_offset+visible_width).
@@ -543,14 +529,19 @@ pub fn draw_single_input_dialog(
     };
     let base_style = Style::default().bg(input_bg).fg(d.text);
     let selection_style = Style::default().bg(d.input_selection_bg).fg(d.text);
-    let line =
-        input_line_with_selection(input, content.width as usize, base_style, selection_style);
+    let vw = content.width as usize;
+    let display_offset = horizontal_display_offset(input.cursor_column(), vw);
+    let line = input_line_with_selection_slice(
+        input,
+        display_offset,
+        vw,
+        base_style,
+        selection_style,
+    );
     f.render_widget(Paragraph::new(line), input_rect);
     if input_focused {
-        let cursor_x = input_cursor_x(input_rect, input);
-        if cursor_x < content.x + content.width {
-            f.set_cursor_position((cursor_x, input_y));
-        }
+        let cursor_x = input_cursor_x_scrolled(input_rect, input, display_offset);
+        f.set_cursor_position((cursor_x, input_y));
     }
 
     let (create_rect, cancel_rect) = single_input_button_rects(content);

@@ -702,15 +702,19 @@ pub fn draw(
             let selection_style = Style::default()
                 .bg(colors.input_selection_bg)
                 .fg(colors.text);
-            let line = text_input::input_line_with_selection(
+            let vw = name_rect.width as usize;
+            let display_offset =
+                text_input::horizontal_display_offset(name_input.cursor_column(), vw);
+            let line = text_input::input_line_with_selection_slice(
                 name_input,
-                name_rect.width as usize,
+                display_offset,
+                vw,
                 base_style,
                 selection_style,
             );
             f.render_widget(Paragraph::new(line), name_rect);
             if focus == RenameAttrField::Name {
-                let cx = text_input::input_cursor_x(name_rect, name_input);
+                let cx = text_input::input_cursor_x_scrolled(name_rect, name_input, display_offset);
                 f.set_cursor_position((cx, name_inner.y));
             }
         }

@@ -685,13 +685,8 @@ fn draw_parameter_form(
         };
         let value_w = content_w.saturating_sub(label_w);
         let value_w_usize = value_w as usize;
-        let display_offset = if value_w_usize == 0 {
-            0
-        } else if cursor_char + 1 <= value_w_usize {
-            0
-        } else {
-            cursor_char + 1 - value_w_usize
-        };
+        let display_offset =
+            text_input::horizontal_display_offset(cursor_char, value_w_usize);
         let cursor_screen = cursor_char.saturating_sub(display_offset);
         let base_style = Style::default().bg(bg).fg(d.text);
         let selection_style = Style::default().bg(d.input_selection_bg).fg(d.text);

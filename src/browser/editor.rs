@@ -29,6 +29,7 @@ use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{join_path_display, read_file, write_file};
 use crate::core::text_format::format_byte_size;
 use crate::core::file_ops::FileInfo;
+use crate::ui::text_input;
 use crate::ui::theme::{DialogPalette, ViewerPalette};
 use crate::ui::toast::{self, TimedToast};
 use crate::util::compute_panel_height;
@@ -1367,9 +1368,19 @@ fn draw_search_bar(
         width: inner.width,
         height: 1,
     };
-    let padded_query = format!("  {}", query);
+    let combined = format!("  {}", query);
+    let vw = inner.width as usize;
+    let cursor_char = 2usize.saturating_add(cursor_pos);
+    let display_offset = text_input::horizontal_display_offset(cursor_char, vw);
+    let chars: Vec<char> = combined.chars().collect();
+    let len = chars.len();
+    let start = display_offset.min(len);
+    let end = (display_offset + vw).min(len);
+    let vis: String = chars[start..end].iter().collect();
+    let pad = vw.saturating_sub(end - start);
+    let shown = format!("{}{}", vis, " ".repeat(pad));
     f.render_widget(
-        Paragraph::new(padded_query.as_str()).style(style),
+        Paragraph::new(shown.as_str()).style(style),
         query_display_row,
     );
     let hint_row = Rect {
@@ -1379,8 +1390,9 @@ fn draw_search_bar(
         height: 1,
     };
     f.render_widget(Paragraph::new(hint).style(style.fg(d.text_muted)), hint_row);
-    let cursor_col = (2 + cursor_pos).min(inner.width as usize);
-    f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
+    let cursor_screen = cursor_char.saturating_sub(display_offset);
+    let col = cursor_screen.min(inner.width.saturating_sub(1) as usize);
+    f.set_cursor_position((inner.x + col as u16, inner.y));
 }
 
 /// Bounding box for "Save changes?" (must match [`draw_confirm_dialog`]).

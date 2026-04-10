@@ -259,9 +259,13 @@ pub fn draw(
     } else {
         dlg.input_bg_unfocused
     };
-    let line = text_input::input_line_with_selection(
+    let vw = content.width as usize;
+    let display_offset =
+        text_input::horizontal_display_offset(st.pattern_input.cursor_column(), vw);
+    let line = text_input::input_line_with_selection_slice(
         &st.pattern_input,
-        content.width as usize,
+        display_offset,
+        vw,
         Style::default().bg(input_base).fg(dlg.text),
         Style::default().bg(dlg.input_selection_bg).fg(dlg.text),
     );
@@ -384,6 +388,8 @@ pub fn pattern_input_cursor(
         width: content.width,
         height: 1,
     };
-    let col = text_input::input_cursor_x(input_rect, input);
+    let vw = input_rect.width as usize;
+    let display_offset = text_input::horizontal_display_offset(input.cursor_column(), vw);
+    let col = text_input::input_cursor_x_scrolled(input_rect, input, display_offset);
     Some((col, input_rect.y))
 }

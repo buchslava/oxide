@@ -19,6 +19,7 @@ use crate::dialogs::{
 use crate::ui::dialog_layout::{self, paint_modal_dim_layer, DEFAULT_PAD_H};
 use crate::ui::menu_bar_key;
 use crate::ui::styles;
+use crate::ui::text_input;
 use crate::ui::theme::{DialogPalette, UiPalette};
 use crate::ui::toast::{self, TimedToast};
 use ratatui::{
@@ -1371,7 +1372,8 @@ impl Renderer {
         area: Rect,
     ) {
         let c = &app.ui_palette.chrome;
-        let prompt = format_command_prompt(app, area.width as usize);
+        let w = area.width as usize;
+        let prompt = format_command_prompt(app, w);
         let line_str = format!("{}{}", prompt, app.command_line);
         let is_focused = app.focus == Focus::CommandLine;
         let base = Style::default().bg(c.main_background);
@@ -1380,21 +1382,50 @@ impl Renderer {
         } else {
             c.command_prompt_inactive_fg
         };
-        let styled_line = Line::from(vec![
-            Span::styled(prompt.clone(), base.fg(prompt_fg)),
-            Span::styled(
-                app.command_line.as_str(),
-                base.fg(c.command_line_fg),
-            ),
-        ]);
-        let command_line_paragraph = Paragraph::new(styled_line);
-        f.render_widget(command_line_paragraph, area);
-        if is_focused {
-            let byte_pos = prompt.len() + app.command_line_cursor.min(app.command_line.len());
-            let cursor_x = utf8_prefix_display_cols(&line_str, byte_pos);
-            if cursor_x < area.width {
-                f.set_cursor_position((area.x + cursor_x, area.y));
+        let prompt_style = base.fg(prompt_fg);
+        let cmd_style = base.fg(c.command_line_fg);
+        let byte_pos = prompt.len() + app.command_line_cursor.min(app.command_line.len());
+        let cursor_col = utf8_prefix_display_cols(&line_str, byte_pos) as usize;
+        let display_offset = if is_focused {
+            text_input::horizontal_display_offset(cursor_col, w)
+        } else {
+            0
+        };
+        let chars: Vec<char> = line_str.chars().collect();
+        let len = chars.len();
+        let start = display_offset.min(len);
+        let end = (display_offset + w).min(len);
+        let prompt_chars = prompt.chars().count();
+        let mut spans = Vec::new();
+        let mut i = start;
+        while i < end {
+            let use_prompt = i < prompt_chars;
+            let style = if use_prompt {
+                prompt_style
+            } else {
+                cmd_style
+            };
+            let mut j = i + 1;
+            while j < end {
+                let np = j < prompt_chars;
+                if np != use_prompt {
+                    break;
+                }
+                j += 1;
             }
+            spans.push(Span::styled(chars[i..j].iter().collect::<String>(), style));
+            i = j;
+        }
+        let pad = w.saturating_sub(end - start);
+        if pad > 0 {
+            spans.push(Span::styled(" ".repeat(pad), cmd_style));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+        if is_focused {
+            let col_in_view = cursor_col.saturating_sub(display_offset);
+            let max_col = w.saturating_sub(1);
+            let col = col_in_view.min(max_col);
+            f.set_cursor_position((area.x + col as u16, area.y));
         }
     }
 

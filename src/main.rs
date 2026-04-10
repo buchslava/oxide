@@ -216,12 +216,6 @@ fn main() -> Result<(), io::Error> {
                 ..
             })
         );
-        let input_cursor_blink = find_input_focused
-            || mkdir_input_focused
-            || pattern_select_input_focused
-            || archive_input_focused
-            || new_file_input_focused
-            || rename_name_focused;
         let show_cursor = !app.post_command_countdown_active()
             && (app.editor_screen.is_some()
                 || mkdir_input_focused
@@ -239,7 +233,10 @@ fn main() -> Result<(), io::Error> {
             && app.archive_dialog.is_none()
             && app.new_file_dialog.is_none();
 
-        if command_line_cursor_active || input_cursor_blink {
+        // Blink only on the shell command line. Dialog text fields use the terminal caret at a
+        // fixed cell — hiding it on a 500ms timer made the caret vanish for long stretches during
+        // key repeat (arrow keys), which felt like a bug.
+        if command_line_cursor_active {
             if cmd_cursor_blink_last_toggle.elapsed() >= std::time::Duration::from_millis(500) {
                 cmd_cursor_blink_visible = !cmd_cursor_blink_visible;
                 cmd_cursor_blink_last_toggle = std::time::Instant::now();
@@ -251,7 +248,7 @@ fn main() -> Result<(), io::Error> {
         }
 
         if show_cursor {
-            if command_line_cursor_active || input_cursor_blink {
+            if command_line_cursor_active {
                 if cmd_cursor_blink_visible {
                     let _ = terminal.show_cursor();
                 } else {
