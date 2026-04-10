@@ -1058,13 +1058,11 @@ pub fn handle_diff_key(
     }
 }
 
-/// Horizontal layout shared by the diff header row and body: left pane, center rule, right pane.
-fn diff_viewer_column_constraints() -> [Constraint; 3] {
-    [
-        Constraint::Percentage(50),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ]
+/// Horizontal layout shared by the diff header row and body: left pane, right pane.
+/// The divider is the left pane’s right [`Block`] border (no separate gutter column), so the
+/// terminal default background cannot show through on “empty” lines beside a one-line widget.
+fn diff_viewer_column_constraints() -> [Constraint; 2] {
+    [Constraint::Percentage(50), Constraint::Min(1)]
 }
 
 /// One header row inside a pane: path (truncated) flush left, `trailing` flush right, padded to `pane_width_cells`.
@@ -1112,6 +1110,10 @@ pub fn draw(
     let area = f.area();
     let p = app.ui_palette.diff_viewer;
     let base = Style::default().bg(p.background).fg(p.text);
+    f.render_widget(
+        Block::default().style(Style::default().bg(p.background)),
+        area,
+    );
 
     match state {
         DiffViewerState::Loading {
@@ -1131,23 +1133,23 @@ pub fn draw(
             ])
             .split(area);
             let header_cols = Layout::horizontal(diff_viewer_column_constraints()).split(chunks[0]);
-            let lw = header_cols[0].width.max(1) as usize;
-            let rw = header_cols[2].width.max(1) as usize;
+            let left_header_area = header_cols[0];
+            let right_header_area = header_cols[1];
+            let header_left_block = Block::default()
+                .borders(Borders::RIGHT)
+                .border_style(Style::default().fg(p.column_border).bg(p.background))
+                .style(Style::default().bg(p.background));
+            let left_header_inner = header_left_block.inner(left_header_area);
+            let lw = left_header_inner.width.max(1) as usize;
+            let rw = right_header_area.width.max(1) as usize;
+            f.render_widget(header_left_block, left_header_area);
             f.render_widget(
                 Paragraph::new(diff_pane_header_line(left_path.as_str(), lw, "", p)).style(base),
-                header_cols[0],
-            );
-            f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "│",
-                    Style::default().fg(p.column_border),
-                )))
-                .style(base.bg(p.background)),
-                header_cols[1],
+                left_header_inner,
             );
             f.render_widget(
                 Paragraph::new(diff_pane_header_line(right_path.as_str(), rw, "", p)).style(base),
-                header_cols[2],
+                right_header_area,
             );
             f.render_widget(Paragraph::new(msg).style(base), chunks[1]);
             f.render_widget(Paragraph::new(bottom).style(base), chunks[2]);
@@ -1165,10 +1167,11 @@ pub fn draw(
             let cols = Layout::horizontal(diff_viewer_column_constraints()).split(content_area);
 
             let left_area = cols[0];
-            let right_area = cols[2];
+            let right_area = cols[1];
             let left_block = Block::default()
                 .borders(Borders::RIGHT)
-                .border_style(Style::default().fg(p.column_border));
+                .border_style(Style::default().fg(p.column_border).bg(p.background))
+                .style(Style::default().bg(p.background));
             let left_inner = left_block.inner(left_area);
             let lw = left_inner.width.max(1) as usize;
             let rw = right_area.width.max(1) as usize;
@@ -1187,24 +1190,24 @@ pub fn draw(
                 (((start + h).min(total) * 100) / total.max(1)) as u16
             };
             let header_cols = Layout::horizontal(diff_viewer_column_constraints()).split(chunks[0]);
-            let hlw = header_cols[0].width.max(1) as usize;
-            let hrw = header_cols[2].width.max(1) as usize;
+            let left_header_area = header_cols[0];
+            let right_header_area = header_cols[1];
+            let header_left_block = Block::default()
+                .borders(Borders::RIGHT)
+                .border_style(Style::default().fg(p.column_border).bg(p.background))
+                .style(Style::default().bg(p.background));
+            let left_header_inner = header_left_block.inner(left_header_area);
+            let hlw = left_header_inner.width.max(1) as usize;
+            let hrw = right_header_area.width.max(1) as usize;
             // Paths only: line count / scroll % stay on the bottom bar (avoids a crowded number by the divider).
+            f.render_widget(header_left_block, left_header_area);
             f.render_widget(
                 Paragraph::new(diff_pane_header_line(d.left_path.as_str(), hlw, "", p)).style(base),
-                header_cols[0],
-            );
-            f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "│",
-                    Style::default().fg(p.column_border),
-                )))
-                .style(base.bg(p.background)),
-                header_cols[1],
+                left_header_inner,
             );
             f.render_widget(
                 Paragraph::new(diff_pane_header_line(d.right_path.as_str(), hrw, "", p)).style(base),
-                header_cols[2],
+                right_header_area,
             );
 
             let left_slice: Vec<Line> = d
@@ -1227,13 +1230,6 @@ pub fn draw(
 
             f.render_widget(left_block, left_area);
             f.render_widget(left_para, left_inner);
-
-            let gutter = Paragraph::new(Line::from(Span::styled(
-                "│",
-                Style::default().fg(p.column_border),
-            )))
-            .style(base.bg(p.background));
-            f.render_widget(gutter, cols[1]);
 
             f.render_widget(right_para, right_area);
 
