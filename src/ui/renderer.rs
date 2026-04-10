@@ -47,6 +47,68 @@ fn compact_path(
     truncate_str(path, max_width, TruncateMode::CompactMiddle)
 }
 
+/// Last path segment of the active panel directory (filesystem or display path).
+fn current_dir_basename(dir_display: &str) -> String {
+    use std::path::Path;
+    let d = dir_display.trim_end_matches('/');
+    if d.is_empty() {
+        return "/".to_string();
+    }
+    Path::new(d)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| d.to_string())
+}
+
+/// Sh-style `$`, zsh `%`, fish `>`, or `#` when running as root (matches common defaults).
+fn shell_prompt_sigil() -> &'static str {
+    #[cfg(unix)]
+    {
+        if unsafe { libc::geteuid() } == 0 {
+            return "#";
+        }
+    }
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    let s = shell.to_ascii_lowercase();
+    if s.contains("fish") {
+        ">"
+    } else if s.contains("zsh") {
+        "%"
+    } else {
+        "$"
+    }
+}
+
+/// Panel command-line prefix: current (active panel) path + shell-style prompt character.
+/// Width is capped so the typed command remains visible on narrow terminals.
+fn format_command_prompt(
+    app: &AppState,
+    max_cols: usize,
+) -> String {
+    // Reserve room for `" {sigil} "` (sigil is one ASCII char).
+    const MIN_TAIL: usize = 4;
+    let max_cols = max_cols.max(MIN_TAIL);
+    let cwd = app.get_current_dir();
+    let path_part = current_dir_basename(cwd);
+    let sigil = shell_prompt_sigil();
+    let tail = format!(" {} ", sigil);
+    let tail_len = tail.chars().count();
+    let budget = max_cols.saturating_sub(tail_len).max(1);
+    let path_compact = compact_path(&path_part, budget);
+    format!("{}{}", path_compact, tail)
+}
+
+/// Column offset for byte index `end` in `s` (UTF-8 safe; wide chars count as one column).
+fn utf8_prefix_display_cols(
+    s: &str,
+    end_byte: usize,
+) -> u16 {
+    s.get(..end_byte.min(s.len()))
+        .map(|p| p.chars().count())
+        .unwrap_or(0) as u16
+}
+
 /// Format mtime as "Feb 13 2024 20:05" (month, day, year, time with zero-padded minutes).
 fn format_mtime(t: &std::time::SystemTime) -> String {
     use chrono::{DateTime, Timelike, Utc};
@@ -1309,16 +1371,27 @@ impl Renderer {
         area: Rect,
     ) {
         let c = &app.ui_palette.chrome;
-        let prompt = "$ ";
-        let line = format!("{}{}", prompt, app.command_line);
+        let prompt = format_command_prompt(app, area.width as usize);
+        let line_str = format!("{}{}", prompt, app.command_line);
         let is_focused = app.focus == Focus::CommandLine;
         let base = Style::default().bg(c.main_background);
-        let style = base.fg(c.command_line_fg);
-        let command_line_paragraph = Paragraph::new(line.clone()).style(style);
+        let prompt_fg = if is_focused {
+            c.command_prompt_active_fg
+        } else {
+            c.command_prompt_inactive_fg
+        };
+        let styled_line = Line::from(vec![
+            Span::styled(prompt.clone(), base.fg(prompt_fg)),
+            Span::styled(
+                app.command_line.as_str(),
+                base.fg(c.command_line_fg),
+            ),
+        ]);
+        let command_line_paragraph = Paragraph::new(styled_line);
         f.render_widget(command_line_paragraph, area);
         if is_focused {
-            let cursor_x =
-                (prompt.len() + app.command_line_cursor.min(app.command_line.len())) as u16;
+            let byte_pos = prompt.len() + app.command_line_cursor.min(app.command_line.len());
+            let cursor_x = utf8_prefix_display_cols(&line_str, byte_pos);
             if cursor_x < area.width {
                 f.set_cursor_position((area.x + cursor_x, area.y));
             }

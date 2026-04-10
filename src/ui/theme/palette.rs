@@ -129,7 +129,12 @@ pub struct ChromePalette {
     pub main_background: Color,
     pub panel_border_fg: Color,
     pub panel_border_bg: Color,
+    /// Typed command text on the bottom line.
     pub command_line_fg: Color,
+    /// Directory + sigil prefix when the command line has focus.
+    pub command_prompt_active_fg: Color,
+    /// Same prefix when focus is on the panels (or elsewhere).
+    pub command_prompt_inactive_fg: Color,
     pub menu_overlay_bg: Color,
     pub menu_hotkey: Color,
     pub menu_label: Color,
@@ -146,6 +151,8 @@ impl ChromePalette {
         panel_border_fg: Color::White,
         panel_border_bg: Color::Rgb(30, 30, 35),
         command_line_fg: Color::White,
+        command_prompt_active_fg: Color::Green,
+        command_prompt_inactive_fg: Color::DarkGray,
         menu_overlay_bg: Color::Rgb(60, 60, 60),
         menu_hotkey: Color::Rgb(255, 180, 80),
         menu_label: Color::Rgb(180, 180, 180),
