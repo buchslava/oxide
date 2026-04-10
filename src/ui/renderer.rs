@@ -1526,6 +1526,15 @@ impl Renderer {
             let (name_style, mark_style) = if is_selected {
                 let sel = Style::default().fg(list.selected_fg).bg(list.selected_bg);
                 (sel, sel)
+            } else if file.is_hidden_dotfile() {
+                if file.is_dir {
+                    (
+                        base.fg(list.hidden_fg).add_modifier(Modifier::BOLD),
+                        base,
+                    )
+                } else {
+                    (base.fg(list.hidden_fg), base)
+                }
             } else if file.is_dir {
                 let dir = base.fg(list.directory_fg).add_modifier(Modifier::BOLD);
                 (dir, base)
@@ -1568,6 +1577,8 @@ impl Renderer {
                     size_pad.as_str(),
                     if is_selected {
                         mark_style
+                    } else if file.is_hidden_dotfile() {
+                        base.fg(list.hidden_fg)
                     } else {
                         base.fg(list.file_fg)
                     },
@@ -1577,6 +1588,8 @@ impl Renderer {
                     mtime_pad.as_str(),
                     if is_selected {
                         mark_style
+                    } else if file.is_hidden_dotfile() {
+                        base.fg(list.hidden_fg)
                     } else {
                         base.fg(list.file_fg)
                     },
@@ -1654,6 +1667,7 @@ impl Renderer {
                 is_selected,
                 is_marked,
                 folder_tag,
+                file.is_hidden_dotfile(),
             );
             let line_area = Rect {
                 x: left_col.x,
@@ -1683,6 +1697,7 @@ impl Renderer {
                 is_selected,
                 is_marked,
                 folder_tag,
+                file.is_hidden_dotfile(),
             );
             let line_area = Rect {
                 x: right_col.x,

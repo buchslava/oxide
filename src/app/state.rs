@@ -148,8 +148,7 @@ pub struct AppState {
     pub persisted_settings: PersistedSettings,
     /// At startup: OS trash usable for Safe delete (Linux: writable XDG data dir; macOS: yes).
     pub trash_available: bool,
-    /// Active built-in theme id (for future persistence / settings UI).
-    #[allow(dead_code)]
+    /// Active built-in theme id; kept in sync with `persisted_settings.theme` and `ui_palette`.
     pub theme_id: ThemeId,
     /// Resolved colors for this frame; update when `theme_id` changes via [`ThemeId::palette`].
     pub ui_palette: UiPalette,
@@ -253,6 +252,8 @@ impl AppState {
     /// Single sync point: apply persisted_settings to both panels (view_mode, show_hidden, refresh file lists).
     /// Call after startup and whenever persisted_settings change so UI always matches the source of truth.
     pub fn sync_from_persisted_settings(&mut self) {
+        self.theme_id = ThemeId::from_slug(&self.persisted_settings.theme);
+        self.ui_palette = self.theme_id.palette();
         let view_left = view_mode_from_settings_flag(&self.persisted_settings.left_view);
         let view_right = view_mode_from_settings_flag(&self.persisted_settings.right_view);
         let left_show = self.persisted_settings.left_show_hidden;

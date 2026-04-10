@@ -1,4 +1,4 @@
-//! F9 "Settings" dialog. Two-column: section list (General, Left panel, Right panel, Info) and details.
+//! F9 "Settings" dialog. Two-column: section list (General, panels, Theme, Info) and details.
 //! Tab / Shift+Tab switch focus between columns; Esc or click outside closes.
 
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -13,12 +13,12 @@ use ratatui::{
 use crate::app::events::{AppAction, SettingChange};
 use crate::app::state::AppState;
 use crate::core::file_ops::SORT_MODES;
-use crate::ui::theme::DialogPalette;
+use crate::ui::theme::{DialogPalette, ThemeId};
 
 /// State for F9 Settings dialog. Only UI navigation; all setting values live in PersistedSettings (single source of truth).
 #[derive(Debug, Clone)]
 pub struct SettingsDialogState {
-    /// Selected section index: 0 General, 1 Left panel, 2 Right panel, 3 Info.
+    /// Selected section index: 0 General, 1 Left, 2 Right, 3 Theme, 4 Info.
     pub selected_section: usize,
     /// true = focus on left list, false = focus on right content.
     pub focus_left: bool,
@@ -37,7 +37,13 @@ impl Default for SettingsDialogState {
 }
 
 /// Section indices for the Settings dialog sidebar (Help is in F1 dialog).
-pub const SETTINGS_SECTIONS: [&str; 4] = ["General settings", "Left panel", "Right panel", "Info"];
+pub const SETTINGS_SECTIONS: [&str; 5] = [
+    "General settings",
+    "Left panel",
+    "Right panel",
+    "Theme",
+    "Info",
+];
 
 /// Bounding box of the Settings modal (must match [`draw`]).
 pub fn dialog_rect(area: Rect) -> Rect {
@@ -84,6 +90,10 @@ pub fn handle_key(
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
     let state = app.settings_dialog.as_mut()?;
+    if state.selected_section == 3 {
+        let n = ThemeId::ALL.len().max(1);
+        state.content_focus = state.content_focus.min(n.saturating_sub(1));
+    }
     let persisted_snapshot = app.persisted_settings.clone();
     match code {
         KeyCode::Esc => {
@@ -101,8 +111,12 @@ pub fn handle_key(
         KeyCode::Up => {
             if state.focus_left {
                 let section_count = SETTINGS_SECTIONS.len();
+                let prev = state.selected_section;
                 state.selected_section =
                     (state.selected_section + section_count - 1) % section_count;
+                if prev != state.selected_section {
+                    state.content_focus = 0;
+                }
                 return Some(AppAction::Continue);
             }
             // Right column: Up = previous item or move focus up
@@ -130,6 +144,10 @@ pub fn handle_key(
                         return Some(AppAction::SettingChange(SettingChange::RightViewCycle));
                     }
                 }
+                3 => {
+                    let n = ThemeId::ALL.len().max(1);
+                    state.content_focus = (state.content_focus + n - 1) % n;
+                }
                 _ => {}
             }
             return Some(AppAction::Continue);
@@ -137,7 +155,11 @@ pub fn handle_key(
         KeyCode::Down => {
             if state.focus_left {
                 let section_count = SETTINGS_SECTIONS.len();
+                let prev = state.selected_section;
                 state.selected_section = (state.selected_section + 1) % section_count;
+                if prev != state.selected_section {
+                    state.content_focus = 0;
+                }
                 return Some(AppAction::Continue);
             }
             // Right column: Down = next item or move focus down
@@ -172,6 +194,10 @@ pub fn handle_key(
                     } else {
                         state.content_focus = 0;
                     }
+                }
+                3 => {
+                    let n = ThemeId::ALL.len().max(1);
+                    state.content_focus = (state.content_focus + 1) % n;
                 }
                 _ => {}
             }
@@ -217,6 +243,9 @@ pub fn handle_key(
                         SettingChange::RightShowHiddenToggle,
                     )),
                 },
+                3 => Some(AppAction::SettingChange(SettingChange::ThemeSelect(
+                    state.content_focus,
+                ))),
                 _ => None,
             };
             if let Some(a) = action {
@@ -226,6 +255,57 @@ pub fn handle_key(
         _ => {}
     }
     Some(AppAction::Continue)
+}
+
+fn draw_theme_section(
+    f: &mut Frame,
+    dialog: &DialogPalette,
+    area: Rect,
+    fill_style: Style,
+    persisted_theme_slug: &str,
+    content_focus: usize,
+) {
+    let view_highlight = dialog
+        .list_highlight_style()
+        .remove_modifier(Modifier::BOLD);
+    let current = ThemeId::from_slug(persisted_theme_slug);
+    let selected_idx = ThemeId::ALL
+        .iter()
+        .position(|&t| t == current)
+        .unwrap_or(0);
+    let mut y = area.y;
+    let line_h = 1u16;
+
+    f.render_widget(
+        Paragraph::new(Line::from(Span::raw("Current theme:"))).style(fill_style),
+        Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: line_h,
+        },
+    );
+    y += line_h;
+
+    for (i, &theme) in ThemeId::ALL.iter().enumerate() {
+        let sym = if i == selected_idx { "◉ " } else { "○ " };
+        let style = if i == content_focus {
+            view_highlight
+        } else {
+            fill_style
+        };
+        let line = Line::from(vec![Span::raw(sym), Span::raw(theme.display_name())]);
+        f.render_widget(
+            Paragraph::new(line).style(style),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: line_h,
+            },
+        );
+        y += line_h;
+    }
 }
 
 /// Info text for the Info section: app description, license, link.
@@ -526,7 +606,15 @@ pub fn draw(
             persisted.right_show_hidden,
             state.content_focus,
         ),
-        3 => {
+        3 => draw_theme_section(
+            f,
+            d,
+            right_inner,
+            right_fill_style,
+            persisted.theme.as_str(),
+            state.content_focus,
+        ),
+        4 => {
             let para = Paragraph::new(info_lines())
                 .style(right_fill_style)
                 .wrap(Wrap { trim: true });

@@ -85,6 +85,13 @@ pub(crate) fn apply_persisted_setting_change(
                 app.persisted_settings.safe_delete = !app.persisted_settings.safe_delete;
             }
         }
+        SettingChange::ThemeSelect(idx) => {
+            if let Some(&t) = crate::ui::theme::ThemeId::ALL.get(idx) {
+                app.persisted_settings.theme = t.slug().to_string();
+                app.theme_id = t;
+                app.ui_palette = t.palette();
+            }
+        }
     }
 }
 
@@ -97,6 +104,7 @@ pub(crate) fn setting_change_skips_panel_resync(change: SettingChange) -> bool {
             | SettingChange::AutoReopenPanelsAfterCommandDelayCycle
             | SettingChange::FilePatternModeCycle
             | SettingChange::SafeDeleteToggle
+            | SettingChange::ThemeSelect(_)
     )
 }
 

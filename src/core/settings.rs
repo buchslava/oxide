@@ -60,6 +60,13 @@ pub struct PersistedSettings {
     /// When true (default), F8 delete moves items to the OS trash when available (F9 Safe delete).
     #[serde(default = "default_true")]
     pub safe_delete: bool,
+    /// TUI color preset slug (F9 → Theme). Default `oxide` matches the built-in Oxide palette.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "oxide".to_string()
 }
 
 fn default_file_pattern_mode() -> String {
@@ -102,6 +109,7 @@ impl Default for PersistedSettings {
             active_panel: 0,
             file_pattern_mode: default_file_pattern_mode(),
             safe_delete: true,
+            theme: default_theme(),
         }
     }
 }
@@ -180,5 +188,6 @@ mod tests {
         assert!(json.contains("\"auto_reopen_panels_after_command_delay_secs\""));
         assert!(json.contains("\"file_pattern_mode\""));
         assert!(json.contains("\"safe_delete\""));
+        assert!(json.contains("\"theme\""));
     }
 }

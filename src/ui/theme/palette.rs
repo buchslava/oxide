@@ -62,6 +62,60 @@ impl DialogPalette {
         error_fg: Color::Rgb(255, 90, 90),
     };
 
+    /// Classic dual-pane blue canvas, light gray–white text, yellow accents (Norton-style).
+    pub const COMMANDER: Self = Self {
+        modal_dim_bg: Color::Rgb(0, 12, 40),
+        modal_dim_fg: Color::Rgb(130, 160, 210),
+        dialog_bg: Color::Rgb(0, 28, 72),
+        dialog_bg_secondary: Color::Rgb(0, 34, 82),
+        text: Color::Rgb(230, 235, 252),
+        text_muted: Color::Rgb(165, 190, 228),
+        border: Color::Rgb(110, 200, 255),
+        accent: Color::Rgb(255, 220, 100),
+        focus_bg: Color::Rgb(255, 235, 80),
+        focus_fg: Color::Black,
+        list_highlight_bg: Color::Rgb(0, 54, 118),
+        list_highlight_fg: Color::Rgb(255, 255, 255),
+        input_bg_focused: Color::Rgb(0, 42, 98),
+        input_bg_unfocused: Color::Rgb(0, 36, 86),
+        input_selection_bg: Color::Rgb(22, 78, 140),
+        help_section_marker: Color::Rgb(120, 210, 255),
+        help_heading: Color::Rgb(180, 230, 255),
+        help_key: Color::Rgb(255, 225, 120),
+        help_body: Color::Rgb(228, 234, 250),
+        help_dim: Color::Rgb(155, 180, 220),
+        rename_border: Color::Rgb(140, 220, 255),
+        rename_border_active: Color::Rgb(255, 250, 140),
+        error_fg: Color::Rgb(255, 120, 120),
+    };
+
+    /// CRT amber / orange phosphor: black canvas, amber text, solid orange selection (inverse video).
+    pub const ORANGE_MONOCHROME: Self = Self {
+        modal_dim_bg: Color::Rgb(0, 0, 0),
+        modal_dim_fg: Color::Rgb(140, 95, 40),
+        dialog_bg: Color::Rgb(10, 8, 4),
+        dialog_bg_secondary: Color::Rgb(22, 16, 8),
+        text: Color::Rgb(255, 176, 0),
+        text_muted: Color::Rgb(200, 140, 55),
+        border: Color::Rgb(255, 184, 30),
+        accent: Color::Rgb(255, 204, 0),
+        focus_bg: Color::Rgb(255, 204, 0),
+        focus_fg: Color::Black,
+        list_highlight_bg: Color::Rgb(255, 200, 40),
+        list_highlight_fg: Color::Black,
+        input_bg_focused: Color::Rgb(36, 24, 10),
+        input_bg_unfocused: Color::Rgb(26, 18, 8),
+        input_selection_bg: Color::Rgb(90, 55, 18),
+        help_section_marker: Color::Rgb(230, 155, 40),
+        help_heading: Color::Rgb(255, 200, 70),
+        help_key: Color::Rgb(255, 214, 90),
+        help_body: Color::Rgb(255, 185, 35),
+        help_dim: Color::Rgb(170, 120, 45),
+        rename_border: Color::Rgb(255, 190, 50),
+        rename_border_active: Color::Rgb(255, 220, 100),
+        error_fg: Color::Rgb(255, 95, 45),
+    };
+
     #[inline]
     pub fn fill_style(self) -> Style {
         Style::default().bg(self.dialog_bg).fg(self.text)
@@ -120,6 +174,24 @@ impl ProgressPalette {
         path_text: Color::White,
         hint: Color::DarkGray,
     };
+
+    pub const COMMANDER: Self = Self {
+        background: Color::Rgb(0, 18, 58),
+        border: Color::Rgb(120, 210, 255),
+        gauge: Color::Rgb(80, 190, 255),
+        section_label: Color::Yellow,
+        path_text: Color::Rgb(235, 240, 255),
+        hint: Color::Rgb(120, 155, 200),
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        background: Color::Rgb(0, 0, 0),
+        border: Color::Rgb(255, 176, 0),
+        gauge: Color::Rgb(255, 200, 50),
+        section_label: Color::Rgb(255, 210, 80),
+        path_text: Color::Rgb(255, 190, 60),
+        hint: Color::Rgb(150, 105, 38),
+    };
 }
 
 // --- Main panels, frame, command line, bottom bar, F10 menu ---
@@ -162,6 +234,40 @@ impl ChromePalette {
         bottom_bar_success: Color::Green,
         column_separator: Color::White,
     };
+
+    pub const COMMANDER: Self = Self {
+        main_background: Color::Rgb(0, 26, 72),
+        panel_border_fg: Color::Rgb(200, 220, 255),
+        panel_border_bg: Color::Rgb(0, 26, 72),
+        command_line_fg: Color::Rgb(235, 240, 255),
+        command_prompt_active_fg: Color::Rgb(255, 230, 100),
+        command_prompt_inactive_fg: Color::Rgb(110, 145, 195),
+        menu_overlay_bg: Color::Rgb(0, 18, 58),
+        menu_hotkey: Color::Rgb(255, 220, 90),
+        menu_label: Color::Rgb(200, 215, 245),
+        menu_unavailable: Color::Rgb(90, 120, 165),
+        bottom_bar_path: Color::Rgb(255, 220, 95),
+        bottom_bar_size: Color::Rgb(165, 210, 255),
+        bottom_bar_success: Color::Rgb(140, 255, 160),
+        column_separator: Color::Rgb(190, 210, 255),
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        main_background: Color::Rgb(0, 0, 0),
+        panel_border_fg: Color::Rgb(255, 176, 0),
+        panel_border_bg: Color::Rgb(0, 0, 0),
+        command_line_fg: Color::Rgb(255, 188, 40),
+        command_prompt_active_fg: Color::Rgb(255, 210, 90),
+        command_prompt_inactive_fg: Color::Rgb(130, 88, 32),
+        menu_overlay_bg: Color::Rgb(14, 10, 4),
+        menu_hotkey: Color::Rgb(255, 204, 0),
+        menu_label: Color::Rgb(220, 160, 65),
+        menu_unavailable: Color::Rgb(85, 58, 22),
+        bottom_bar_path: Color::Rgb(255, 204, 0),
+        bottom_bar_size: Color::Rgb(205, 145, 55),
+        bottom_bar_success: Color::Rgb(255, 225, 120),
+        column_separator: Color::Rgb(255, 168, 25),
+    };
 }
 
 // --- File list (both panels) ---
@@ -175,6 +281,8 @@ pub struct PanelListPalette {
     pub zip_fg: Color,
     pub symlink_fg: Color,
     pub file_fg: Color,
+    /// Dotfiles (name starts with `.`, except `..`); only when row is not selected.
+    pub hidden_fg: Color,
     /// `> ` and folder-diff `C ` / `S ` / `X ` in panel file lists.
     pub marked_prefix: Color,
 }
@@ -188,7 +296,32 @@ impl PanelListPalette {
         zip_fg: Color::Rgb(160, 120, 255),
         symlink_fg: Color::Magenta,
         file_fg: Color::White,
+        hidden_fg: Color::Rgb(88, 90, 96),
         marked_prefix: Color::Rgb(120, 175, 255),
+    };
+
+    pub const COMMANDER: Self = Self {
+        selected_fg: Color::Black,
+        selected_bg: Color::Rgb(255, 235, 80),
+        directory_fg: Color::Rgb(150, 230, 255),
+        executable_fg: Color::Rgb(130, 255, 160),
+        zip_fg: Color::Rgb(200, 170, 255),
+        symlink_fg: Color::Rgb(255, 160, 230),
+        file_fg: Color::Rgb(235, 240, 255),
+        hidden_fg: Color::Rgb(88, 90, 96),
+        marked_prefix: Color::Rgb(255, 210, 90),
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        selected_fg: Color::Black,
+        selected_bg: Color::Rgb(255, 204, 0),
+        directory_fg: Color::Rgb(255, 200, 95),
+        executable_fg: Color::Rgb(255, 215, 120),
+        zip_fg: Color::Rgb(225, 155, 55),
+        symlink_fg: Color::Rgb(255, 165, 95),
+        file_fg: Color::Rgb(255, 176, 0),
+        hidden_fg: Color::Rgb(110, 62, 14),
+        marked_prefix: Color::Rgb(255, 214, 100),
     };
 }
 
@@ -212,6 +345,24 @@ impl ViewerPalette {
         muted: Color::DarkGray,
         hex_cursor_bg: Color::DarkGray,
         hex_cursor_fg: Color::White,
+    };
+
+    pub const COMMANDER: Self = Self {
+        background: Color::Rgb(0, 26, 72),
+        text: Color::Rgb(235, 240, 255),
+        header_path: Color::Rgb(150, 225, 255),
+        muted: Color::Rgb(120, 155, 200),
+        hex_cursor_bg: Color::Rgb(0, 40, 100),
+        hex_cursor_fg: Color::Rgb(255, 255, 255),
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        background: Color::Rgb(0, 0, 0),
+        text: Color::Rgb(255, 180, 25),
+        header_path: Color::Rgb(255, 205, 80),
+        muted: Color::Rgb(145, 100, 38),
+        hex_cursor_bg: Color::Rgb(255, 195, 45),
+        hex_cursor_fg: Color::Black,
     };
 
     #[inline]
@@ -278,6 +429,52 @@ impl DiffViewerPalette {
         char_added_bg: Color::Rgb(58, 150, 92),
         char_added_fg: Color::Rgb(255, 255, 255),
     };
+
+    pub const COMMANDER: Self = Self {
+        background: Color::Rgb(0, 26, 68),
+        text: Color::Rgb(240, 245, 255),
+        header_path: Color::Rgb(185, 215, 255),
+        muted: Color::Rgb(125, 155, 200),
+        column_border: Color::Rgb(42, 78, 128),
+        gap_bg: Color::Rgb(0, 26, 68),
+        gap_fg: Color::Rgb(0, 26, 68),
+        removed_bg: Color::Rgb(45, 95, 155),
+        removed_fg: Color::Rgb(248, 250, 255),
+        added_bg: Color::Rgb(45, 95, 155),
+        added_fg: Color::Rgb(248, 250, 255),
+        changed_old_bg: Color::Rgb(35, 115, 85),
+        changed_old_fg: Color::Rgb(255, 255, 255),
+        changed_new_bg: Color::Rgb(35, 115, 85),
+        changed_new_fg: Color::Rgb(255, 255, 255),
+        line_number_fg: Color::Rgb(140, 170, 210),
+        char_removed_bg: Color::Rgb(28, 95, 68),
+        char_removed_fg: Color::Rgb(255, 255, 255),
+        char_added_bg: Color::Rgb(50, 145, 100),
+        char_added_fg: Color::Rgb(255, 255, 255),
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        background: Color::Rgb(0, 0, 0),
+        text: Color::Rgb(255, 210, 150),
+        header_path: Color::Rgb(255, 195, 80),
+        muted: Color::Rgb(155, 105, 42),
+        column_border: Color::Rgb(95, 62, 22),
+        gap_bg: Color::Rgb(0, 0, 0),
+        gap_fg: Color::Rgb(0, 0, 0),
+        removed_bg: Color::Rgb(95, 52, 14),
+        removed_fg: Color::Rgb(255, 220, 170),
+        added_bg: Color::Rgb(95, 52, 14),
+        added_fg: Color::Rgb(255, 220, 170),
+        changed_old_bg: Color::Rgb(75, 48, 12),
+        changed_old_fg: Color::Rgb(255, 230, 190),
+        changed_new_bg: Color::Rgb(75, 48, 12),
+        changed_new_fg: Color::Rgb(255, 230, 190),
+        line_number_fg: Color::Rgb(165, 115, 45),
+        char_removed_bg: Color::Rgb(58, 35, 8),
+        char_removed_fg: Color::Rgb(255, 210, 140),
+        char_added_bg: Color::Rgb(110, 65, 18),
+        char_added_fg: Color::Rgb(255, 235, 200),
+    };
 }
 
 // --- Toasts (ratatui widget + crossterm main-buffer overlay) ---
@@ -297,6 +494,20 @@ impl ToastPalette {
         foreground: Color::Rgb(140, 200, 140),
         alert_background: Color::Rgb(120, 28, 32),
         alert_foreground: Color::Rgb(255, 236, 236),
+    };
+
+    pub const COMMANDER: Self = Self {
+        background: Color::Rgb(0, 38, 82),
+        foreground: Color::Rgb(160, 240, 190),
+        alert_background: Color::Rgb(130, 35, 45),
+        alert_foreground: Color::Rgb(255, 238, 238),
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        background: Color::Rgb(38, 24, 8),
+        foreground: Color::Rgb(255, 200, 90),
+        alert_background: Color::Rgb(110, 38, 14),
+        alert_foreground: Color::Rgb(255, 225, 200),
     };
 
     #[inline]
@@ -354,6 +565,26 @@ impl UiPalette {
         diff_viewer: DiffViewerPalette::OXIDE,
         toast: ToastPalette::OXIDE,
     };
+
+    pub const COMMANDER: Self = Self {
+        dialog: DialogPalette::COMMANDER,
+        progress: ProgressPalette::COMMANDER,
+        chrome: ChromePalette::COMMANDER,
+        panel_list: PanelListPalette::COMMANDER,
+        viewer: ViewerPalette::COMMANDER,
+        diff_viewer: DiffViewerPalette::COMMANDER,
+        toast: ToastPalette::COMMANDER,
+    };
+
+    pub const ORANGE_MONOCHROME: Self = Self {
+        dialog: DialogPalette::ORANGE_MONOCHROME,
+        progress: ProgressPalette::ORANGE_MONOCHROME,
+        chrome: ChromePalette::ORANGE_MONOCHROME,
+        panel_list: PanelListPalette::ORANGE_MONOCHROME,
+        viewer: ViewerPalette::ORANGE_MONOCHROME,
+        diff_viewer: DiffViewerPalette::ORANGE_MONOCHROME,
+        toast: ToastPalette::ORANGE_MONOCHROME,
+    };
 }
 
 /// Built-in theme identifiers. Add variants when you ship more presets; resolve with [`ThemeId::palette`].
@@ -361,13 +592,84 @@ impl UiPalette {
 pub enum ThemeId {
     #[default]
     Oxide,
+    Commander,
+    OrangeMonochrome,
 }
 
 impl ThemeId {
+    /// Presets shown in F9 → Theme (order = cycle order when multiple exist).
+    pub const ALL: &'static [ThemeId] = &[
+        ThemeId::Oxide,
+        ThemeId::Commander,
+        ThemeId::OrangeMonochrome,
+    ];
+
+    #[must_use]
+    pub fn slug(self) -> &'static str {
+        match self {
+            ThemeId::Oxide => "oxide",
+            ThemeId::Commander => "commander",
+            ThemeId::OrangeMonochrome => "orangemonochrome",
+        }
+    }
+
+    /// Value stored in `settings.json` under `theme`.
+    #[must_use]
+    pub fn from_slug(s: &str) -> Self {
+        if s.eq_ignore_ascii_case(ThemeId::OrangeMonochrome.slug()) {
+            ThemeId::OrangeMonochrome
+        } else if s.eq_ignore_ascii_case(ThemeId::Commander.slug()) {
+            ThemeId::Commander
+        } else if s.eq_ignore_ascii_case(ThemeId::Oxide.slug()) {
+            ThemeId::Oxide
+        } else {
+            ThemeId::Oxide
+        }
+    }
+
+    #[must_use]
+    pub fn display_name(self) -> &'static str {
+        match self {
+            ThemeId::Oxide => "Oxide (default)",
+            ThemeId::Commander => "Commander",
+            ThemeId::OrangeMonochrome => "Orange monochrome",
+        }
+    }
+
     #[must_use]
     pub fn palette(self) -> UiPalette {
         match self {
             ThemeId::Oxide => UiPalette::OXIDE,
+            ThemeId::Commander => UiPalette::COMMANDER,
+            ThemeId::OrangeMonochrome => UiPalette::ORANGE_MONOCHROME,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ThemeId;
+
+    #[test]
+    fn from_slug_commander() {
+        assert_eq!(ThemeId::from_slug("commander"), ThemeId::Commander);
+        assert_eq!(ThemeId::from_slug("COMMANDER"), ThemeId::Commander);
+    }
+
+    #[test]
+    fn from_slug_unknown_falls_back_to_oxide() {
+        assert_eq!(ThemeId::from_slug("no-such-theme"), ThemeId::Oxide);
+    }
+
+    #[test]
+    fn from_slug_orange_monochrome() {
+        assert_eq!(
+            ThemeId::from_slug("orangemonochrome"),
+            ThemeId::OrangeMonochrome
+        );
+        assert_eq!(
+            ThemeId::from_slug("ORANGEMONOCHROME"),
+            ThemeId::OrangeMonochrome
+        );
     }
 }

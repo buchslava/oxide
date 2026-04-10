@@ -146,6 +146,12 @@ impl FileInfo {
     pub fn is_parent_dir(&self) -> bool {
         self.name == ".."
     }
+
+    /// True for `..` false; name starts with `.` (dotfiles shown when hidden files are visible).
+    #[inline]
+    pub fn is_hidden_dotfile(&self) -> bool {
+        !self.is_parent_dir() && self.name.starts_with('.')
+    }
 }
 
 /// Sort mode strings used in settings.

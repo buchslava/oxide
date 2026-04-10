@@ -15,6 +15,7 @@ pub(crate) fn create_file_line_from_display(
     is_selected: bool,
     is_marked: bool,
     folder_diff: Option<FolderDiffTag>,
+    is_hidden_dotfile: bool,
 ) -> Line<'static> {
     let prefix_style = || {
         if is_selected {
@@ -36,37 +37,39 @@ pub(crate) fn create_file_line_from_display(
         };
         spans.push(Span::styled(pfx, prefix_style()));
     }
-    let style = if is_dir {
-        if is_selected {
+    let style = if is_selected {
+        if is_dir {
             Style::default()
                 .fg(list.selected_fg)
                 .bg(list.selected_bg)
                 .add_modifier(Modifier::BOLD)
+        } else if is_archive {
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
+        } else if is_symlink {
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
+        } else if is_executable {
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
         } else {
+            Style::default().fg(list.selected_fg).bg(list.selected_bg)
+        }
+    } else if is_hidden_dotfile {
+        if is_dir {
             Style::default()
-                .fg(list.directory_fg)
+                .fg(list.hidden_fg)
                 .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(list.hidden_fg)
         }
+    } else if is_dir {
+        Style::default()
+            .fg(list.directory_fg)
+            .add_modifier(Modifier::BOLD)
     } else if is_archive {
-        if is_selected {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        } else {
-            Style::default().fg(list.zip_fg)
-        }
+        Style::default().fg(list.zip_fg)
     } else if is_symlink {
-        if is_selected {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        } else {
-            Style::default().fg(list.symlink_fg)
-        }
+        Style::default().fg(list.symlink_fg)
     } else if is_executable {
-        if is_selected {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        } else {
-            Style::default().fg(list.executable_fg)
-        }
-    } else if is_selected {
-        Style::default().fg(list.selected_fg).bg(list.selected_bg)
+        Style::default().fg(list.executable_fg)
     } else {
         Style::default().fg(list.file_fg)
     };

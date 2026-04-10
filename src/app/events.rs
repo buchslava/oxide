@@ -154,6 +154,8 @@ pub enum SettingChange {
     RightDirsFirstToggle,
     /// F9 General: Safe delete (trash vs permanent); only applies when OS trash is available.
     SafeDeleteToggle,
+    /// F9 Theme: apply preset at `ThemeId::ALL` index.
+    ThemeSelect(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
