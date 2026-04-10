@@ -1,6 +1,7 @@
-//! F1 "Help" dialog. Shows shortcut reference. Modal overlay; Esc, q, or click outside closes.
+//! F1 "Help" dialog. Scrollable shortcut reference with a narrow scrollbar; Esc, q, or click outside closes.
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::terminal::size;
 use ratatui::{
     layout::{Alignment, Margin, Rect},
     style::{Modifier, Style},
@@ -13,29 +14,180 @@ use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::ui::theme::DialogPalette;
 
-/// Open the Help dialog.
+/// F1 Help: scroll offset in lines (top visible line index).
+#[derive(Debug, Clone, Default)]
+pub struct HelpDialogState {
+    pub scroll: usize,
+}
+
+/// Open the Help dialog (scroll reset).
 pub fn open(app: &mut AppState) {
-    app.help_dialog = true;
+    app.help_dialog = Some(HelpDialogState::default());
 }
 
-/// Close the dialog.
+/// Close the Help dialog.
 pub fn close(app: &mut AppState) {
-    app.help_dialog = false;
+    app.help_dialog = None;
 }
 
-/// Handle a key when the help dialog is open.
+const SCROLLBAR_W: u16 = 1;
+const HINT_H: u16 = 1;
+const WHEEL_LINES: usize = 3;
+
+/// Bounding box of the Help modal (must match [`draw`] and [`help_layout`]).
+pub fn dialog_rect(area: Rect) -> Rect {
+    let margin = 4u16;
+    let max_w = area.width.saturating_sub(margin);
+    let max_h = area.height.saturating_sub(margin);
+    let w = max_w.min(122);
+    let h = max_h.min(60).max(16);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
+
+/// Layout for the help modal: outer dialog rect, text body (no scrollbar), scrollbar column.
+pub fn help_layout(area: Rect) -> (Rect, Rect, Rect) {
+    let rect = dialog_rect(area);
+    let inner = rect.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let body_h = inner.height.saturating_sub(HINT_H);
+    let text = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width.saturating_sub(SCROLLBAR_W),
+        height: body_h,
+    };
+    let scrollbar = Rect {
+        x: inner.x + inner.width.saturating_sub(SCROLLBAR_W),
+        y: inner.y,
+        width: SCROLLBAR_W,
+        height: body_h,
+    };
+    (rect, text, scrollbar)
+}
+
+fn viewport_rows(area: Rect) -> usize {
+    help_layout(area).1.height as usize
+}
+
+fn help_max_scroll(area: Rect, total_lines: usize) -> usize {
+    let vis = viewport_rows(area).max(1);
+    total_lines.saturating_sub(vis)
+}
+
+fn clamp_help_scroll(scroll: usize, area: Rect, total_lines: usize) -> usize {
+    scroll.min(help_max_scroll(area, total_lines))
+}
+
+/// Handle keyboard when the help dialog is open.
 pub fn handle_key(
+    app: &mut AppState,
     code: KeyCode,
     _modifiers: KeyModifiers,
 ) -> Option<AppAction> {
+    let state = app.help_dialog.as_mut()?;
+    let area = term_area();
+    let total = help_build_lines(&app.ui_palette.dialog).len();
+
     match code {
         KeyCode::Esc => Some(AppAction::HelpClose),
         KeyCode::Char(c) if c == 'q' => Some(AppAction::HelpClose),
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.scroll = state.scroll.saturating_sub(1);
+            state.scroll = clamp_help_scroll(state.scroll, area, total);
+            Some(AppAction::Continue)
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.scroll = (state.scroll + 1).min(help_max_scroll(area, total));
+            Some(AppAction::Continue)
+        }
+        KeyCode::PageUp => {
+            let step = viewport_rows(area).max(1);
+            state.scroll = state.scroll.saturating_sub(step);
+            state.scroll = clamp_help_scroll(state.scroll, area, total);
+            Some(AppAction::Continue)
+        }
+        KeyCode::PageDown => {
+            let step = viewport_rows(area).max(1);
+            state.scroll = (state.scroll + step).min(help_max_scroll(area, total));
+            Some(AppAction::Continue)
+        }
+        KeyCode::Home => {
+            state.scroll = 0;
+            Some(AppAction::Continue)
+        }
+        KeyCode::End => {
+            state.scroll = help_max_scroll(area, total);
+            Some(AppAction::Continue)
+        }
         _ => None,
     }
 }
 
-/// Section title: left marker + bold cyan heading.
+/// Mouse: outside click closes; wheel scrolls inside dialog; click scrollbar jumps.
+pub fn handle_mouse(
+    app: &mut AppState,
+    area: Rect,
+    mouse_event: &MouseEvent,
+) -> Option<AppAction> {
+    let state = app.help_dialog.as_mut()?;
+    let (dialog_rect, _text_rect, sb_rect) = help_layout(area);
+    let (col, row) = (mouse_event.column, mouse_event.row);
+    let total = help_build_lines(&app.ui_palette.dialog).len();
+    let vis = viewport_rows(area).max(1);
+    let max_scroll = help_max_scroll(area, total);
+
+    match mouse_event.kind {
+        MouseEventKind::ScrollUp => {
+            if crate::ui::dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                state.scroll = state.scroll.saturating_sub(WHEEL_LINES);
+                state.scroll = clamp_help_scroll(state.scroll, area, total);
+            }
+            Some(AppAction::Continue)
+        }
+        MouseEventKind::ScrollDown => {
+            if crate::ui::dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                state.scroll = (state.scroll + WHEEL_LINES).min(max_scroll);
+            }
+            Some(AppAction::Continue)
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if !crate::ui::dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
+                return Some(AppAction::HelpClose);
+            }
+            if max_scroll > 0 && crate::ui::dialog_layout::pointer_in_dialog(col, row, sb_rect) {
+                let rel = (row.saturating_sub(sb_rect.y)) as usize;
+                if vis > 1 {
+                    state.scroll = (rel * max_scroll / (vis - 1)).min(max_scroll);
+                } else {
+                    state.scroll = max_scroll;
+                }
+            }
+            Some(AppAction::Continue)
+        }
+        _ => Some(AppAction::Continue),
+    }
+}
+
+fn term_area() -> Rect {
+    let (tw, th) = size().unwrap_or((80, 24));
+    Rect {
+        x: 0,
+        y: 0,
+        width: tw,
+        height: th,
+    }
+}
+
+/// Section title: left marker + bold heading.
 fn help_h(
     d: &DialogPalette,
     title: &'static str,
@@ -51,12 +203,10 @@ fn help_h(
     ])
 }
 
-/// Blank line between sections.
 fn help_spacer() -> Line<'static> {
     Line::from("")
 }
 
-/// Muted body line (secondary description).
 fn help_muted(
     d: &DialogPalette,
     text: &'static str,
@@ -64,7 +214,7 @@ fn help_muted(
     Line::from(vec![Span::styled(text, Style::default().fg(d.help_dim))])
 }
 
-fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
+fn help_build_lines(d: &DialogPalette) -> Vec<Line<'static>> {
     let key = d.help_key;
     let body = d.help_body;
     let dim = d.help_dim;
@@ -74,64 +224,28 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
     let t = |s: &'static str| Span::raw(s);
 
     vec![
-        help_h(d, "Features"),
+        help_h(d, "Overview"),
         Line::from(vec![
-            t("    "),
-            Span::styled("Dual panels", Style::default().fg(body)),
-            t(" — full keyboard + mouse. "),
-            k("F5–F8"),
-            Span::styled(" copy, move, delete. ", Style::default().fg(body)),
-            k("Ctrl+T"),
-            Span::styled(" column layout.", Style::default().fg(body)),
-        ]),
-        Line::from(vec![
-            t("    "),
-            k("F3"),
-            Span::styled(" viewer (text/hex) · ", Style::default().fg(body)),
-            k("F4"),
-            Span::styled(" editor · ", Style::default().fg(body)),
-            k("Ctrl+D"),
-            Span::styled(" diff 2 marked files, or panel compare (no marks: C/S/X) · ", Style::default().fg(body)),
-            k("F7"),
-            Span::styled(" mkdir · ", Style::default().fg(body)),
-            k("F2"),
-            Span::styled(" rename & attributes.", Style::default().fg(body)),
-        ]),
-        Line::from(vec![
-            t("    "),
-            k("Ctrl+G"),
-            Span::styled(" size · ", Style::default().fg(body)),
-            k("Ctrl+H"),
-            Span::styled(" hidden · ", Style::default().fg(body)),
-            k("Ctrl+O"),
-            Span::styled(" shell · disk space (Unix).", Style::default().fg(body)),
-        ]),
-        Line::from(vec![
-            t("    "),
-            k("Ctrl+F"),
-            Span::styled(" find · ", Style::default().fg(body)),
-            k("Ctrl+A"),
-            Span::styled(" archive (zip / tar.gz) · ", Style::default().fg(body)),
-            k("Ctrl+N"),
-            Span::styled(" new file. Cmd line: ", Style::default().fg(body)),
-            k("F12"),
-            Span::styled(" inserts name.", Style::default().fg(body)),
+            t("    Oxide — two-panel file manager. Config: "),
+            k("~/.oxide/settings.json"),
+            t("."),
         ]),
         help_muted(
             d,
-            "    F3 viewer & Ctrl+D diff: large reads in background; non-printable text as “.”",
+            "    Refresh (Ctrl+R) re-reads the listing; if the folder vanished, the panel climbs to a valid parent.",
         ),
         help_spacer(),
-        help_h(d, "Navigation"),
+        help_h(d, "Panels & navigation"),
         Line::from(vec![
             t("    "),
             k("↑ ↓"),
-            t("  PgUp / PgDn     Move in list"),
-        ]),
-        Line::from(vec![
-            t("    "),
+            t("  "),
+            k("PgUp"),
+            t("/"),
+            k("PgDn"),
+            t("     Move in list      "),
             k("← →"),
-            t("                 Move between columns"),
+            t("   Move between columns"),
         ]),
         Line::from(vec![
             t("    "),
@@ -154,17 +268,41 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             t("    "),
             k("+"),
             t(" / "),
-            k("-"),
-            t("              Mark / unmark by pattern  ("),
+            k("−"),
+            t("              Mark / unmark by glob (same rules as Find; "),
             k("F9"),
-            t(": wildcards or regex; "),
-            k("|"),
-            t(" = multiple globs)"),
+            t(" pattern mode)."),
         ]),
         Line::from(vec![
-            t("    Type a character → command line   "),
-            k("Tab / Esc"),
-            t("  Back to panels"),
+            t("    "),
+            k("Ctrl+H"),
+            Span::styled(
+                "  Toggle hidden files (dot names). Dot entries use a dimmer list color when shown.",
+                Style::default().fg(body),
+            ),
+        ]),
+        Line::from(vec![
+            t("    "),
+            Span::styled(
+                "    Mouse: click files, wheel scrolls lists; wheel scrolls F3/F4/diff when those are open.",
+                Style::default().fg(body),
+            ),
+        ]),
+        help_spacer(),
+        help_h(d, "Command line"),
+        Line::from(vec![
+            t("    Type a character → focus command line and insert it. "),
+            k("Enter"),
+            t(" runs the shell command."),
+        ]),
+        Line::from(vec![
+            t("    "),
+            k("F12"),
+            t("  Insert selected file name at cursor (no run). "),
+            k("Tab"),
+            t(" / "),
+            k("Esc"),
+            t("  Return focus to panels."),
         ]),
         help_spacer(),
         help_h(d, "Function keys"),
@@ -173,7 +311,7 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             k("F1"),
             t("  Help      "),
             k("F2"),
-            t("  Rename    "),
+            t("  Rename / attrs   "),
             k("F3"),
             t("  View      "),
             k("F4"),
@@ -193,38 +331,45 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
         Line::from(vec![
             t("    "),
             k("F9"),
-            t("  Settings  "),
+            t("  Settings (themes, panels, safe delete, …)   "),
             k("F10"),
-            t(" Quit"),
+            t("  Quit"),
         ]),
         help_spacer(),
-        help_h(d, "Settings (F9) — General"),
+        help_h(d, "Themes (F9 → Theme)"),
+        Line::from(vec![
+            t("    Built-in color presets: "),
+            k("Oxide"),
+            t(", "),
+            k("Commander"),
+            t(", "),
+            k("Orange monochrome"),
+            t(". Choice is saved to settings."),
+        ]),
+        help_spacer(),
+        help_h(d, "Settings (F9)"),
         help_muted(
             d,
-            "    Tab / Shift+Tab: switch between sections list and details.",
+            "    Tab / Shift+Tab: sections list ↔ details. ↑↓ in General cycles rows; Space/Enter toggles.",
         ),
+        Line::from(vec![
+            t("    "),
+            k("General"),
+            Span::styled(
+                ": autosave, shell cwd sync, auto-reopen after command, Find/+− pattern mode, safe delete.",
+                Style::default().fg(body),
+            ),
+        ]),
+        Line::from(vec![
+            t("    "),
+            k("Left / Right panel"),
+            Span::styled(": view (one/two columns), sort, folders first, show hidden.", Style::default().fg(body)),
+        ]),
         Line::from(vec![
             t("    "),
             k("Safe delete"),
             Span::styled(
-                " — On (default): F8 moves to OS trash when supported. Off: permanent delete.",
-                Style::default().fg(body),
-            ),
-        ]),
-        help_muted(
-            d,
-            "    ZIP panels: entries removed inside the archive only. Trash N/A → option dimmed.",
-        ),
-        Line::from(vec![
-            t("    "),
-            Span::styled("Also:", Style::default().fg(body)),
-            Span::styled(
-                " autosave · shell sync · panel view/sort · ",
-                Style::default().fg(body),
-            ),
-            k("file pattern"),
-            Span::styled(
-                " (wildcards vs regex for Find & +/−).",
+                " — On (default): F8 uses OS trash when available. ZIP/tar panels: delete removes inside archive only.",
                 Style::default().fg(body),
             ),
         ]),
@@ -232,95 +377,107 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
         help_h(d, "Shortcuts"),
         Line::from(vec![
             t("    "),
-            k("Ctrl+O"),
-            t("  Shell       "),
-            k("Ctrl+H"),
-            t("  Hidden    "),
-            k("Ctrl+G"),
-            t("  Size"),
+            k("Ctrl+E"),
+            t("  Save paths & panel to settings   "),
+            k("Ctrl+R"),
+            t("  Refresh"),
         ]),
         Line::from(vec![
             t("    "),
-            k("Ctrl+E"),
-            t("  Save layout "),
-            k("Ctrl+R"),
-            t("  Refresh     "),
             k("Ctrl+T"),
-            t("  Columns   "),
-            k("Ctrl+Q/W"),
-            t("  Panel settings"),
+            t("  Column layout   "),
+            k("Ctrl+Q"),
+            t(" / "),
+            k("Ctrl+W"),
+            t("  Left / right panel settings overlay"),
+        ]),
+        Line::from(vec![
+            t("    "),
+            k("Ctrl+O"),
+            t("  Subshell   "),
+            k("Ctrl+G"),
+            t("  Size of selection   "),
+            k("Ctrl+D"),
+            t("  Diff (see below)"),
         ]),
         Line::from(vec![
             t("    "),
             k("Ctrl+F"),
-            t("  Find        "),
+            t("  Find file   "),
             k("Ctrl+A"),
             t("  Archive   "),
             k("Ctrl+N"),
             t("  New file"),
         ]),
+        help_spacer(),
+        help_h(d, "Copy / move / delete (F5–F8)"),
         Line::from(vec![
-            t("    "),
-            k("Ctrl+D"),
             Span::styled(
-                "  Diff — 2 marked non-dir files, or no marks: compare both panels (C/S/X prefixes)",
+                "    Overwrite prompts, error recovery, and progress overlays. Delete confirms before run.",
                 Style::default().fg(body),
             ),
         ]),
         help_spacer(),
         help_h(d, "Find file (Ctrl+F)"),
         Line::from(vec![
-            t("    "),
             Span::styled(
-                "Start dir, file pattern, optional ignore & content. Mode: ",
+                "    Start directory, file pattern, optional ignore & optional content search.",
                 Style::default().fg(body),
             ),
+        ]),
+        Line::from(vec![
+            t("    Pattern mode in "),
             k("F9"),
-            Span::styled(" → ", Style::default().fg(body)),
+            t(": wildcards ("),
             k("* ?"),
-            Span::styled(" wildcards or regex.", Style::default().fg(body)),
+            t(") or regex. Wildcards: "),
+            k("|"),
+            t(" separates alternative globs. Regex: "),
+            k("|"),
+            t(" is alternation (not split)."),
         ]),
         Line::from(vec![
-            t("    "),
-            k("Wildcards"),
-            Span::styled(": ", Style::default().fg(body)),
-            k("|"),
-            Span::styled(" separates globs (e.g. ", Style::default().fg(body)),
-            k("a*|b?"),
-            Span::styled("). ", Style::default().fg(body)),
-            k("Regex"),
-            Span::styled(": ", Style::default().fg(body)),
-            k("|"),
-            Span::styled(" is alternation (not split).", Style::default().fg(body)),
-        ]),
-        Line::from(vec![
-            t("    "),
-            k("Ignore"),
             Span::styled(
-                ": same rules; matched on path relative to start — excluded if it matches",
+                "    Ignore matches path relative to start (forward slashes). Tab/↑↓ fields; Enter search or chdir.",
                 Style::default().fg(body),
             ),
-            t(" ("),
-            k("*.zip"),
-            Span::styled(" + ignore ", Style::default().fg(body)),
-            k("*node_modules*"),
-            Span::styled(" …).", Style::default().fg(body)),
         ]),
         Line::from(vec![
-            t("    "),
-            k("Tab / ↑↓"),
-            t("  Navigate   "),
-            k("Enter"),
-            t("  Search / chdir   "),
-            k("Esc"),
-            t("  Close"),
-        ]),
-        Line::from(vec![
-            t("    Result: "),
+            t("    On a result: "),
             k("F3"),
             t(" view · "),
             k("F4"),
-            t(" edit (dialog stays open)"),
+            t(" edit (dialog stays open)."),
+        ]),
+        help_spacer(),
+        help_h(d, "Archives"),
+        Line::from(vec![
+            Span::styled(
+                "    Open .zip, .tar.gz, .tgz as virtual folders (operations where supported). ",
+                Style::default().fg(body),
+            ),
+            k("Ctrl+A"),
+            Span::styled(" creates an archive; extension picks format.", Style::default().fg(body)),
+        ]),
+        help_spacer(),
+        help_h(d, "Compare (Ctrl+D)"),
+        Line::from(vec![
+            Span::styled(
+                "    Mark exactly two non-directory files (any panel). Order: left list marks first, then right.",
+                Style::default().fg(body),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "    No marks: compares both panel directories; ",
+                Style::default().fg(body),
+            ),
+            k("C"),
+            Span::styled(" / ", Style::default().fg(body)),
+            k("S"),
+            Span::styled(" / ", Style::default().fg(body)),
+            k("X"),
+            Span::styled(" prefixes in lists. Side-by-side diff, aligned scroll, line + char highlights.", Style::default().fg(body)),
         ]),
         help_spacer(),
         help_h(d, "Viewer (F3)"),
@@ -331,32 +488,33 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             k("H"),
             t(" hex/text   "),
             k("↑↓"),
-            t(" PgUp/Dn   "),
-            k("wheel"),
-            t(" scroll"),
+            t(" "),
+            k("PgUp/Dn"),
+            t("   "),
+            k("Home"),
+            t("/"),
+            k("End"),
+            t("   wheel scrolls"),
         ]),
+        help_muted(
+            d,
+            "    Large files load in background; non-printable text shown as “.” in text mode.",
+        ),
         help_spacer(),
-        help_h(d, "Diff viewer (Ctrl+D)"),
-        Line::from(vec![
-            t("    "),
-            Span::styled(
-                "Mark 2 files with Space (dirs don’t count). Order: left panel first, then right.",
-                Style::default().fg(body),
-            ),
-        ]),
+        help_h(d, "Diff viewer"),
         Line::from(vec![
             t("    "),
             k("Esc"),
             t(" close   "),
             k("↑↓"),
-            t(" PgUp/Dn Home/End   "),
-            k("wheel"),
-            t(" scroll (panes aligned)"),
+            t(" "),
+            k("PgUp/Dn"),
+            t(" "),
+            k("Home"),
+            t("/"),
+            k("End"),
+            t("   wheel — both panes stay aligned."),
         ]),
-        help_muted(
-            d,
-            "    Line numbers; line + char highlights on changes; long lines wrap.",
-        ),
         help_spacer(),
         help_h(d, "Editor (F4)"),
         Line::from(vec![
@@ -367,55 +525,92 @@ fn help_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             t(" exit   "),
             k("Ctrl+F"),
             t(" find   "),
-            k("wheel"),
-            t(" scroll   "),
+            k("Shift+arrows"),
+            t(" select   "),
+            k("F3"),
+            t(" line numbers   "),
             k("Ctrl+C/V"),
             t(" copy/paste"),
         ]),
         help_spacer(),
-        help_h(d, "Dialogs"),
+        help_h(d, "Other dialogs"),
         Line::from(vec![
-            t("    "),
-            k("Tab / ↑↓"),
-            t("  focus   "),
-            k("Enter"),
-            t("  confirm   "),
-            k("Esc"),
-            t("  cancel"),
+            Span::styled(
+                "    Tab / ↑↓ focus, Enter / Space confirm, Esc cancel (rename, mkdir, archive, pattern pick, …).",
+                Style::default().fg(body),
+            ),
         ]),
         help_spacer(),
         Line::from(vec![Span::styled(
-            "  Esc or click outside this window to close",
+            "  Click the scrollbar track to jump; drag is not used.",
+            Style::default().fg(dim).add_modifier(Modifier::ITALIC),
+        )]),
+        Line::from(vec![Span::styled(
+            "  Esc, q, or click outside this window to close.",
             Style::default().fg(dim).add_modifier(Modifier::ITALIC),
         )]),
     ]
 }
 
-/// Bounding box of the Help modal (must match [`draw`]).
-pub fn dialog_rect(area: Rect) -> Rect {
-    let margin = 4u16;
-    let max_w = area.width.saturating_sub(margin);
-    let max_h = area.height.saturating_sub(margin);
-    let w = max_w.min(122);
-    let h = max_h.min(56);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect {
-        x,
-        y,
-        width: w,
-        height: h,
+fn render_help_scrollbar(
+    f: &mut Frame,
+    sb: Rect,
+    d: &DialogPalette,
+    scroll: usize,
+    total: usize,
+) {
+    let vis = sb.height as usize;
+    if vis == 0 || sb.width == 0 {
+        return;
+    }
+    let max_scroll = total.saturating_sub(vis);
+    let track_st = Style::default().fg(d.text_muted);
+    let thumb_st = Style::default().fg(d.border).add_modifier(Modifier::BOLD);
+
+    if max_scroll == 0 {
+        for row in 0..vis {
+            let y = sb.y.saturating_add(row as u16);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled("│", track_st))),
+                Rect {
+                    x: sb.x,
+                    y,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+        return;
+    }
+
+    let thumb_h = ((vis * vis + total - 1) / total).max(1).min(vis);
+    let thumb_top = scroll.saturating_mul(vis.saturating_sub(thumb_h)) / max_scroll;
+
+    for row in 0..vis {
+        let is_thumb = row >= thumb_top && row < thumb_top + thumb_h;
+        let ch = if is_thumb { "█" } else { "▒" };
+        let st = if is_thumb { thumb_st } else { track_st };
+        let y = sb.y.saturating_add(row as u16);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(ch, st))),
+            Rect {
+                x: sb.x,
+                y,
+                width: 1,
+                height: 1,
+            },
+        );
     }
 }
 
-/// Draw the Help dialog as a modal: dimmed full screen, then dialog box on top.
+/// Draw the Help dialog: dim layer is painted by the renderer before this.
 pub fn draw(
     f: &mut Frame,
-    app: &AppState,
+    app: &mut AppState,
 ) {
-    if !app.help_dialog {
+    let Some(state) = app.help_dialog.as_mut() else {
         return;
-    }
+    };
     let area = f.area();
     let rect = dialog_rect(area);
     let d = &app.ui_palette.dialog;
@@ -434,28 +629,34 @@ pub fn draw(
         horizontal: 2,
         vertical: 1,
     });
-    let hint_h = 1u16;
-    let content_rect = Rect {
-        x: inner.x,
-        y: inner.y,
-        width: inner.width,
-        height: inner.height.saturating_sub(hint_h),
-    };
+    let (_dialog_rect, text_rect, sb_rect) = help_layout(area);
+    let lines = help_build_lines(d);
+    let total = lines.len();
+    state.scroll = clamp_help_scroll(state.scroll, area, total);
 
-    let para = Paragraph::new(help_lines(d))
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .skip(state.scroll)
+        .take(text_rect.height as usize)
+        .collect();
+
+    let para = Paragraph::new(visible)
         .style(fill_style)
         .wrap(Wrap { trim: true });
-    f.render_widget(para, content_rect);
+    f.render_widget(para, text_rect);
 
+    render_help_scrollbar(f, sb_rect, d, state.scroll, total);
+
+    let hint_y = inner.y + inner.height.saturating_sub(HINT_H);
     let hint_rect = Rect {
         x: inner.x,
-        y: inner.y + content_rect.height,
+        y: hint_y,
         width: inner.width,
-        height: hint_h,
+        height: HINT_H,
     };
     f.render_widget(
         Paragraph::new(Span::styled(
-            " Esc  ·  q  close   ·   click outside to dismiss ",
+            " ↑↓ j/k  PgUp/Dn  Home/End  wheel  scroll  ·  Esc  q  close  ·  outside click closes ",
             Style::default().bg(dialog_bg).fg(d.text_muted),
         ))
         .alignment(Alignment::Center),

@@ -267,7 +267,7 @@ impl Renderer {
             || app.new_file_dialog.is_some()
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
-            || app.help_dialog
+            || app.help_dialog.is_some()
             || app.settings_dialog.is_some()
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
@@ -328,7 +328,7 @@ impl Renderer {
         if app.rename_attr_dialog.is_some() {
             rename_attr::draw(f, app);
         }
-        if app.help_dialog {
+        if app.help_dialog.is_some() {
             help_dialog::draw(f, app);
         }
         if app.settings_dialog.is_some() {

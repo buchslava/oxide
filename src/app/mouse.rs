@@ -39,7 +39,7 @@ fn panels_mouse_enabled(app: &AppState) -> bool {
         && app.new_file_error.is_none()
         && app.rename_attr_dialog.is_none()
         && app.settings_dialog.is_none()
-        && !app.help_dialog
+        && app.help_dialog.is_none()
         && app.find_dialog.is_none()
         && app.left_panel_settings_overlay.is_none()
         && app.right_panel_settings_overlay.is_none()
@@ -513,16 +513,11 @@ fn try_mouse_new_file(
 }
 
 fn try_mouse_help(
-    app: &AppState,
+    app: &mut AppState,
     area: Rect,
     mouse_event: &MouseEvent,
 ) -> Option<AppAction> {
-    try_modal_left_click_outside_rect(
-        app.help_dialog,
-        mouse_event,
-        help_dialog::dialog_rect(area),
-        AppAction::HelpClose,
-    )
+    help_dialog::handle_mouse(app, area, mouse_event)
 }
 
 fn try_mouse_settings(

@@ -120,8 +120,8 @@ pub struct AppState {
     pub pattern_select_dialog: Option<PatternSelectDialogState>,
     /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
-    /// When true, F1 Help dialog is open.
-    pub help_dialog: bool,
+    /// When Some, F1 Help dialog is open (scroll position in state).
+    pub help_dialog: Option<crate::dialogs::help_dialog::HelpDialogState>,
     /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
     pub left_panel_settings_overlay: Option<PanelSettingsOverlayState>,
     /// When Some, Ctrl+W "Right panel settings" overlay is open over the right panel.
@@ -228,7 +228,7 @@ impl AppState {
             find_dialog: None,
             pattern_select_dialog: None,
             settings_dialog: None,
-            help_dialog: false,
+            help_dialog: None,
             left_panel_settings_overlay: None,
             right_panel_settings_overlay: None,
             left_panel_rect: None,

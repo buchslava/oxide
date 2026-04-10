@@ -187,7 +187,7 @@ impl EventHandler {
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
             || app.settings_dialog.is_some()
-            || app.help_dialog
+            || app.help_dialog.is_some()
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
             || app.right_panel_settings_overlay.is_some()
@@ -470,9 +470,9 @@ impl EventHandler {
                     ));
                 }
                 // F1 Help dialog: Esc/q close; all other keys are absorbed (modal).
-                if app.help_dialog {
+                if app.help_dialog.is_some() {
                     return Ok(Some(
-                        help_dialog::handle_key(key.code, key.modifiers)
+                        help_dialog::handle_key(app, key.code, key.modifiers)
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
