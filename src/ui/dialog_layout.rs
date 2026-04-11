@@ -58,7 +58,11 @@ pub const SINGLE_INPUT_DIALOG_HEIGHT: u16 = 9;
 /// Full layout for a single-input dialog: (dialog_rect, content_rect).
 #[must_use]
 pub fn single_input_dialog_layout(area: Rect) -> (Rect, Rect) {
-    let rect = centered_dialog_rect(area, SINGLE_INPUT_DIALOG_WIDTH, SINGLE_INPUT_DIALOG_HEIGHT);
+    let rect = centered_dialog_rect(
+        area,
+        SINGLE_INPUT_DIALOG_WIDTH,
+        SINGLE_INPUT_DIALOG_HEIGHT,
+    );
     let content = dialog_content_rect(rect, DEFAULT_PAD_H);
     (rect, content)
 }

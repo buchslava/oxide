@@ -288,7 +288,11 @@ impl FileOperations {
                 }
                 #[cfg(not(unix))]
                 {
-                    ("----------".to_string(), String::new(), String::new())
+                    (
+                        "----------".to_string(),
+                        String::new(),
+                        String::new(),
+                    )
                 }
             };
 
@@ -415,7 +419,12 @@ impl FileOperations {
         let uid = unsafe {
             let pw = libc::getpwnam(
                 std::ffi::CString::new(user)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid user"))?
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "invalid user",
+                        )
+                    })?
                     .as_ptr(),
             );
             if pw.is_null() {
@@ -429,7 +438,12 @@ impl FileOperations {
         let gid = unsafe {
             let gr = libc::getgrnam(
                 std::ffi::CString::new(group)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid group"))?
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "invalid group",
+                        )
+                    })?
                     .as_ptr(),
             );
             if gr.is_null() {
@@ -441,8 +455,13 @@ impl FileOperations {
             (*gr).gr_gid
         };
         let path = path.as_ref();
-        let path_c = std::ffi::CString::new(path.as_os_str().as_bytes().to_vec())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains null"))?;
+        let path_c =
+            std::ffi::CString::new(path.as_os_str().as_bytes().to_vec()).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "path contains null",
+                )
+            })?;
         if unsafe { libc::chown(path_c.as_ptr(), uid, gid) } != 0 {
             return Err(io::Error::last_os_error());
         }

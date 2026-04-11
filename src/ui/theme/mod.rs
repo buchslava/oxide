@@ -10,8 +10,6 @@ mod theme_id;
 mod themes;
 mod ui_palette;
 
-pub use palettes::{
-    DialogPalette, DiffViewerPalette, PanelListPalette, ViewerPalette,
-};
+pub use palettes::{DialogPalette, DiffViewerPalette, PanelListPalette, ViewerPalette};
 pub use theme_id::ThemeId;
 pub use ui_palette::UiPalette;

@@ -1,5 +1,6 @@
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, EnableMouseCapture},
+    cursor::Hide,
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -33,15 +34,15 @@ use app::state::{
     RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
 };
 use app::subshell_helpers::{get_or_create_subshell, maybe_sync_panel_to_shell_cwd};
+use browser::diff_viewer::{
+    close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, try_compare_panel_directories,
+    try_open_diff,
+};
 use browser::editor::{
     apply_confirm_choice, close, finish_editor_pending_decode, open_editor, open_editor_path,
     poll_editor_loading, save,
 };
 use browser::panel::{PanelOperations, ViewMode};
-use browser::diff_viewer::{
-    close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, try_compare_panel_directories,
-    try_open_diff,
-};
 use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
 use core::location::PanelLocation;
 use core::settings::{ensure_config_dir, load, save as save_settings};
@@ -93,7 +94,7 @@ fn restore_terminal(
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture,
+        DisableMouseCapture,
         DisableBracketedPaste
     )?;
     let _ = reset_terminal_character_set_and_modes(terminal.backend_mut());
@@ -116,7 +117,10 @@ fn main() -> Result<(), io::Error> {
 
     let app_settings = load();
     let _ = ensure_config_dir();
-    log_if_err("Save settings (startup)", save_settings(&app_settings));
+    log_if_err(
+        "Save settings (startup)",
+        save_settings(&app_settings),
+    );
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let home_str = home.to_string_lossy().to_string();
     let launch_cwd = std::env::current_dir()
@@ -144,7 +148,12 @@ fn main() -> Result<(), io::Error> {
             launch_cwd.clone(),
         )
     };
-    let mut app = AppState::new_with_initial(left_cwd, right_cwd, &home_str, app_settings)?;
+    let mut app = AppState::new_with_initial(
+        left_cwd,
+        right_cwd,
+        &home_str,
+        app_settings,
+    )?;
     app.sync_process_cwd_to_active_panel_if_no_autosave();
     let mut subshell: Option<Subshell> = None;
 
@@ -177,8 +186,8 @@ fn main() -> Result<(), io::Error> {
                 execute!(
                     terminal.backend_mut(),
                     EnterAlternateScreen,
-                    crossterm::cursor::Hide,
-                    crossterm::event::EnableMouseCapture
+                    Hide,
+                    EnableMouseCapture
                 )?;
                 terminal.clear()?;
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
@@ -252,13 +261,13 @@ fn main() -> Result<(), io::Error> {
                 if cmd_cursor_blink_visible {
                     let _ = terminal.show_cursor();
                 } else {
-                    let _ = crossterm::execute!(terminal.backend_mut(), crossterm::cursor::Hide);
+                    let _ = execute!(terminal.backend_mut(), Hide);
                 }
             } else {
                 let _ = terminal.show_cursor();
             }
         } else {
-            let _ = crossterm::execute!(terminal.backend_mut(), crossterm::cursor::Hide);
+            let _ = execute!(terminal.backend_mut(), Hide);
         }
 
         if app.copy_in_progress.is_some()
@@ -597,7 +606,10 @@ fn main() -> Result<(), io::Error> {
             AppAction::PanelNavigated => app.maybe_persist_panel_dirs(),
             AppAction::SettingChange(change) => {
                 apply_persisted_setting_change(&mut app, change);
-                log_if_err("Save settings", save_settings(&app.persisted_settings));
+                log_if_err(
+                    "Save settings",
+                    save_settings(&app.persisted_settings),
+                );
                 if !setting_change_skips_panel_resync(change) {
                     app.sync_from_persisted_settings();
                 }
@@ -613,14 +625,20 @@ fn main() -> Result<(), io::Error> {
                 } else {
                     app.persisted_settings.right_view = view;
                 }
-                log_if_err("Save settings", save_settings(&app.persisted_settings));
+                log_if_err(
+                    "Save settings",
+                    save_settings(&app.persisted_settings),
+                );
             }
             AppAction::ToggleShowHidden => {
                 toggle_show_hidden_on_active_panel(&mut app);
             }
             AppAction::PersistPanelState => match app.persist_panel_state_to_settings() {
                 Ok(()) => {
-                    app.set_timed_toast(Duration::from_secs(3), "Panel layout saved to settings.");
+                    app.set_timed_toast(
+                        Duration::from_secs(3),
+                        "Panel layout saved to settings.",
+                    );
                 }
                 Err(e) => {
                     app.set_timed_toast_alert(
@@ -663,8 +681,8 @@ fn main() -> Result<(), io::Error> {
                 execute!(
                     terminal.backend_mut(),
                     EnterAlternateScreen,
-                    crossterm::cursor::Hide,
-                    crossterm::event::EnableMouseCapture
+                    Hide,
+                    EnableMouseCapture
                 )?;
                 if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
                     break;
@@ -731,8 +749,8 @@ fn main() -> Result<(), io::Error> {
                         execute!(
                             terminal.backend_mut(),
                             EnterAlternateScreen,
-                            crossterm::cursor::Hide,
-                            crossterm::event::EnableMouseCapture
+                            Hide,
+                            EnableMouseCapture
                         )?;
                         if let Some(AppAction::Quit) =
                             EventHandler::process_queued_events(&mut app)?
@@ -779,7 +797,6 @@ fn main() -> Result<(), io::Error> {
         if finish_editor_pending_decode(&mut app) {
             terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
-
     }
 
     restore_terminal(

@@ -2,10 +2,10 @@ use crate::app::state::{
     AppState, CopyParams, Focus, Operation, RenameAttrDialogState, RenameAttrField,
 };
 use crate::browser::clipboard;
+use crate::browser::diff_viewer::{handle_diff_key, handle_diff_mouse};
 pub use crate::browser::editor::EditorConfirmChoice;
 use crate::browser::editor::{handle_editor_key, handle_editor_mouse, paste_text_as_is};
 use crate::browser::panel::PanelOperations;
-use crate::browser::diff_viewer::{handle_diff_key, handle_diff_mouse};
 use crate::browser::viewer::{handle_viewer_key, handle_viewer_mouse};
 use crate::core::copy_state::same_folder_copy_dest_name;
 use crate::core::location::PanelLocation;
@@ -368,7 +368,9 @@ impl EventHandler {
                         _ => None,
                     };
                     if let Some(confirm_choice) = choice {
-                        return Ok(Some(AppAction::DeleteConfirmChoice(confirm_choice)));
+                        return Ok(Some(AppAction::DeleteConfirmChoice(
+                            confirm_choice,
+                        )));
                     }
                     return Ok(Some(AppAction::Continue));
                 }
@@ -407,12 +409,16 @@ impl EventHandler {
                                 1 => CopyErrorChoice::Cancel,
                                 _ => CopyErrorChoice::IgnoreAll,
                             };
-                            return Ok(Some(AppAction::CopyErrorChoice(error_choice)));
+                            return Ok(Some(AppAction::CopyErrorChoice(
+                                error_choice,
+                            )));
                         }
                         _ => None,
                     };
                     if let Some(error_choice) = choice {
-                        return Ok(Some(AppAction::CopyErrorChoice(error_choice)));
+                        return Ok(Some(AppAction::CopyErrorChoice(
+                            error_choice,
+                        )));
                     }
                     return Ok(Some(AppAction::Continue));
                 }
@@ -551,7 +557,11 @@ impl EventHandler {
                         } else if c == '-' {
                             return Ok(Some(AppAction::OpenPatternSelectUnmark));
                         } else if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            return Ok(Some(Self::handle_ctrl_key(app, c, panel_height)));
+                            return Ok(Some(Self::handle_ctrl_key(
+                                app,
+                                c,
+                                panel_height,
+                            )));
                         } else if c.is_ascii() && !c.is_control() {
                             app.focus_command_line();
                             app.command_line_insert(c);
@@ -579,9 +589,10 @@ impl EventHandler {
                             let opposite = app.get_opposite_panel_location();
                             let (target_location, target_fs_path) = match &opposite {
                                 PanelLocation::Archive { .. } => (Some(opposite), None),
-                                PanelLocation::Fs(_) => {
-                                    (None, Some(app.get_opposite_panel_target_fs_path()))
-                                }
+                                PanelLocation::Fs(_) => (
+                                    None,
+                                    Some(app.get_opposite_panel_target_fs_path()),
+                                ),
                             };
                             return Ok(Some(AppAction::Copy(CopyParams {
                                 source_dir: source,
@@ -607,9 +618,10 @@ impl EventHandler {
                                 let opposite = app.get_opposite_panel_location();
                                 let (target_location, target_fs_path) = match &opposite {
                                     PanelLocation::Archive { .. } => (Some(opposite), None),
-                                    PanelLocation::Fs(_) => {
-                                        (None, Some(app.get_opposite_panel_target_fs_path()))
-                                    }
+                                    PanelLocation::Fs(_) => (
+                                        None,
+                                        Some(app.get_opposite_panel_target_fs_path()),
+                                    ),
                                 };
                                 return Ok(Some(AppAction::Move(CopyParams {
                                     source_dir: source,
@@ -688,7 +700,9 @@ impl EventHandler {
                     return Ok(Some(AppAction::Continue));
                 }
                 let action = crate::app::mouse::handle_mouse_event(app, mouse_event)?;
-                Ok(Some(action.unwrap_or(AppAction::Continue)))
+                Ok(Some(
+                    action.unwrap_or(AppAction::Continue),
+                ))
             }
             // Bracketed paste (e.g. Cmd+V on macOS): editor first if open, else focused dialog/command line.
             Event::Paste(data) => {

@@ -35,7 +35,10 @@ pub(crate) fn compute_panel_height() -> usize {
 const READ_CHUNK: usize = 1024 * 1024;
 
 /// Read a file in chunks, checking `cancel` between chunks (viewer/editor background loads).
-pub(crate) fn read_path_chunked(path: &Path, cancel: &AtomicBool) -> io::Result<Vec<u8>> {
+pub(crate) fn read_path_chunked(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> io::Result<Vec<u8>> {
     let mut f = File::open(path)?;
     let len = f.metadata()?.len();
     let len_usize = usize::try_from(len).map_err(|_| {

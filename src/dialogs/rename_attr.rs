@@ -256,7 +256,10 @@ pub fn apply(app: &mut AppState) -> bool {
                 app.rename_attr_error = Some(format!("Set permissions failed: {}", e));
                 return false;
             }
-            if let (Some(u), Some(g)) = (user_list.get(user_index), group_list.get(group_index)) {
+            if let (Some(u), Some(g)) = (
+                user_list.get(user_index),
+                group_list.get(group_index),
+            ) {
                 if let Err(e) = FileOperations::chown(&path, u, g) {
                     app.rename_attr_dialog = Some(RenameAttrDialogState::Single {
                         name_input,
@@ -318,8 +321,10 @@ pub fn apply(app: &mut AppState) -> bool {
                         current_name: current_name.clone(),
                         focus,
                     });
-                    app.rename_attr_error =
-                        Some(format!("Set permissions failed: {}: {}", name, e));
+                    app.rename_attr_error = Some(format!(
+                        "Set permissions failed: {}: {}",
+                        name, e
+                    ));
                     return false;
                 }
                 if let Some((u, g)) = u_g {

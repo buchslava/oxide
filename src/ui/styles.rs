@@ -19,9 +19,7 @@ pub(crate) fn create_file_line_from_display(
 ) -> Line<'static> {
     let prefix_style = || {
         if is_selected {
-            Style::default()
-                .fg(list.marked_prefix)
-                .bg(list.selected_bg)
+            Style::default().fg(list.marked_prefix).bg(list.selected_bg)
         } else {
             Style::default().fg(list.marked_prefix)
         }

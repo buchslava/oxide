@@ -98,17 +98,27 @@ pub fn start_archive_background(
     let loc_clone = loc.clone();
     let _ = std::thread::spawn(move || {
         let mut progress = |current: usize, total: usize, current_path: &str| {
-            let _ = tx.send(ArchiveMessage::Progress(ArchiveProgress {
-                current_path: current_path.to_string(),
-                target_path: target_path.clone(),
-                current,
-                total,
-            }));
+            let _ = tx.send(ArchiveMessage::Progress(
+                ArchiveProgress {
+                    current_path: current_path.to_string(),
+                    target_path: target_path.clone(),
+                    current,
+                    total,
+                },
+            ));
         };
-        let result =
-            create_archive_with_progress(&loc_clone, &items, &name, &mut progress, Some(&cancel));
+        let result = create_archive_with_progress(
+            &loc_clone,
+            &items,
+            &name,
+            &mut progress,
+            Some(&cancel),
+        );
         let name_for_selection = result.as_ref().ok().map(|_| name.clone());
-        let _ = tx.send(ArchiveMessage::Done(result, name_for_selection));
+        let _ = tx.send(ArchiveMessage::Done(
+            result,
+            name_for_selection,
+        ));
     });
 }
 

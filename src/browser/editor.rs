@@ -2,7 +2,7 @@
 //! Page Up/Down, Home/End, Ctrl+F search (in file), unsaved-changes dialog.
 //! Selection (MC-style): F3 starts or stops selection; then ←→↑↓ extend. Ctrl+C copies then clears.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
     style::{Color, Style},
@@ -24,19 +24,22 @@ use std::time::Duration;
 use crate::app::events::AppAction;
 use crate::app::state::{AppState, Focus};
 use crate::browser::panel::PanelOperations;
-use crate::util;
+use crate::core::file_ops::FileInfo;
 use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{join_path_display, read_file, write_file};
 use crate::core::text_format::format_byte_size;
-use crate::core::file_ops::FileInfo;
 use crate::ui::text_input;
 use crate::ui::theme::{DialogPalette, ViewerPalette};
 use crate::ui::toast::{self, TimedToast};
+use crate::util;
 use crate::util::compute_panel_height;
 
 /// Match [`ratatui_code_editor`] render: `digits.max(5) + 2` columns for the line-number gutter.
-fn editor_gutter_width(editor: &Editor, area_width: u16) -> u16 {
+fn editor_gutter_width(
+    editor: &Editor,
+    area_width: u16,
+) -> u16 {
     let total_lines = editor.code_ref().len_lines().max(1);
     let digits = total_lines.to_string().len().max(5);
     let w = (digits + 2) as u16;
@@ -209,7 +212,7 @@ fn start_editor_loading(
     let spec_thread = spec.clone();
     std::thread::spawn(move || {
         let result = match spec_thread {
-                EditorOpenSpec::Fs { path } => util::read_path_chunked(&path, &cancel_t),
+            EditorOpenSpec::Fs { path } => util::read_path_chunked(&path, &cancel_t),
             EditorOpenSpec::Archive { loc, name } => {
                 if cancel_t.load(Ordering::Relaxed) {
                     Err(io::Error::new(
@@ -249,9 +252,7 @@ pub fn poll_editor_loading(app: &mut AppState) -> bool {
         Ok(Ok(bytes)) => {
             let (file_path, spec) = match std::mem::take(&mut app.editor_screen) {
                 Some(EditorViewState::Loading {
-                    file_path,
-                    spec,
-                    ..
+                    file_path, spec, ..
                 }) => (file_path, spec),
                 _ => return false,
             };
@@ -397,18 +398,20 @@ pub fn open_editor(app: &mut AppState) -> bool {
                 PanelLocation::Archive { .. } => (Some(loc.clone()), Some(file.name.clone())),
                 PanelLocation::Fs(_) => (None, None),
             };
-            app.editor_screen = Some(EditorViewState::Ready(EditorScreenState {
-                file_path: file_path_str,
-                initial_content: content,
-                editor,
-                area: Rect::default(),
-                search_query: None,
-                search_query_cursor: 0,
-                selection_extend_mode: false,
-                edit_location,
-                edit_name,
-                opened_with_invalid_utf8,
-            }));
+            app.editor_screen = Some(EditorViewState::Ready(
+                EditorScreenState {
+                    file_path: file_path_str,
+                    initial_content: content,
+                    editor,
+                    area: Rect::default(),
+                    search_query: None,
+                    search_query_cursor: 0,
+                    selection_extend_mode: false,
+                    edit_location,
+                    edit_name,
+                    opened_with_invalid_utf8,
+                },
+            ));
             app.editor_confirm_pending = false;
             app.clear_timed_toast();
             return true;
@@ -454,18 +457,20 @@ pub fn open_editor_path(
     let lang = get_lang_from_path(&file_path_str);
     let theme = vesper();
     let editor = Editor::new(lang, &content, theme);
-    app.editor_screen = Some(EditorViewState::Ready(EditorScreenState {
-        file_path: file_path_str,
-        initial_content: content,
-        editor,
-        area: Rect::default(),
-        search_query: None,
-        search_query_cursor: 0,
-        selection_extend_mode: false,
-        edit_location: None,
-        edit_name: None,
-        opened_with_invalid_utf8,
-    }));
+    app.editor_screen = Some(EditorViewState::Ready(
+        EditorScreenState {
+            file_path: file_path_str,
+            initial_content: content,
+            editor,
+            area: Rect::default(),
+            search_query: None,
+            search_query_cursor: 0,
+            selection_extend_mode: false,
+            edit_location: None,
+            edit_name: None,
+            opened_with_invalid_utf8,
+        },
+    ));
     app.editor_confirm_pending = false;
     app.clear_timed_toast();
     true
@@ -556,7 +561,10 @@ pub fn handle_editor_key(
             _ => return Some(AppAction::Continue),
         }
     }
-    if matches!(app.editor_screen, Some(EditorViewState::Loading { .. })) {
+    if matches!(
+        app.editor_screen,
+        Some(EditorViewState::Loading { .. })
+    ) {
         if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
             cancel_editor_background(app);
             app.editor_screen = None;
@@ -966,7 +974,7 @@ pub fn handle_editor_key(
 /// Clicks on the top (file path) or bottom (hint) row are not passed to the editor.
 pub fn handle_editor_mouse(
     app: &mut AppState,
-    mouse_event: crossterm::event::MouseEvent,
+    mouse_event: MouseEvent,
 ) -> bool {
     if app.editor_confirm_pending {
         return false;
@@ -1195,11 +1203,17 @@ fn draw_editor_warn_or_loading(
         "Loading…"
     };
     let header = Line::from(vec![
-        Span::styled(file_path, Style::default().fg(vp.header_path)),
+        Span::styled(
+            file_path,
+            Style::default().fg(vp.header_path),
+        ),
         Span::raw("  "),
         Span::styled(subtitle, Style::default().fg(vp.muted)),
     ]);
-    f.render_widget(Paragraph::new(header).style(content_style), header_rect);
+    f.render_widget(
+        Paragraph::new(header).style(content_style),
+        header_rect,
+    );
     let msg: String = if let Some(sz) = size_for_warning {
         format!(
             "Size {}. Embedded editor loads the full file into memory (max {}).\n\nEnter: continue  Esc: cancel",
@@ -1245,15 +1259,11 @@ pub fn draw(
             draw_editor_warn_or_loading(f, app, file_path, Some(size_bytes), false);
             return;
         }
-        Some(EditorViewState::Loading {
-            ref file_path, ..
-        }) => {
+        Some(EditorViewState::Loading { ref file_path, .. }) => {
             draw_editor_warn_or_loading(f, app, file_path, None, false);
             return;
         }
-        Some(EditorViewState::BytesLoaded {
-            ref file_path, ..
-        }) => {
+        Some(EditorViewState::BytesLoaded { ref file_path, .. }) => {
             draw_editor_warn_or_loading(f, app, file_path, None, true);
             return;
         }
@@ -1273,7 +1283,10 @@ pub fn draw(
             height: content_height,
         };
         let main_bg = app.ui_palette.chrome.main_background;
-        f.render_widget(Block::default().style(Style::default().bg(main_bg)), area);
+        f.render_widget(
+            Block::default().style(Style::default().bg(main_bg)),
+            area,
+        );
 
         let header_rect = Rect {
             x: area.x,
@@ -1289,7 +1302,10 @@ pub fn draw(
             .saturating_sub(path_span.len() + right_info.len())
             .max(1);
         let header_line = Line::from(vec![
-            Span::styled(path_span, Style::default().fg(vp.header_path)),
+            Span::styled(
+                path_span,
+                Style::default().fg(vp.header_path),
+            ),
             Span::raw(" ".repeat(pad_len)),
             Span::styled(right_info, Style::default().fg(vp.muted)),
         ]);
@@ -1326,14 +1342,19 @@ pub fn draw(
                 height: 1,
             };
             f.render_widget(
-                Paragraph::new(hint)
-                    .style(Style::default().bg(main_bg).fg(vp.muted)),
+                Paragraph::new(hint).style(Style::default().bg(main_bg).fg(vp.muted)),
                 r,
             );
         }
         if let Some(ref query) = ed.search_query {
             let cursor = ed.search_query_cursor.min(query.chars().count());
-            draw_search_bar(f, area, query, cursor, &app.ui_palette.dialog);
+            draw_search_bar(
+                f,
+                area,
+                query,
+                cursor,
+                &app.ui_palette.dialog,
+            );
         }
         if let Some(ref t) = app.timed_toast {
             toast::draw_timed_bottom_left(f, area, &app.ui_palette, t);
@@ -1403,7 +1424,10 @@ fn draw_search_bar(
         width: inner.width,
         height: 1,
     };
-    f.render_widget(Paragraph::new(hint).style(style.fg(d.text_muted)), hint_row);
+    f.render_widget(
+        Paragraph::new(hint).style(style.fg(d.text_muted)),
+        hint_row,
+    );
     let cursor_screen = cursor_char.saturating_sub(display_offset);
     let col = cursor_screen.min(inner.width.saturating_sub(1) as usize);
     f.set_cursor_position((inner.x + col as u16, inner.y));
@@ -1487,7 +1511,10 @@ pub fn draw_confirm_dialog(
         } else {
             fill_style
         };
-        f.render_widget(Paragraph::new(line).style(style), row_rect);
+        f.render_widget(
+            Paragraph::new(line).style(style),
+            row_rect,
+        );
     }
     let hint_y = content.y + 6;
     f.render_widget(

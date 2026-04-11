@@ -60,7 +60,11 @@ impl PanelLocation {
                 if path_inside.is_empty() {
                     archive_display.to_string()
                 } else {
-                    format!("{}/{}", archive_display, path_inside.trim_end_matches('/'))
+                    format!(
+                        "{}/{}",
+                        archive_display,
+                        path_inside.trim_end_matches('/')
+                    )
                 }
             }
         }

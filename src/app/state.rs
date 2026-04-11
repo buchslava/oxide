@@ -1,6 +1,9 @@
+use crate::browser::diff_viewer::{DiffViewerState, FolderCompareState};
+use crate::browser::editor::EditorViewState;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::core::settings::{self, PersistedSettings};
 use crate::core::trash_delete::trash_available;
+use crate::dialogs::help_dialog::HelpDialogState;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::theme::{ThemeId, UiPalette};
 use crate::ui::toast::{TimedToast, ToastKind};
@@ -79,7 +82,7 @@ pub struct AppState {
     /// When set, copy/move/delete just completed; refresh source panel with (after, before) and clear.
     pub source_panel_restore: Option<(String, Option<String>, Option<String>)>,
     /// When Some, the embedded code editor is open (F4): warning, loading, or ready. None = panels view.
-    pub editor_screen: Option<crate::browser::editor::EditorViewState>,
+    pub editor_screen: Option<EditorViewState>,
     /// When true, show "Save changes?" (1=Save, 2=Discard, 3/Esc=Cancel) before exiting editor.
     pub editor_confirm_pending: bool,
     /// Editor confirm dialog: focused option index 0=Save, 1=Discard, 2=Cancel.
@@ -91,9 +94,9 @@ pub struct AppState {
     /// When Some, the file viewer is open (F3). Loading = reading file in background; Ready = content available. None = panels or editor view.
     pub viewer_screen: Option<ViewerState>,
     /// When Some, Ctrl+D two-file diff viewer is open (full screen, synchronized scroll).
-    pub diff_viewer_screen: Option<crate::browser::diff_viewer::DiffViewerState>,
+    pub diff_viewer_screen: Option<DiffViewerState>,
     /// When Some, Ctrl+D compared both panel directories: `C `/`S `/`X ` prefixes until either cwd changes.
-    pub folder_compare: Option<crate::browser::diff_viewer::FolderCompareState>,
+    pub folder_compare: Option<FolderCompareState>,
     /// When Some, F7 "Create directory" dialog is open (text field for new folder name).
     pub mkdir_dialog: Option<MkdirDialogState>,
     /// When Some, Ctrl+A "Archive" dialog is open (text field for archive file name).
@@ -121,7 +124,7 @@ pub struct AppState {
     /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
     /// When Some, F1 Help dialog is open (scroll position in state).
-    pub help_dialog: Option<crate::dialogs::help_dialog::HelpDialogState>,
+    pub help_dialog: Option<HelpDialogState>,
     /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
     pub left_panel_settings_overlay: Option<PanelSettingsOverlayState>,
     /// When Some, Ctrl+W "Right panel settings" overlay is open over the right panel.
@@ -328,7 +331,11 @@ impl AppState {
         message: impl Into<String>,
         kind: ToastKind,
     ) {
-        self.timed_toast = Some(TimedToast::with_kind(duration, message.into(), kind));
+        self.timed_toast = Some(TimedToast::with_kind(
+            duration,
+            message.into(),
+            kind,
+        ));
     }
 
     pub fn clear_timed_toast(&mut self) {

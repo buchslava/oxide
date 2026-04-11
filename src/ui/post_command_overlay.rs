@@ -4,6 +4,7 @@ use crossterm::{
     cursor::MoveTo,
     execute,
     style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    terminal::size,
 };
 use std::io::{self, Write};
 
@@ -27,7 +28,7 @@ pub fn paint_main_buffer_countdown(app: &AppState) -> io::Result<()> {
         return Ok(());
     }
     let secs = countdown_secs_remaining(cd.reveal_at);
-    let (cols, rows) = crossterm::terminal::size()?;
+    let (cols, rows) = size()?;
     let rows = rows.max(1);
     let y = rows.saturating_sub(1);
     let cols = cols.max(1) as usize;

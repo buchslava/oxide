@@ -75,5 +75,8 @@ pub fn draw_timed_bottom_left(
         ToastKind::Info => palette.toast.ratatui_style(),
         ToastKind::Alert => palette.toast.ratatui_style_alert(),
     };
-    f.render_widget(Paragraph::new(toast.message.as_str()).style(style), rect);
+    f.render_widget(
+        Paragraph::new(toast.message.as_str()).style(style),
+        rect,
+    );
 }

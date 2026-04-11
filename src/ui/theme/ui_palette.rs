@@ -1,8 +1,8 @@
 //! Root bundle passed through the app each frame.
 
 use super::palettes::{
-    ChromePalette, DialogPalette, DiffViewerPalette, PanelListPalette, ProgressPalette, ToastPalette,
-    ViewerPalette,
+    ChromePalette, DialogPalette, DiffViewerPalette, PanelListPalette, ProgressPalette,
+    ToastPalette, ViewerPalette,
 };
 
 /// Full application palette: pass `&app.ui_palette` or store on [`crate::app::state::AppState`].

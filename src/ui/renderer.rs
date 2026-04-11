@@ -1,11 +1,11 @@
 use crate::app::state::{
     AppState, ArchiveProgress, CopyErrorState, CopyProgress, Focus, Operation,
 };
-use crate::browser::editor;
-use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::browser::diff_viewer::{
     self, clear_folder_compare_if_stale, FolderCompareState, FolderDiffTag,
 };
+use crate::browser::editor;
+use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::browser::viewer;
 use crate::core::disk_space::disk_space_summary;
 use crate::core::file_ops::FileInfo;
@@ -45,7 +45,11 @@ fn compact_path(
     path: &str,
     max_width: usize,
 ) -> String {
-    truncate_str(path, max_width, TruncateMode::CompactMiddle)
+    truncate_str(
+        path,
+        max_width,
+        TruncateMode::CompactMiddle,
+    )
 }
 
 /// Last path segment of the active panel directory (filesystem or display path).
@@ -115,7 +119,11 @@ fn format_mtime(t: &std::time::SystemTime) -> String {
     use chrono::{DateTime, Timelike, Utc};
     let datetime: DateTime<Utc> = (*t).into();
     let date = datetime.format("%b %e %Y").to_string();
-    let time = format!("{:02}:{:02}", datetime.hour(), datetime.minute());
+    let time = format!(
+        "{:02}:{:02}",
+        datetime.hour(),
+        datetime.minute()
+    );
     format!("{} {}", date, time)
 }
 
@@ -249,7 +257,10 @@ fn truncate_for_width(
     if full.chars().count() <= max_width {
         full
     } else {
-        format!("{}…", full.chars().take(w).collect::<String>())
+        format!(
+            "{}…",
+            full.chars().take(w).collect::<String>()
+        )
     }
 }
 
@@ -404,8 +415,14 @@ impl Renderer {
         let mut row = content.y;
         if show_paths {
             let path_w = max_msg_w.saturating_sub(2);
-            let from_str = compact_path(params.source_dir.trim_end_matches('/'), path_w);
-            let to_str = compact_path(params.target_dir.trim_end_matches('/'), path_w);
+            let from_str = compact_path(
+                params.source_dir.trim_end_matches('/'),
+                path_w,
+            );
+            let to_str = compact_path(
+                params.target_dir.trim_end_matches('/'),
+                path_w,
+            );
             let from_line = format!("From: {}", from_str);
             let to_line = format!("To:   {}", to_str);
             f.render_widget(
@@ -475,8 +492,14 @@ impl Renderer {
         } else {
             d.focus_row_style()
         };
-        f.render_widget(Paragraph::new(yes_btn).style(yes_style), yes_rect);
-        f.render_widget(Paragraph::new(no_btn).style(no_style), no_rect);
+        f.render_widget(
+            Paragraph::new(yes_btn).style(yes_style),
+            yes_rect,
+        );
+        f.render_widget(
+            Paragraph::new(no_btn).style(no_style),
+            no_rect,
+        );
     }
 
     /// Return (dialog_rect, yes_button_rect, no_button_rect) for operation confirm hit-testing.
@@ -534,7 +557,10 @@ impl Renderer {
         for (i, (num, label)) in options.iter().enumerate() {
             let num_s = num.to_string();
             let line = Line::from(vec![
-                Span::styled(num_s.as_str(), Style::default().fg(dialog.accent)),
+                Span::styled(
+                    num_s.as_str(),
+                    Style::default().fg(dialog.accent),
+                ),
                 Span::raw(format!(". {}", label)),
             ]);
             let opt_rect = Rect {
@@ -548,7 +574,10 @@ impl Renderer {
             } else {
                 fill_style
             };
-            f.render_widget(Paragraph::new(line).style(style), opt_rect);
+            f.render_widget(
+                Paragraph::new(line).style(style),
+                opt_rect,
+            );
         }
     }
 
@@ -718,7 +747,10 @@ impl Renderer {
         let inner_width = 76usize;
         const PAD_H: u16 = 2;
         let w = (inner_width as u16 + 2 + PAD_H * 2).min(area.width.saturating_sub(4));
-        let h = if matches!(progress.operation, Operation::Copy | Operation::Move) {
+        let h = if matches!(
+            progress.operation,
+            Operation::Copy | Operation::Move
+        ) {
             12
         } else {
             10
@@ -784,7 +816,10 @@ impl Renderer {
             },
         );
         row += 1;
-        let path_display = compact_path(&progress.current_path, max_path_width.max(10));
+        let path_display = compact_path(
+            &progress.current_path,
+            max_path_width.max(10),
+        );
         let path_para = Paragraph::new(path_display)
             .style(fill_style.fg(pr.path_text))
             .alignment(Alignment::Center);
@@ -798,7 +833,10 @@ impl Renderer {
             },
         );
         row += 1;
-        if matches!(progress.operation, Operation::Copy | Operation::Move) {
+        if matches!(
+            progress.operation,
+            Operation::Copy | Operation::Move
+        ) {
             let tgt_label = Paragraph::new("Target")
                 .style(fill_style.fg(pr.section_label))
                 .alignment(Alignment::Center);
@@ -812,7 +850,10 @@ impl Renderer {
                 },
             );
             row += 1;
-            let target_display = compact_path(&progress.target_path, max_path_width.max(10));
+            let target_display = compact_path(
+                &progress.target_path,
+                max_path_width.max(10),
+            );
             let target_para = Paragraph::new(target_display)
                 .style(fill_style.fg(pr.path_text))
                 .alignment(Alignment::Center);
@@ -835,7 +876,10 @@ impl Renderer {
         let gauge = Gauge::default()
             .gauge_style(Style::default().fg(pr.gauge))
             .ratio(ratio)
-            .label(format!("{} / {}", progress.current, progress.total));
+            .label(format!(
+                "{} / {}",
+                progress.current, progress.total
+            ));
         f.render_widget(
             gauge,
             Rect {
@@ -927,7 +971,10 @@ impl Renderer {
             },
         );
         row += 1;
-        let path_display = compact_path(&progress.current_path, max_path_width.max(10));
+        let path_display = compact_path(
+            &progress.current_path,
+            max_path_width.max(10),
+        );
         f.render_widget(
             Paragraph::new(path_display)
                 .style(fill_style.fg(pr.path_text))
@@ -953,7 +1000,10 @@ impl Renderer {
             },
         );
         row += 1;
-        let target_display = compact_path(&progress.target_path, max_path_width.max(10));
+        let target_display = compact_path(
+            &progress.target_path,
+            max_path_width.max(10),
+        );
         f.render_widget(
             Paragraph::new(target_display)
                 .style(fill_style.fg(pr.path_text))
@@ -974,7 +1024,10 @@ impl Renderer {
         let gauge = Gauge::default()
             .gauge_style(Style::default().fg(pr.gauge))
             .ratio(ratio)
-            .label(format!("{} / {}", progress.current, progress.total));
+            .label(format!(
+                "{} / {}",
+                progress.current, progress.total
+            ));
         f.render_widget(
             gauge,
             Rect {
@@ -1132,7 +1185,10 @@ impl Renderer {
         let area = f.area();
         let c = app.ui_palette.chrome;
         let main_bg = c.main_background;
-        f.render_widget(Block::default().style(Style::default().bg(main_bg)), area);
+        f.render_widget(
+            Block::default().style(Style::default().bg(main_bg)),
+            area,
+        );
         // Rows 0..height-2: frame + panels. Row height-2: command line. Row height-1: menu bar (footer).
         let content_height = area.height.saturating_sub(2);
         let frame_rect = Rect {
@@ -1156,8 +1212,14 @@ impl Renderer {
         let path_style = Style::default().fg(c.bottom_bar_path);
         let left_path = app.left_panel().get_current_dir();
         let right_path = app.right_panel().get_current_dir();
-        let left_path_display = compact_path(left_path.trim_end_matches('/'), left_w as usize);
-        let right_path_display = compact_path(right_path.trim_end_matches('/'), right_w as usize);
+        let left_path_display = compact_path(
+            left_path.trim_end_matches('/'),
+            left_w as usize,
+        );
+        let right_path_display = compact_path(
+            right_path.trim_end_matches('/'),
+            right_w as usize,
+        );
         f.render_widget(
             Paragraph::new(left_path_display).style(path_style),
             Rect {
@@ -1284,8 +1346,12 @@ impl Renderer {
             let left_trunc: String = left_text.chars().take(left_half_w).collect();
             let left_pad = left_half_w.saturating_sub(left_trunc.chars().count());
             f.render_widget(
-                Paragraph::new(format!("{}{}", left_trunc, " ".repeat(left_pad)))
-                    .style(bar_style.fg(c.bottom_bar_success)),
+                Paragraph::new(format!(
+                    "{}{}",
+                    left_trunc,
+                    " ".repeat(left_pad)
+                ))
+                .style(bar_style.fg(c.bottom_bar_success)),
                 Rect {
                     x: area.x,
                     y: area.y,
@@ -1362,7 +1428,10 @@ impl Renderer {
                 width: (right_total_w - right_content_w) as u16,
                 height: 1,
             };
-            f.render_widget(Paragraph::new(disk_str).style(bar_style), disk_rect);
+            f.render_widget(
+                Paragraph::new(disk_str).style(bar_style),
+                disk_rect,
+            );
         }
     }
 
@@ -1400,11 +1469,7 @@ impl Renderer {
         let mut i = start;
         while i < end {
             let use_prompt = i < prompt_chars;
-            let style = if use_prompt {
-                prompt_style
-            } else {
-                cmd_style
-            };
+            let style = if use_prompt { prompt_style } else { cmd_style };
             let mut j = i + 1;
             while j < end {
                 let np = j < prompt_chars;
@@ -1413,7 +1478,10 @@ impl Renderer {
                 }
                 j += 1;
             }
-            spans.push(Span::styled(chars[i..j].iter().collect::<String>(), style));
+            spans.push(Span::styled(
+                chars[i..j].iter().collect::<String>(),
+                style,
+            ));
             i = j;
         }
         let pad = w.saturating_sub(end - start);
@@ -1440,28 +1508,24 @@ impl Renderer {
         folder_compare: Option<&FolderCompareState>,
     ) {
         match panel.get_view_mode() {
-            ViewMode::SingleColumn => {
-                Self::draw_single_column_view(
-                    f,
-                    panel,
-                    area,
-                    is_active_panel,
-                    palette,
-                    is_left_panel,
-                    folder_compare,
-                )
-            }
-            ViewMode::DoubleColumn => {
-                Self::draw_double_column_view(
-                    f,
-                    panel,
-                    area,
-                    is_active_panel,
-                    palette,
-                    is_left_panel,
-                    folder_compare,
-                )
-            }
+            ViewMode::SingleColumn => Self::draw_single_column_view(
+                f,
+                panel,
+                area,
+                is_active_panel,
+                palette,
+                is_left_panel,
+                folder_compare,
+            ),
+            ViewMode::DoubleColumn => Self::draw_double_column_view(
+                f,
+                panel,
+                area,
+                is_active_panel,
+                palette,
+                is_left_panel,
+                folder_compare,
+            ),
         }
     }
 
@@ -1500,8 +1564,7 @@ impl Renderer {
             let actual_index = i + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
-            let folder_tag =
-                folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
+            let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
 
             let mark_cell = if is_marked {
                 "> "
@@ -1560,19 +1623,20 @@ impl Renderer {
                     base
                 }
             } else {
-                Style::default()
-                    .fg(list.marked_prefix)
-                    .bg(if is_selected {
-                        list.selected_bg
-                    } else {
-                        palette.chrome.main_background
-                    })
+                Style::default().fg(list.marked_prefix).bg(if is_selected {
+                    list.selected_bg
+                } else {
+                    palette.chrome.main_background
+                })
             };
 
             let spans = vec![
                 Span::styled(mark_cell, mark_cell_style),
                 Span::styled(name_display, name_style),
-                Span::styled(pad_after_name, if is_selected { mark_style } else { base }),
+                Span::styled(
+                    pad_after_name,
+                    if is_selected { mark_style } else { base },
+                ),
                 Span::styled(
                     size_pad.as_str(),
                     if is_selected {
@@ -1654,8 +1718,7 @@ impl Renderer {
             let actual_index = i + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
-            let folder_tag =
-                folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
+            let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
             let display = truncate_for_width(file, max_left_w);
             let line = styles::create_file_line_from_display(
                 &display,
@@ -1684,8 +1747,7 @@ impl Renderer {
             let actual_index = i + left_files.len() + scroll;
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
-            let folder_tag =
-                folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
+            let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
             let display = truncate_for_width(file, max_right_w);
             let line = styles::create_file_line_from_display(
                 &display,

@@ -45,8 +45,8 @@ fn linux_trash_available() -> bool {
 pub fn move_to_trash(path: &Path) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        use trash::TrashContext;
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        use trash::TrashContext;
 
         let mut ctx = TrashContext::new();
         ctx.set_delete_method(DeleteMethod::NsFileManager);

@@ -123,7 +123,11 @@ pub trait PanelOperations {
     /// Same as get_names_to_copy plus names of file before (first-1) and after (first+count) for restore after delete/move.
     fn get_names_to_copy_with_restore_neighbors(
         &self
-    ) -> (Vec<(String, bool)>, Option<String>, Option<String>);
+    ) -> (
+        Vec<(String, bool)>,
+        Option<String>,
+        Option<String>,
+    );
 }
 
 #[derive(Debug)]
@@ -173,8 +177,10 @@ impl Panel {
         new_location: PanelLocation,
     ) -> io::Result<()> {
         self.marked_indices.clear();
-        self.navigation_history
-            .push((self.current_location.clone(), self.selected_index));
+        self.navigation_history.push((
+            self.current_location.clone(),
+            self.selected_index,
+        ));
         self.current_location = new_location;
         self.current_dir_display = self.current_location.display_string();
         self.selected_index = 0;
@@ -187,8 +193,10 @@ impl Panel {
             return Ok(());
         };
         self.marked_indices.clear();
-        self.navigation_history
-            .push((self.current_location.clone(), self.selected_index));
+        self.navigation_history.push((
+            self.current_location.clone(),
+            self.selected_index,
+        ));
         self.current_location = parent.clone();
         self.current_dir_display = self.current_location.display_string();
         self.scroll_offset = 0;
@@ -480,10 +488,7 @@ impl PanelOperations for Panel {
             // Enter on a file: supported archive extensions (open as virtual folder)
             let name_clean = file.name.trim_end_matches('/');
             let lower = name_clean.to_lowercase();
-            if lower.ends_with(".zip")
-                || lower.ends_with(".tar.gz")
-                || lower.ends_with(".tgz")
-            {
+            if lower.ends_with(".zip") || lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
                 if let Some(new_loc) = self.current_location.enter(name_clean, false) {
                     self.navigate_to_location(new_loc)?;
                 }
@@ -673,7 +678,11 @@ impl PanelOperations for Panel {
 
     fn get_names_to_copy_with_restore_neighbors(
         &self
-    ) -> (Vec<(String, bool)>, Option<String>, Option<String>) {
+    ) -> (
+        Vec<(String, bool)>,
+        Option<String>,
+        Option<String>,
+    ) {
         let files = self.get_files();
         if files.is_empty() {
             return (Vec::new(), None, None);

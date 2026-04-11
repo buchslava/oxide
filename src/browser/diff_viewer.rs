@@ -10,9 +10,10 @@ use std::io;
 use std::mem::take;
 use std::sync::mpsc::{self, TryRecvError};
 
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 use similar::{Algorithm, ChangeTag, DiffOp, TextDiff};
@@ -209,7 +210,10 @@ fn collect_name_to_file(files: &[FileInfo]) -> HashMap<String, &FileInfo> {
         if f.is_parent_dir() {
             continue;
         }
-        m.insert(f.name.trim_end_matches('/').to_string(), f);
+        m.insert(
+            f.name.trim_end_matches('/').to_string(),
+            f,
+        );
     }
     m
 }
@@ -381,7 +385,10 @@ fn logical_lines_from_bytes(content: &[u8]) -> Vec<String> {
     lines
 }
 
-fn wrap_line(line: &str, width: usize) -> Vec<String> {
+fn wrap_line(
+    line: &str,
+    width: usize,
+) -> Vec<String> {
     if width == 0 {
         return vec![line.to_string()];
     }
@@ -415,9 +422,7 @@ fn insert_run_following_delete(
 ) -> Option<(usize, usize)> {
     match ops.get(delete_idx + 1)? {
         DiffOp::Insert {
-            new_index,
-            new_len,
-            ..
+            new_index, new_len, ..
         } => Some((*new_index, *new_len)),
         _ => None,
     }
@@ -528,7 +533,11 @@ fn extend_aligned_rows_with_paired_sides(
     }
 }
 
-fn build_aligned_rows(old: &[String], new: &[String]) -> Vec<AlignedRow> {
+#[rustfmt::skip]
+fn build_aligned_rows(
+    old: &[String],
+    new: &[String],
+) -> Vec<AlignedRow> {
     let old_r: Vec<&str> = old.iter().map(String::as_str).collect();
     let new_r: Vec<&str> = new.iter().map(String::as_str).collect();
     let diff = TextDiff::configure()
@@ -544,7 +553,14 @@ fn build_aligned_rows(old: &[String], new: &[String]) -> Vec<AlignedRow> {
                 new_index,
                 len,
             } => {
-                push_equal_run(&mut out, old, new, old_index, new_index, len);
+                push_equal_run(
+                    &mut out,
+                    old,
+                    new,
+                    old_index,
+                    new_index,
+                    len,
+                );
                 i += 1;
             }
             DiffOp::Delete {
@@ -564,7 +580,12 @@ fn build_aligned_rows(old: &[String], new: &[String]) -> Vec<AlignedRow> {
                     );
                     i += 2;
                 } else {
-                    push_delete_only_run(&mut out, old, old_index, old_len);
+                    push_delete_only_run(
+                        &mut out,
+                        old,
+                        old_index,
+                        old_len,
+                    );
                     i += 1;
                 }
             }
@@ -573,7 +594,12 @@ fn build_aligned_rows(old: &[String], new: &[String]) -> Vec<AlignedRow> {
                 new_len,
                 ..
             } => {
-                push_insert_only_run(&mut out, new, new_index, new_len);
+                push_insert_only_run(
+                    &mut out,
+                    new,
+                    new_index,
+                    new_len,
+                );
                 i += 1;
             }
             DiffOp::Replace {
@@ -598,23 +624,36 @@ fn build_aligned_rows(old: &[String], new: &[String]) -> Vec<AlignedRow> {
     out
 }
 
-fn line_number_column_width(aligned: &[AlignedRow]) -> usize {
-    let max_old = aligned
-        .iter()
-        .filter_map(|r| r.old_line)
-        .max()
-        .unwrap_or(1);
-    let max_new = aligned
-        .iter()
-        .filter_map(|r| r.new_line)
-        .max()
-        .unwrap_or(1);
-    let m = max_old.max(max_new).max(1);
-    let w = (m as f64).log10().floor() as usize + 1;
-    w.max(3).min(8)
+/// Largest 1-based line index on one side (minimum 1 so width is never zero).
+fn max_line_index(
+    aligned: &[AlignedRow],
+    line: impl Fn(&AlignedRow) -> Option<usize>,
+) -> usize {
+    let mut m = 1usize;
+    for row in aligned {
+        if let Some(n) = line(row) {
+            m = m.max(n);
+        }
+    }
+    m
 }
 
-fn style_for_cell(kind: RowKind, side_left: bool, p: DiffViewerPalette) -> Style {
+fn line_number_column_width(aligned: &[AlignedRow]) -> usize {
+    let max_old = max_line_index(aligned, |r| r.old_line);
+    let max_new = max_line_index(aligned, |r| r.new_line);
+    let merged = max_old.max(max_new);
+    let m = merged.max(1);
+    let log_digits = (m as f64).log10().floor() as usize;
+    let w = log_digits + 1;
+    let at_least_3 = w.max(3);
+    at_least_3.min(8)
+}
+
+fn style_for_cell(
+    kind: RowKind,
+    side_left: bool,
+    p: DiffViewerPalette,
+) -> Style {
     let base = Style::default().bg(p.background).fg(p.text);
     match (kind, side_left) {
         (RowKind::Equal, _) => base,
@@ -747,16 +786,16 @@ fn prepend_line_gutter(
             None => " ".repeat(num_width),
         }
     };
-    let mut spans = vec![
-        Span::styled(label, num_style),
-        Span::styled("│", sep_style),
-    ];
+    let mut spans = vec![Span::styled(label, num_style), Span::styled("│", sep_style)];
     spans.extend(padded);
     Line::from(spans)
 }
 
 /// Usable text width inside one pane: full column width minus line-number gutter and the `│` column.
-fn diff_column_text_width(column_inner_width: usize, line_num_width: usize) -> usize {
+fn diff_column_text_width(
+    column_inner_width: usize,
+    line_num_width: usize,
+) -> usize {
     const SEPARATOR_COLS: usize = 1;
     column_inner_width
         .saturating_sub(line_num_width + SEPARATOR_COLS)
@@ -834,7 +873,11 @@ fn style_for_gap_stripe_or_row_cell(
 }
 
 /// Fixed visual width: invisible gap padding, or fragment padded / clipped to `text_width` grapheme columns.
-fn padded_or_gap_cell_string(use_gap_stripe: bool, fragment: &str, text_width: usize) -> String {
+fn padded_or_gap_cell_string(
+    use_gap_stripe: bool,
+    fragment: &str,
+    text_width: usize,
+) -> String {
     if use_gap_stripe {
         gap_padding_spaces(text_width)
     } else if fragment.chars().count() < text_width {
@@ -1008,9 +1051,8 @@ fn diff_scroll_by_lines(
 /// Wheel: scroll the diff (`DIFF_MOUSE_SCROLL_LINES` per notch, same direction as ↑↓).
 pub fn handle_diff_mouse(
     app: &mut AppState,
-    mouse_event: crossterm::event::MouseEvent,
+    mouse_event: MouseEvent,
 ) -> bool {
-    use crossterm::event::MouseEventKind;
     if app.diff_viewer_screen.is_none() {
         return false;
     }
@@ -1027,9 +1069,8 @@ pub fn handle_diff_mouse(
 
 pub fn handle_diff_key(
     app: &mut AppState,
-    key: crossterm::event::KeyEvent,
+    key: KeyEvent,
 ) -> Option<AppAction> {
-    use crossterm::event::KeyCode;
     match app.diff_viewer_screen.as_mut()? {
         DiffViewerState::Loading { .. } => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
@@ -1144,15 +1185,30 @@ pub fn draw(
             let rw = right_header_area.width.max(1) as usize;
             f.render_widget(header_left_block, left_header_area);
             f.render_widget(
-                Paragraph::new(diff_pane_header_line(left_path.as_str(), lw, "", p)).style(base),
+                Paragraph::new(diff_pane_header_line(
+                    left_path.as_str(),
+                    lw,
+                    "",
+                    p,
+                ))
+                .style(base),
                 left_header_inner,
             );
             f.render_widget(
-                Paragraph::new(diff_pane_header_line(right_path.as_str(), rw, "", p)).style(base),
+                Paragraph::new(diff_pane_header_line(
+                    right_path.as_str(),
+                    rw,
+                    "",
+                    p,
+                ))
+                .style(base),
                 right_header_area,
             );
             f.render_widget(Paragraph::new(msg).style(base), chunks[1]);
-            f.render_widget(Paragraph::new(bottom).style(base), chunks[2]);
+            f.render_widget(
+                Paragraph::new(bottom).style(base),
+                chunks[2],
+            );
         }
         DiffViewerState::Ready(d) => {
             d.area = area;
@@ -1202,29 +1258,33 @@ pub fn draw(
             // Paths only: line count / scroll % stay on the bottom bar (avoids a crowded number by the divider).
             f.render_widget(header_left_block, left_header_area);
             f.render_widget(
-                Paragraph::new(diff_pane_header_line(d.left_path.as_str(), hlw, "", p)).style(base),
+                Paragraph::new(diff_pane_header_line(
+                    d.left_path.as_str(),
+                    hlw,
+                    "",
+                    p,
+                ))
+                .style(base),
                 left_header_inner,
             );
             f.render_widget(
-                Paragraph::new(diff_pane_header_line(d.right_path.as_str(), hrw, "", p)).style(base),
+                Paragraph::new(diff_pane_header_line(
+                    d.right_path.as_str(),
+                    hrw,
+                    "",
+                    p,
+                ))
+                .style(base),
                 right_header_area,
             );
 
-            let left_slice: Vec<Line> = d
-                .left_display
-                .get(start..end)
-                .unwrap_or(&[])
-                .to_vec();
-            let right_slice: Vec<Line> = d
-                .right_display
-                .get(start..end)
-                .unwrap_or(&[])
-                .to_vec();
+            let left_slice: Vec<Line> = d.left_display.get(start..end).unwrap_or(&[]).to_vec();
+            let right_slice: Vec<Line> = d.right_display.get(start..end).unwrap_or(&[]).to_vec();
 
-            let left_para = Paragraph::new(ratatui::text::Text::from(left_slice))
+            let left_para = Paragraph::new(Text::from(left_slice))
                 .style(base)
                 .wrap(Wrap { trim: false });
-            let right_para = Paragraph::new(ratatui::text::Text::from(right_slice))
+            let right_para = Paragraph::new(Text::from(right_slice))
                 .style(base)
                 .wrap(Wrap { trim: false });
 
@@ -1235,8 +1295,14 @@ pub fn draw(
 
             let bar = Line::from(vec![
                 Span::styled(" Esc ", Style::default().fg(p.muted)),
-                Span::styled("close  ", Style::default().fg(p.text).bg(p.background)),
-                Span::styled("↑↓ PgUp/PgDn wheel", Style::default().fg(p.muted)),
+                Span::styled(
+                    "close  ",
+                    Style::default().fg(p.text).bg(p.background),
+                ),
+                Span::styled(
+                    "↑↓ PgUp/PgDn wheel",
+                    Style::default().fg(p.muted),
+                ),
                 Span::styled(
                     format!("  {} lines  {}%", total, pct),
                     Style::default().fg(p.muted),
@@ -1247,7 +1313,10 @@ pub fn draw(
     }
 }
 
-fn truncate_middle(s: &str, max_chars: usize) -> String {
+fn truncate_middle(
+    s: &str,
+    max_chars: usize,
+) -> String {
     let n = s.chars().count();
     if n <= max_chars {
         return s.to_string();
@@ -1258,6 +1327,13 @@ fn truncate_middle(s: &str, max_chars: usize) -> String {
     let keep = max_chars - 1;
     let half = keep / 2;
     let start: String = s.chars().take(half).collect();
-    let end: String = s.chars().rev().take(keep - half).collect::<String>().chars().rev().collect();
+    let end: String = s
+        .chars()
+        .rev()
+        .take(keep - half)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("{}…{}", start, end)
 }

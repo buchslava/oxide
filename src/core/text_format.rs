@@ -41,7 +41,10 @@ pub fn truncate_str(
             }
             let take = max_width.saturating_sub(1);
             let start = char_count.saturating_sub(take);
-            format!("…{}", chars.iter().skip(start).collect::<String>())
+            format!(
+                "…{}",
+                chars.iter().skip(start).collect::<String>()
+            )
         }
         TruncateMode::CompactMiddle => {
             if max_width < 2 {

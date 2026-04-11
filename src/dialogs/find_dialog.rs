@@ -134,10 +134,18 @@ pub fn start_search(app: &mut AppState) {
         dialog.scroll_offset = 0;
 
         // Move strings into Arc<str> (no clone); pass Arc::clone to thread (cheap). Restore from stored Arc when Done.
-        let start_dir = Arc::from(std::mem::take(&mut dialog.start_dir_input.text));
-        let file_pattern = Arc::from(std::mem::take(&mut dialog.file_pattern_input.text));
-        let ignore_pattern = Arc::from(std::mem::take(&mut dialog.ignore_pattern_input.text));
-        let content_pattern = Arc::from(std::mem::take(&mut dialog.content_pattern_input.text));
+        let start_dir = Arc::from(std::mem::take(
+            &mut dialog.start_dir_input.text,
+        ));
+        let file_pattern = Arc::from(std::mem::take(
+            &mut dialog.file_pattern_input.text,
+        ));
+        let ignore_pattern = Arc::from(std::mem::take(
+            &mut dialog.ignore_pattern_input.text,
+        ));
+        let content_pattern = Arc::from(std::mem::take(
+            &mut dialog.content_pattern_input.text,
+        ));
         dialog.search_start_dir = Some(Arc::clone(&start_dir));
         dialog.search_file_pattern = Some(Arc::clone(&file_pattern));
         dialog.search_ignore_pattern = Some(Arc::clone(&ignore_pattern));
@@ -204,8 +212,10 @@ pub fn poll_search(app: &mut AppState) {
                 if let Some(ref mut find_dialog) = app.find_dialog {
                     find_dialog.phase = FindDialogPhase::Results;
                     let match_count = find_dialog.results.len();
-                    find_dialog.status_message =
-                        format!("Search complete. {} match(es).", match_count);
+                    find_dialog.status_message = format!(
+                        "Search complete. {} match(es).",
+                        match_count
+                    );
                     find_dialog.search_current_dir.clear();
                     // Restore search params from Arc into input fields (one copy per field when done).
                     if let Some(arc) = find_dialog.search_start_dir.take() {
@@ -633,10 +643,14 @@ pub fn draw(
             );
         }
         FindDialogPhase::Searching => {
-            draw_status_and_list(f, d, dialog, inner, content_w, fill_style, true);
+            draw_status_and_list(
+                f, d, dialog, inner, content_w, fill_style, true,
+            );
         }
         FindDialogPhase::Results => {
-            draw_status_and_list(f, d, dialog, inner, content_w, fill_style, false);
+            draw_status_and_list(
+                f, d, dialog, inner, content_w, fill_style, false,
+            );
         }
     }
 }
@@ -664,10 +678,26 @@ fn draw_parameter_form(
         "Ignore pattern (*, ?):"
     };
     let rows: [(usize, &str, &TextInputState); 4] = [
-        (0, "Start directory:", &dialog.start_dir_input),
-        (1, file_pattern_label, &dialog.file_pattern_input),
-        (2, ignore_pattern_label, &dialog.ignore_pattern_input),
-        (3, "Content pattern:", &dialog.content_pattern_input),
+        (
+            0,
+            "Start directory:",
+            &dialog.start_dir_input,
+        ),
+        (
+            1,
+            file_pattern_label,
+            &dialog.file_pattern_input,
+        ),
+        (
+            2,
+            ignore_pattern_label,
+            &dialog.ignore_pattern_input,
+        ),
+        (
+            3,
+            "Content pattern:",
+            &dialog.content_pattern_input,
+        ),
     ];
     let label_w = rows
         .iter()
@@ -685,8 +715,7 @@ fn draw_parameter_form(
         };
         let value_w = content_w.saturating_sub(label_w);
         let value_w_usize = value_w as usize;
-        let display_offset =
-            text_input::horizontal_display_offset(cursor_char, value_w_usize);
+        let display_offset = text_input::horizontal_display_offset(cursor_char, value_w_usize);
         let cursor_screen = cursor_char.saturating_sub(display_offset);
         let base_style = Style::default().bg(bg).fg(d.text);
         let selection_style = Style::default().bg(d.input_selection_bg).fg(d.text);
@@ -726,8 +755,16 @@ fn draw_parameter_form(
 
     let opts = [
         (4, "Recursive", dialog.recursive),
-        (5, "File name case sensitive", dialog.file_case_sens),
-        (6, "Content case sensitive", dialog.content_case_sens),
+        (
+            5,
+            "File name case sensitive",
+            dialog.file_case_sens,
+        ),
+        (
+            6,
+            "Content case sensitive",
+            dialog.content_case_sens,
+        ),
         (7, "Skip hidden files", dialog.skip_hidden),
     ];
     for (idx, label, on) in opts {
@@ -883,7 +920,11 @@ fn draw_status_and_list(
             };
             let prefix = if is_folder { "" } else { "  " };
             let max_w = (content_w as usize).saturating_sub(prefix.len());
-            let display = format!("{}{}", prefix, truncate_path(&line_str, max_w));
+            let display = format!(
+                "{}{}",
+                prefix,
+                truncate_path(&line_str, max_w)
+            );
             ListItem::new(Line::from(Span::raw(display))).style(style)
         })
         .collect();
@@ -918,13 +959,25 @@ mod tests {
 
     #[test]
     fn glob_star_offline_zip_matches_offline_zip() {
-        assert!(glob_match("*offline.zip", "offline.zip", true));
-        assert!(glob_match("*offline.zip", "offline.zip", false));
+        assert!(glob_match(
+            "*offline.zip",
+            "offline.zip",
+            true
+        ));
+        assert!(glob_match(
+            "*offline.zip",
+            "offline.zip",
+            false
+        ));
     }
 
     #[test]
     fn glob_exact_and_star_prefix() {
-        assert!(glob_match("offline.zip", "offline.zip", true));
+        assert!(glob_match(
+            "offline.zip",
+            "offline.zip",
+            true
+        ));
         assert!(glob_match("*", "offline.zip", true));
         assert!(glob_match("*.zip", "offline.zip", true));
         assert!(glob_match("", "anything", true));

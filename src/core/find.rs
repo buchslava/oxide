@@ -68,7 +68,10 @@ pub fn glob_match(
     case_sensitive: bool,
 ) -> bool {
     let (p, n) = if case_sensitive {
-        (pattern.as_bytes().to_vec(), name.as_bytes().to_vec())
+        (
+            pattern.as_bytes().to_vec(),
+            name.as_bytes().to_vec(),
+        )
     } else {
         (
             pattern.to_lowercase().into_bytes(),
@@ -240,8 +243,11 @@ pub fn run_find_search(
         let file_pattern_trim = file_pattern.trim();
         let ignore_pattern_trim = ignore_pattern.trim();
         let content_pattern = content_pattern.trim();
-        let name_matcher =
-            PreparedFilePattern::new(file_pattern_trim, file_case_sens, file_pattern_regex);
+        let name_matcher = PreparedFilePattern::new(
+            file_pattern_trim,
+            file_case_sens,
+            file_pattern_regex,
+        );
         let ignore_matcher = if ignore_pattern_trim.is_empty() {
             None
         } else {
@@ -282,7 +288,9 @@ pub fn run_find_search(
             if let Some(parent) = path.parent() {
                 if current_dir_sent.as_deref() != Some(parent) {
                     current_dir_sent = Some(parent.to_path_buf());
-                    let _ = tx.send(FindMessage::CurrentDir(parent.display().to_string()));
+                    let _ = tx.send(FindMessage::CurrentDir(
+                        parent.display().to_string(),
+                    ));
                 }
             }
             if !entry.file_type().is_file() {
@@ -319,8 +327,10 @@ pub fn run_find_search(
                             ln.to_lowercase()
                         };
                         if hay.contains(&needle) {
-                            let _ = tx
-                                .send(FindMessage::Match(path.clone(), Some((line_no + 1) as u64)));
+                            let _ = tx.send(FindMessage::Match(
+                                path.clone(),
+                                Some((line_no + 1) as u64),
+                            ));
                             break;
                         }
                     }

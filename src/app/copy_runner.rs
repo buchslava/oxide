@@ -147,7 +147,12 @@ fn spawn_background_directory_delete(
 ) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(delete_item(&source_dir, &entry_name, true, use_trash));
+        let _ = tx.send(delete_item(
+            &source_dir,
+            &entry_name,
+            true,
+            use_trash,
+        ));
     });
     app.delete_pending_rx = Some(rx);
 }
@@ -159,8 +164,10 @@ fn run_copy_step_legacy_copy_move(
     is_dir: bool,
 ) {
     let dest_name = c.params.dest_name_for_index(c.current_index, name);
-    let target_path =
-        FileOperations::join_path(&c.params.target_dir, dest_name.trim_end_matches('/'));
+    let target_path = FileOperations::join_path(
+        &c.params.target_dir,
+        dest_name.trim_end_matches('/'),
+    );
     if target_path.exists() && !c.overwrite_all && !c.skip_all {
         app.copy_overwrite_dialog = Some(dest_name.clone());
         app.copy_overwrite_focus = 0;
@@ -223,7 +230,12 @@ fn run_copy_step_legacy_delete(
         );
         return;
     }
-    match delete_item(&c.params.source_dir, name, is_dir, c.use_trash_for_delete) {
+    match delete_item(
+        &c.params.source_dir,
+        name,
+        is_dir,
+        c.use_trash_for_delete,
+    ) {
         Ok(()) => c.current_index += 1,
         Err(e) => {
             if c.ignore_all_errors {
@@ -347,7 +359,10 @@ fn run_copy_step_backend(
         Err(e) => (
             ignore_all_errors,
             None,
-            Some(format!("{} -> {}: {}", current_path, dest_name, e)),
+            Some(format!(
+                "{} -> {}: {}",
+                current_path, dest_name, e
+            )),
         ),
     }
 }
@@ -366,9 +381,20 @@ fn run_copy_step_into_archive(
 ) -> (bool, Option<String>, Option<String>) {
     let items = &[(src_name.to_string(), is_dir)];
     let result = if operation == Operation::Move {
-        move_items_into_archive(source_loc, items, archive_path, path_inside)
+        move_items_into_archive(
+            source_loc,
+            items,
+            archive_path,
+            path_inside,
+        )
     } else if dest_name.trim_end_matches('/') == src_name.trim_end_matches('/') {
-        copy_items_into_archive(source_loc, items, archive_path, path_inside, None)
+        copy_items_into_archive(
+            source_loc,
+            items,
+            archive_path,
+            path_inside,
+            None,
+        )
     } else {
         let d = dest_name.to_string();
         copy_items_into_archive(
@@ -384,7 +410,10 @@ fn run_copy_step_into_archive(
         Err(e) => (
             ignore_all_errors,
             None,
-            Some(format!("{} -> (archive): {}", current_path, e)),
+            Some(format!(
+                "{} -> (archive): {}",
+                current_path, e
+            )),
         ),
     }
 }
@@ -503,7 +532,13 @@ fn perform_copy_overwrite_item_io(
                 if c.operation == Operation::Move {
                     move_items_into_archive(loc, items, archive, path_inside)
                 } else {
-                    copy_items_into_archive(loc, items, archive, path_inside, dest_names)
+                    copy_items_into_archive(
+                        loc,
+                        items,
+                        archive,
+                        path_inside,
+                        dest_names,
+                    )
                 }
             }
             _ => {
@@ -548,7 +583,10 @@ fn apply_copy_item_io_outcome(
             } else {
                 app.copy_error_dialog = Some(CopyErrorState::new(
                     progress.operation,
-                    format!("{} -> {}: {}", progress.params.source_dir, name, e),
+                    format!(
+                        "{} -> {}: {}",
+                        progress.params.source_dir, name, e
+                    ),
                 ));
                 app.copy_error_focus = 0;
                 false

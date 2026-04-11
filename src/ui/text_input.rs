@@ -38,8 +38,10 @@ impl TextInputState {
     /// Selection range (start, end) with start < end, or None if no selection.
     pub fn selection_bounds(&self) -> Option<(usize, usize)> {
         let anchor_pos = self.anchor?;
-        let (selection_start, selection_end) =
-            (anchor_pos.min(self.cursor), anchor_pos.max(self.cursor));
+        let (selection_start, selection_end) = (
+            anchor_pos.min(self.cursor),
+            anchor_pos.max(self.cursor),
+        );
         if selection_start < selection_end {
             Some((selection_start, selection_end))
         } else {
@@ -318,7 +320,11 @@ pub fn handle_single_input_key(
     focus: usize,
     code: KeyCode,
     modifiers: KeyModifiers,
-) -> (TextInputState, usize, SingleInputKeyResult) {
+) -> (
+    TextInputState,
+    usize,
+    SingleInputKeyResult,
+) {
     let code = match code {
         KeyCode::Char('\t') => KeyCode::Tab,
         other => other,
@@ -326,19 +332,35 @@ pub fn handle_single_input_key(
     match code {
         KeyCode::Tab | KeyCode::Char('\t') => {
             let new_focus = (focus + 1) % FOCUS_COUNT;
-            (input, new_focus, SingleInputKeyResult::Continue)
+            (
+                input,
+                new_focus,
+                SingleInputKeyResult::Continue,
+            )
         }
         KeyCode::BackTab => {
             let new_focus = (focus + FOCUS_COUNT - 1) % FOCUS_COUNT;
-            (input, new_focus, SingleInputKeyResult::Continue)
+            (
+                input,
+                new_focus,
+                SingleInputKeyResult::Continue,
+            )
         }
         KeyCode::Up => {
             let new_focus = (focus + FOCUS_COUNT - 1) % FOCUS_COUNT;
-            (input, new_focus, SingleInputKeyResult::Continue)
+            (
+                input,
+                new_focus,
+                SingleInputKeyResult::Continue,
+            )
         }
         KeyCode::Down => {
             let new_focus = (focus + 1) % FOCUS_COUNT;
-            (input, new_focus, SingleInputKeyResult::Continue)
+            (
+                input,
+                new_focus,
+                SingleInputKeyResult::Continue,
+            )
         }
         KeyCode::Enter => {
             let result = if focus == 2 {
@@ -352,7 +374,11 @@ pub fn handle_single_input_key(
         KeyCode::Char(c) => {
             if modifiers.contains(KeyModifiers::CONTROL) {
                 if c == 'o' {
-                    return (input, focus, SingleInputKeyResult::Suspend);
+                    return (
+                        input,
+                        focus,
+                        SingleInputKeyResult::Suspend,
+                    );
                 }
                 if c == 'c' {
                     if focus == 0 {
@@ -365,33 +391,65 @@ pub fn handle_single_input_key(
                     if focus != 0 {
                         return (input, focus, SingleInputKeyResult::Cancel);
                     }
-                    return (input, focus, SingleInputKeyResult::Continue);
+                    return (
+                        input,
+                        focus,
+                        SingleInputKeyResult::Continue,
+                    );
                 }
                 if c == 'a' && focus == 0 && !input.text.is_empty() {
-                    return (input.select_all(), focus, SingleInputKeyResult::Continue);
+                    return (
+                        input.select_all(),
+                        focus,
+                        SingleInputKeyResult::Continue,
+                    );
                 }
                 if c == 'v' && focus == 0 {
                     if let Some(s) = clipboard::get() {
-                        return (input.insert_str(&s), focus, SingleInputKeyResult::Continue);
+                        return (
+                            input.insert_str(&s),
+                            focus,
+                            SingleInputKeyResult::Continue,
+                        );
                     }
-                    return (input, focus, SingleInputKeyResult::Continue);
+                    return (
+                        input,
+                        focus,
+                        SingleInputKeyResult::Continue,
+                    );
                 }
             }
             if is_ctrl_backspace(modifiers, c) && focus == 0 {
-                return (input.backspace(), focus, SingleInputKeyResult::Continue);
+                return (
+                    input.backspace(),
+                    focus,
+                    SingleInputKeyResult::Continue,
+                );
             }
             if focus == 0 && c.is_ascii() && !c.is_control() {
-                (input.insert_char(c), focus, SingleInputKeyResult::Continue)
+                (
+                    input.insert_char(c),
+                    focus,
+                    SingleInputKeyResult::Continue,
+                )
             } else {
-                (input, focus, SingleInputKeyResult::Continue)
+                (
+                    input,
+                    focus,
+                    SingleInputKeyResult::Continue,
+                )
             }
         }
-        KeyCode::Backspace if focus == 0 => {
-            (input.backspace(), focus, SingleInputKeyResult::Continue)
-        }
-        KeyCode::Delete if focus == 0 => {
-            (input.delete_forward(), focus, SingleInputKeyResult::Continue)
-        }
+        KeyCode::Backspace if focus == 0 => (
+            input.backspace(),
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
+        KeyCode::Delete if focus == 0 => (
+            input.delete_forward(),
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
         KeyCode::Left if focus == 0 => (
             input.move_left(modifiers.contains(KeyModifiers::SHIFT)),
             focus,
@@ -412,7 +470,11 @@ pub fn handle_single_input_key(
             focus,
             SingleInputKeyResult::Continue,
         ),
-        _ => (input, focus, SingleInputKeyResult::Continue),
+        _ => (
+            input,
+            focus,
+            SingleInputKeyResult::Continue,
+        ),
     }
 }
 
@@ -557,6 +619,12 @@ pub fn draw_single_input_dialog(
     } else {
         fill_style
     };
-    f.render_widget(Paragraph::new(create_btn).style(create_style), create_rect);
-    f.render_widget(Paragraph::new(cancel_btn).style(cancel_style), cancel_rect);
+    f.render_widget(
+        Paragraph::new(create_btn).style(create_style),
+        create_rect,
+    );
+    f.render_widget(
+        Paragraph::new(cancel_btn).style(cancel_style),
+        cancel_rect,
+    );
 }

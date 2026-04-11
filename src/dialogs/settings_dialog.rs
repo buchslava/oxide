@@ -126,22 +126,30 @@ pub fn handle_key(
                 }
                 1 => {
                     if state.content_focus == 1 {
-                        return Some(AppAction::SettingChange(SettingChange::LeftSortCyclePrev));
+                        return Some(AppAction::SettingChange(
+                            SettingChange::LeftSortCyclePrev,
+                        ));
                     }
                     if state.content_focus >= 2 {
                         state.content_focus -= 1;
                     } else {
-                        return Some(AppAction::SettingChange(SettingChange::LeftViewCycle));
+                        return Some(AppAction::SettingChange(
+                            SettingChange::LeftViewCycle,
+                        ));
                     }
                 }
                 2 => {
                     if state.content_focus == 1 {
-                        return Some(AppAction::SettingChange(SettingChange::RightSortCyclePrev));
+                        return Some(AppAction::SettingChange(
+                            SettingChange::RightSortCyclePrev,
+                        ));
                     }
                     if state.content_focus >= 2 {
                         state.content_focus -= 1;
                     } else {
-                        return Some(AppAction::SettingChange(SettingChange::RightViewCycle));
+                        return Some(AppAction::SettingChange(
+                            SettingChange::RightViewCycle,
+                        ));
                     }
                 }
                 3 => {
@@ -170,11 +178,15 @@ pub fn handle_key(
                 1 => {
                     if state.content_focus == 0 {
                         if persisted_snapshot.left_view.as_str() == "two" {
-                            return Some(AppAction::SettingChange(SettingChange::LeftViewCycle));
+                            return Some(AppAction::SettingChange(
+                                SettingChange::LeftViewCycle,
+                            ));
                         }
                         state.content_focus = 1;
                     } else if state.content_focus == 1 {
-                        return Some(AppAction::SettingChange(SettingChange::LeftSortCycle));
+                        return Some(AppAction::SettingChange(
+                            SettingChange::LeftSortCycle,
+                        ));
                     } else if state.content_focus < 3 {
                         state.content_focus += 1;
                     } else {
@@ -184,11 +196,15 @@ pub fn handle_key(
                 2 => {
                     if state.content_focus == 0 {
                         if persisted_snapshot.right_view.as_str() == "two" {
-                            return Some(AppAction::SettingChange(SettingChange::RightViewCycle));
+                            return Some(AppAction::SettingChange(
+                                SettingChange::RightViewCycle,
+                            ));
                         }
                         state.content_focus = 1;
                     } else if state.content_focus == 1 {
-                        return Some(AppAction::SettingChange(SettingChange::RightSortCycle));
+                        return Some(AppAction::SettingChange(
+                            SettingChange::RightSortCycle,
+                        ));
                     } else if state.content_focus < 3 {
                         state.content_focus += 1;
                     } else {
@@ -209,7 +225,9 @@ pub fn handle_key(
             }
             let action = match state.selected_section {
                 0 => match state.content_focus {
-                    0 => Some(AppAction::SettingChange(SettingChange::AutosaveToggle)),
+                    0 => Some(AppAction::SettingChange(
+                        SettingChange::AutosaveToggle,
+                    )),
                     1 => Some(AppAction::SettingChange(
                         SettingChange::SyncPanelToShellCwdToggle,
                     )),
@@ -222,20 +240,32 @@ pub fn handle_key(
                     4 => Some(AppAction::SettingChange(
                         SettingChange::FilePatternModeCycle,
                     )),
-                    5 => Some(AppAction::SettingChange(SettingChange::SafeDeleteToggle)),
+                    5 => Some(AppAction::SettingChange(
+                        SettingChange::SafeDeleteToggle,
+                    )),
                     _ => None,
                 },
                 1 => match state.content_focus {
-                    0 => Some(AppAction::SettingChange(SettingChange::LeftViewCycle)),
-                    1 => Some(AppAction::SettingChange(SettingChange::LeftSortCycle)),
-                    2 => Some(AppAction::SettingChange(SettingChange::LeftDirsFirstToggle)),
+                    0 => Some(AppAction::SettingChange(
+                        SettingChange::LeftViewCycle,
+                    )),
+                    1 => Some(AppAction::SettingChange(
+                        SettingChange::LeftSortCycle,
+                    )),
+                    2 => Some(AppAction::SettingChange(
+                        SettingChange::LeftDirsFirstToggle,
+                    )),
                     _ => Some(AppAction::SettingChange(
                         SettingChange::LeftShowHiddenToggle,
                     )),
                 },
                 2 => match state.content_focus {
-                    0 => Some(AppAction::SettingChange(SettingChange::RightViewCycle)),
-                    1 => Some(AppAction::SettingChange(SettingChange::RightSortCycle)),
+                    0 => Some(AppAction::SettingChange(
+                        SettingChange::RightViewCycle,
+                    )),
+                    1 => Some(AppAction::SettingChange(
+                        SettingChange::RightSortCycle,
+                    )),
                     2 => Some(AppAction::SettingChange(
                         SettingChange::RightDirsFirstToggle,
                     )),
@@ -243,9 +273,9 @@ pub fn handle_key(
                         SettingChange::RightShowHiddenToggle,
                     )),
                 },
-                3 => Some(AppAction::SettingChange(SettingChange::ThemeSelect(
-                    state.content_focus,
-                ))),
+                3 => Some(AppAction::SettingChange(
+                    SettingChange::ThemeSelect(state.content_focus),
+                )),
                 _ => None,
             };
             if let Some(a) = action {
@@ -269,10 +299,7 @@ fn draw_theme_section(
         .list_highlight_style()
         .remove_modifier(Modifier::BOLD);
     let current = ThemeId::from_slug(persisted_theme_slug);
-    let selected_idx = ThemeId::ALL
-        .iter()
-        .position(|&t| t == current)
-        .unwrap_or(0);
+    let selected_idx = ThemeId::ALL.iter().position(|&t| t == current).unwrap_or(0);
     let mut y = area.y;
     let line_h = 1u16;
 
@@ -294,7 +321,10 @@ fn draw_theme_section(
         } else {
             fill_style
         };
-        let line = Line::from(vec![Span::raw(sym), Span::raw(theme.display_name())]);
+        let line = Line::from(vec![
+            Span::raw(sym),
+            Span::raw(theme.display_name()),
+        ]);
         f.render_widget(
             Paragraph::new(line).style(style),
             Rect {
@@ -379,13 +409,12 @@ pub fn draw(
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ))
         } else {
-            Line::from(Span::styled(" Sections ", Style::default().fg(muted)))
+            Line::from(Span::styled(
+                " Sections ",
+                Style::default().fg(muted),
+            ))
         })
-        .border_style(Style::default().fg(if state.focus_left {
-            accent
-        } else {
-            muted
-        }))
+        .border_style(Style::default().fg(if state.focus_left { accent } else { muted }))
         .style(Style::default().bg(d.dialog_bg));
 
     let right_block = Block::default()
@@ -396,13 +425,12 @@ pub fn draw(
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ))
         } else {
-            Line::from(Span::styled(" Details ", Style::default().fg(muted)))
+            Line::from(Span::styled(
+                " Details ",
+                Style::default().fg(muted),
+            ))
         })
-        .border_style(Style::default().fg(if state.focus_left {
-            muted
-        } else {
-            accent
-        }))
+        .border_style(Style::default().fg(if state.focus_left { muted } else { accent }))
         .style(Style::default().bg(d.dialog_bg_secondary));
 
     let right_inner = right_block.inner(right_area);
@@ -744,7 +772,10 @@ pub(crate) fn draw_panel_section(
     } else {
         fill_style
     };
-    let dirs_first_line = Line::from(vec![Span::raw(dirs_first_chk), Span::raw(" Folders first")]);
+    let dirs_first_line = Line::from(vec![
+        Span::raw(dirs_first_chk),
+        Span::raw(" Folders first"),
+    ]);
     f.render_widget(
         Paragraph::new(dirs_first_line).style(dirs_first_style),
         Rect {
@@ -762,7 +793,10 @@ pub(crate) fn draw_panel_section(
     } else {
         fill_style
     };
-    let chk_line = Line::from(vec![Span::raw(checkbox), Span::raw(" Show hidden files")]);
+    let chk_line = Line::from(vec![
+        Span::raw(checkbox),
+        Span::raw(" Show hidden files"),
+    ]);
     f.render_widget(
         Paragraph::new(chk_line).style(chk_style),
         Rect {

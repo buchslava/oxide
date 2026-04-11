@@ -78,12 +78,19 @@ fn viewport_rows(area: Rect) -> usize {
     help_layout(area).1.height as usize
 }
 
-fn help_max_scroll(area: Rect, total_lines: usize) -> usize {
+fn help_max_scroll(
+    area: Rect,
+    total_lines: usize,
+) -> usize {
     let vis = viewport_rows(area).max(1);
     total_lines.saturating_sub(vis)
 }
 
-fn clamp_help_scroll(scroll: usize, area: Rect, total_lines: usize) -> usize {
+fn clamp_help_scroll(
+    scroll: usize,
+    area: Rect,
+    total_lines: usize,
+) -> usize {
     scroll.min(help_max_scroll(area, total_lines))
 }
 
@@ -193,7 +200,10 @@ fn help_h(
     title: &'static str,
 ) -> Line<'static> {
     Line::from(vec![
-        Span::styled("  ▸ ", Style::default().fg(d.help_section_marker)),
+        Span::styled(
+            "  ▸ ",
+            Style::default().fg(d.help_section_marker),
+        ),
         Span::styled(
             title,
             Style::default()
@@ -211,7 +221,10 @@ fn help_muted(
     d: &DialogPalette,
     text: &'static str,
 ) -> Line<'static> {
-    Line::from(vec![Span::styled(text, Style::default().fg(d.help_dim))])
+    Line::from(vec![Span::styled(
+        text,
+        Style::default().fg(d.help_dim),
+    )])
 }
 
 fn help_build_lines(d: &DialogPalette) -> Vec<Line<'static>> {
@@ -219,8 +232,12 @@ fn help_build_lines(d: &DialogPalette) -> Vec<Line<'static>> {
     let body = d.help_body;
     let dim = d.help_dim;
 
-    let k =
-        |s: &'static str| Span::styled(s, Style::default().fg(key).add_modifier(Modifier::BOLD));
+    let k = |s: &'static str| {
+        Span::styled(
+            s,
+            Style::default().fg(key).add_modifier(Modifier::BOLD),
+        )
+    };
     let t = |s: &'static str| Span::raw(s);
 
     vec![

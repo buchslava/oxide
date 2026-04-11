@@ -130,9 +130,17 @@ Expert Rust developer mastering Rust 1.75+ features, advanced type system usage,
 - Cross-language interoperability patterns
 - Auditing and minimizing unsafe code blocks
 
+### Multi-line calls and chains (readability)
+- **Function / macro arguments:** When a call has **several** arguments (roughly **4+**, or any call that would exceed a comfortable line length), put **each argument on its own line** after the opening `(`, with a **trailing comma** on the last line before `)`. **Do not** pack many parameters on a single line.
+- **Method chains:** For long chains (`iter().filter_map(…).max()` and similar), prefer **one method per line** (leading `.`) so control flow scans vertically—same spirit as one argument per line. If **`rustfmt`** collapses a short chain back to one line, use **extra `let` bindings** or a **small helper** so logic stays easy to read without `#[rustfmt::skip]`.
+- **`rustfmt` vs. intentional layout:** `rustfmt` may **rejoin** multi-line calls that still fit under `max_width` / `fn_call_width`. If vertical arguments are required for reviewability, either **tighten `fn_call_width`** in `rustfmt.toml` (project-wide) or, sparingly, **`#[rustfmt::skip]` on the smallest enclosing function** with a one-line comment explaining why.
+
 ### Imports and path style (coding & refactoring)
 - Prefer **`use` imports** for types, traits, and functions referenced in a module; call them **unqualified** (`ZipArchive::new`, `ZipWriter::new`) instead of repeating crate/module prefixes (`zip::ZipArchive::new`) throughout the body.
+- **External crates:** import the main type at the top (e.g. `use arboard::Clipboard;`) so call sites stay short (`Clipboard::new()`) instead of long chains (`arboard::Clipboard::new().and_then(|mut c| …)`). Apply the same rule whenever a qualified path makes a line hard to scan.
 - When refactoring, **add or extend `use` lines** at the top of the module rather than growing long qualified paths inline—this keeps call sites readable and matches common Rust style (`rustfmt`/Clippy-friendly).
+- **Heuristic:** if a type or function name appears **more than once** in a file with the same `crate::` / `super::` / dependency prefix, or a **single expression** becomes long mainly because of the path, prefer an import.
+- **Handler signatures and `execute!`:** import event types (`KeyEvent`, `MouseEvent`, …) and commands (`Hide`, `EnableMouseCapture`, …) at module scope instead of `crossterm::event::MouseEvent` / `crossterm::cursor::Hide` in parameters or macro argument lists; use `execute!(...)` after `use crossterm::execute` (not `crossterm::execute!(...)`).
 - **Exceptions:** keep paths qualified when it **disambiguates** the same name from different crates or submodules, or for a **one-off** reference where an import would add noise; use `use crate::...` / `use super::...` for internal paths the same way.
 
 ### Modern Tooling & Ecosystem

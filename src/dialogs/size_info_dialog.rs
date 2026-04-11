@@ -66,12 +66,14 @@ pub fn open(app: &mut AppState) {
             let path = FileOperations::join_path(&cwd, name);
             if *is_dir {
                 dir_count += 1;
-                total_bytes =
-                    total_bytes.saturating_add(FileOperations::size_of_path_recursive(&path));
+                total_bytes = total_bytes.saturating_add(FileOperations::size_of_path_recursive(
+                    &path,
+                ));
             } else {
                 file_count += 1;
-                total_bytes =
-                    total_bytes.saturating_add(FileOperations::size_of_path_recursive(&path));
+                total_bytes = total_bytes.saturating_add(FileOperations::size_of_path_recursive(
+                    &path,
+                ));
             }
             let current = i + 1;
             let _ = tx.send(SizeInfoProgress::Progress {
@@ -124,7 +126,10 @@ pub fn format_bottom_bar_line(app: &AppState) -> Option<String> {
                     .map(|(n, sing, pl)| format!("{} {}", n, if n == 1 { sing } else { pl }))
                     .collect();
             if count_parts.is_empty() {
-                format!("Calculating {} / {} · {}", current, total, size_str)
+                format!(
+                    "Calculating {} / {} · {}",
+                    current, total, size_str
+                )
             } else {
                 format!(
                     "Calculating {} / {} · {} ({})",
@@ -150,7 +155,11 @@ pub fn format_bottom_bar_line(app: &AppState) -> Option<String> {
             if count_parts.is_empty() {
                 format!("Total: {}", size_str)
             } else {
-                format!("Total: {} ({})", size_str, count_parts.join(", "))
+                format!(
+                    "Total: {} ({})",
+                    size_str,
+                    count_parts.join(", ")
+                )
             }
         }
     })

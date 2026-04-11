@@ -143,7 +143,10 @@ impl PatternSelectDialogState {
                 }
                 if self.focus == 2 || self.focus == 0 {
                     // Keep state until main handles `PatternSelectConfirm` and calls `take()`.
-                    return (Some(self), AppAction::PatternSelectConfirm);
+                    return (
+                        Some(self),
+                        AppAction::PatternSelectConfirm,
+                    );
                 }
                 (Some(self), AppAction::Continue)
             }

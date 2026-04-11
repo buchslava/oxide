@@ -116,7 +116,10 @@ pub(crate) fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
         app.persisted_settings.left_show_hidden = new_show;
         app.show_hidden_files = new_show;
         let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
-        util::log_if_err("Save settings", save(&app.persisted_settings));
+        util::log_if_err(
+            "Save settings",
+            save(&app.persisted_settings),
+        );
         util::log_if_err(
             "Refresh panel",
             app.left_panel_mut().refresh_files_restore_selection(
@@ -134,7 +137,10 @@ pub(crate) fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
             .right_panel()
             .get_selected_file()
             .map(|f| f.name.clone());
-        util::log_if_err("Save settings", save(&app.persisted_settings));
+        util::log_if_err(
+            "Save settings",
+            save(&app.persisted_settings),
+        );
         util::log_if_err(
             "Refresh panel",
             app.right_panel_mut().refresh_files_restore_selection(

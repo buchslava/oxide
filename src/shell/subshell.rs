@@ -131,7 +131,14 @@ impl Subshell {
         if old_flags < 0 {
             return Err(io::Error::last_os_error());
         }
-        if unsafe { libc::fcntl(fd, libc::F_SETFL, old_flags | libc::O_NONBLOCK) } != 0 {
+        if unsafe {
+            libc::fcntl(
+                fd,
+                libc::F_SETFL,
+                old_flags | libc::O_NONBLOCK,
+            )
+        } != 0
+        {
             return Err(io::Error::last_os_error());
         }
         let result = match nix::unistd::read(fd, buf) {
@@ -151,7 +158,10 @@ impl Subshell {
     ) -> io::Result<()> {
         use nix::errno::Errno;
         while !data.is_empty() {
-            match nix::unistd::write(unsafe { BorrowedFd::borrow_raw(fd) }, data) {
+            match nix::unistd::write(
+                unsafe { BorrowedFd::borrow_raw(fd) },
+                data,
+            ) {
                 Ok(0) => {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
@@ -417,12 +427,24 @@ impl Subshell {
     fn resize_pty_to_terminal(master_fd: i32) {
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         #[cfg(target_os = "macos")]
-        let get_ok = unsafe { libc::ioctl(1, libc::TIOCGWINSZ as libc::c_ulong, &mut ws) } == 0;
+        let get_ok = unsafe {
+            libc::ioctl(
+                1,
+                libc::TIOCGWINSZ as libc::c_ulong,
+                &mut ws,
+            )
+        } == 0;
         #[cfg(not(target_os = "macos"))]
         let get_ok = unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0;
         if get_ok && (ws.ws_col > 0 || ws.ws_row > 0) {
             #[cfg(target_os = "macos")]
-            let _ = unsafe { libc::ioctl(master_fd, libc::TIOCSWINSZ as libc::c_ulong, &ws) };
+            let _ = unsafe {
+                libc::ioctl(
+                    master_fd,
+                    libc::TIOCSWINSZ as libc::c_ulong,
+                    &ws,
+                )
+            };
             #[cfg(not(target_os = "macos"))]
             let _ = unsafe { libc::ioctl(master_fd, libc::TIOCSWINSZ, &ws) };
         }
@@ -454,7 +476,11 @@ impl Subshell {
                     #[cfg(target_os = "linux")]
                     libc::ioctl(slave_fd, libc::TIOCSCTTY, 0);
                     #[cfg(target_os = "macos")]
-                    libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
+                    libc::ioctl(
+                        slave_fd,
+                        libc::TIOCSCTTY as libc::c_ulong,
+                        0,
+                    );
                     Self::set_pty_slave_cooked_mode(slave_fd);
                     libc::dup2(slave_fd, 0);
                     libc::dup2(slave_fd, 1);
@@ -539,7 +565,10 @@ impl Subshell {
         let relay_result = (|| -> io::Result<RelayExit> {
             loop {
                 let mut fds = [
-                    PollFd::new(unsafe { BorrowedFd::borrow_raw(0) }, PollFlags::POLLIN),
+                    PollFd::new(
+                        unsafe { BorrowedFd::borrow_raw(0) },
+                        PollFlags::POLLIN,
+                    ),
                     PollFd::new(
                         unsafe { BorrowedFd::borrow_raw(self.master_fd) },
                         PollFlags::POLLIN,
@@ -645,7 +674,10 @@ impl Subshell {
     ) -> io::Result<()> {
         let panel_canonical = Path::new(cwd).canonicalize().ok();
         let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
-        let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
+        let need_cd = match (
+            panel_canonical.as_ref(),
+            shell_canonical.as_ref(),
+        ) {
             (Some(a), Some(b)) => a != b,
             _ => true, // if we can't resolve either, send cd to be safe
         };
@@ -673,7 +705,10 @@ impl Subshell {
     ) -> io::Result<RelayExit> {
         let panel_canonical = Path::new(cwd).canonicalize().ok();
         let shell_canonical = self.get_cwd().and_then(|p| p.canonicalize().ok());
-        let need_cd = match (panel_canonical.as_ref(), shell_canonical.as_ref()) {
+        let need_cd = match (
+            panel_canonical.as_ref(),
+            shell_canonical.as_ref(),
+        ) {
             (Some(a), Some(b)) => a != b,
             _ => true,
         };
@@ -838,8 +873,12 @@ fn kill_subshell_session(session_leader_pid: i32) {
         const MAX_PIDS: usize = 8192;
         let mut buf = [0i32; MAX_PIDS];
         let size_bytes = (MAX_PIDS * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
-        let n_bytes =
-            unsafe { libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, size_bytes) };
+        let n_bytes = unsafe {
+            libc::proc_listallpids(
+                buf.as_mut_ptr() as *mut libc::c_void,
+                size_bytes,
+            )
+        };
         if n_bytes <= 0 {
             return Vec::new();
         }
@@ -891,9 +930,15 @@ fn kill_subshell_session(session_leader_pid: i32) {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         // Process-group kill: shell's PID is the process group leader (setsid in child).
-        let _ = kill(Pid::from_raw(-session_leader_pid), Signal::SIGTERM);
+        let _ = kill(
+            Pid::from_raw(-session_leader_pid),
+            Signal::SIGTERM,
+        );
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = kill(Pid::from_raw(-session_leader_pid), Signal::SIGKILL);
+        let _ = kill(
+            Pid::from_raw(-session_leader_pid),
+            Signal::SIGKILL,
+        );
     }
 
     let _ = kill(session_leader, Signal::SIGKILL);
@@ -904,7 +949,10 @@ impl Drop for Subshell {
     fn drop(&mut self) {
         kill_subshell_session(self.child_pid);
         let _ = nix::unistd::close(self.master_fd);
-        let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(self.child_pid), None);
+        let _ = nix::sys::wait::waitpid(
+            nix::unistd::Pid::from_raw(self.child_pid),
+            None,
+        );
     }
 }
 

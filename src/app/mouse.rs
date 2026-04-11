@@ -283,9 +283,13 @@ pub(crate) fn handle_mouse_event(
                 }
             }
             if panels_mouse {
-                if let Some((panel_index, file_index)) =
-                    hit_test_panel(mouse_event.column, mouse_event.row, term_w, term_h, app)
-                {
+                if let Some((panel_index, file_index)) = hit_test_panel(
+                    mouse_event.column,
+                    mouse_event.row,
+                    term_w,
+                    term_h,
+                    app,
+                ) {
                     app.focus_panel();
                     app.set_active_panel(panel_index);
                     let panel = if panel_index == 0 {
@@ -349,7 +353,9 @@ fn try_mouse_editor_confirm(
         let (col, row) = (mouse_event.column, mouse_event.row);
         let dialog_rect = save_changes_confirm_rect(area);
         if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
-            return Some(AppAction::EditorConfirmChoice(EditorConfirmChoice::Cancel));
+            return Some(AppAction::EditorConfirmChoice(
+                EditorConfirmChoice::Cancel,
+            ));
         }
         if let Some(rects) = editor_confirm_option_rects(area) {
             for (opt_rect, choice) in rects {
@@ -395,7 +401,9 @@ fn try_mouse_copy_error(
         let (rect, content) = Renderer::error_dialog_layout(area);
         let (col, row) = (mouse_event.column, mouse_event.row);
         if !dialog_layout::pointer_in_dialog(col, row, rect) {
-            return Some(AppAction::CopyErrorChoice(CopyErrorChoice::Cancel));
+            return Some(AppAction::CopyErrorChoice(
+                CopyErrorChoice::Cancel,
+            ));
         }
         if let Some(opt_row) = numbered_option_index(col, row, content, 3) {
             let error_choice = match opt_row {
@@ -594,14 +602,20 @@ fn try_mouse_operation_confirm(
         {
             let (col, row) = (mouse_event.column, mouse_event.row);
             if !dialog_layout::pointer_in_dialog(col, row, dialog_rect) {
-                return Some(AppAction::DeleteConfirmChoice(DeleteConfirmChoice::No));
+                return Some(AppAction::DeleteConfirmChoice(
+                    DeleteConfirmChoice::No,
+                ));
             }
             match hit_test_twin_buttons(col, row, yes_rect, no_rect) {
                 Some(TwinButton::Primary) => {
-                    return Some(AppAction::DeleteConfirmChoice(DeleteConfirmChoice::Yes));
+                    return Some(AppAction::DeleteConfirmChoice(
+                        DeleteConfirmChoice::Yes,
+                    ));
                 }
                 Some(TwinButton::Secondary) => {
-                    return Some(AppAction::DeleteConfirmChoice(DeleteConfirmChoice::No));
+                    return Some(AppAction::DeleteConfirmChoice(
+                        DeleteConfirmChoice::No,
+                    ));
                 }
                 None => {}
             }
@@ -620,7 +634,10 @@ fn menu_bar_copy_or_move_confirm(
     app: &mut AppState,
     op: Operation,
 ) -> Option<AppAction> {
-    debug_assert!(matches!(op, Operation::Copy | Operation::Move));
+    debug_assert!(matches!(
+        op,
+        Operation::Copy | Operation::Move
+    ));
     let source = app.get_current_dir().to_string();
     let target = app.get_opposite_panel_dir().to_string();
     if source == target && op == Operation::Move {
@@ -649,7 +666,10 @@ fn menu_bar_copy_or_move_confirm(
     let opposite = app.get_opposite_panel_location();
     let (target_location, target_fs_path) = match &opposite {
         PanelLocation::Archive { .. } => (Some(opposite), None),
-        PanelLocation::Fs(_) => (None, Some(app.get_opposite_panel_target_fs_path())),
+        PanelLocation::Fs(_) => (
+            None,
+            Some(app.get_opposite_panel_target_fs_path()),
+        ),
     };
     let params = CopyParams {
         source_dir: source,

@@ -89,13 +89,22 @@ mod tests {
 
     #[test]
     fn from_slug_commander() {
-        assert_eq!(ThemeId::from_slug("commander"), ThemeId::Commander);
-        assert_eq!(ThemeId::from_slug("COMMANDER"), ThemeId::Commander);
+        assert_eq!(
+            ThemeId::from_slug("commander"),
+            ThemeId::Commander
+        );
+        assert_eq!(
+            ThemeId::from_slug("COMMANDER"),
+            ThemeId::Commander
+        );
     }
 
     #[test]
     fn from_slug_unknown_falls_back_to_oxide() {
-        assert_eq!(ThemeId::from_slug("no-such-theme"), ThemeId::Oxide);
+        assert_eq!(
+            ThemeId::from_slug("no-such-theme"),
+            ThemeId::Oxide
+        );
     }
 
     #[test]
@@ -116,7 +125,13 @@ mod tests {
             ThemeId::from_slug("breezenostalgia"),
             ThemeId::BreezeNostalgia
         );
-        assert_eq!(ThemeId::from_slug("neosdream"), ThemeId::NeosDream);
-        assert_eq!(ThemeId::from_slug("COSMOS"), ThemeId::Cosmos);
+        assert_eq!(
+            ThemeId::from_slug("neosdream"),
+            ThemeId::NeosDream
+        );
+        assert_eq!(
+            ThemeId::from_slug("COSMOS"),
+            ThemeId::Cosmos
+        );
     }
 }

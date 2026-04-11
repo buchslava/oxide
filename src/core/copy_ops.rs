@@ -71,12 +71,24 @@ pub fn move_item_as<P: AsRef<Path>>(
     dst_name: &str,
     is_dir: bool,
 ) -> io::Result<()> {
-    let src = FileOperations::join_path(&source_dir, src_name.trim_end_matches('/'));
-    let dst = FileOperations::join_path(&target_dir, dst_name.trim_end_matches('/'));
+    let src = FileOperations::join_path(
+        &source_dir,
+        src_name.trim_end_matches('/'),
+    );
+    let dst = FileOperations::join_path(
+        &target_dir,
+        dst_name.trim_end_matches('/'),
+    );
     match fs::rename(&src, &dst) {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(EXDEV) => {
-            copy_item_as(&source_dir, &target_dir, src_name, dst_name, is_dir)?;
+            copy_item_as(
+                &source_dir,
+                &target_dir,
+                src_name,
+                dst_name,
+                is_dir,
+            )?;
             if is_dir {
                 fs::remove_dir_all(&src)
             } else {

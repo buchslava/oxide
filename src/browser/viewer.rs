@@ -4,15 +4,16 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-use crate::util;
-
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
-    text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    text::{Line, Span, Text},
+    widgets::{Block, Paragraph, Wrap},
     Frame,
 };
+
+use crate::util;
 
 use crate::app::state::AppState;
 use crate::core::file_ops::FileOperations;
@@ -260,9 +261,8 @@ fn wrap_line(
 /// ESC closes immediately (also when file is still loading); also accept raw 0x1b.
 pub fn handle_viewer_key(
     app: &mut AppState,
-    key: crossterm::event::KeyEvent,
+    key: KeyEvent,
 ) -> Option<AppAction> {
-    use crossterm::event::KeyCode;
     match app.viewer_screen.as_mut()? {
         ViewerState::Loading { .. } => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
@@ -386,9 +386,8 @@ fn apply_viewer_scroll_wheel(
 /// Capture mouse while the viewer is open; wheel scrolls text/hex like ↑↓ (see [`VIEWER_MOUSE_SCROLL_LINES`]).
 pub fn handle_viewer_mouse(
     app: &mut AppState,
-    mouse_event: crossterm::event::MouseEvent,
+    mouse_event: MouseEvent,
 ) -> bool {
-    use crossterm::event::MouseEventKind;
     let Some(state) = app.viewer_screen.as_mut() else {
         return false;
     };
@@ -669,7 +668,11 @@ fn hex_visible_lines_two_columns_styled(
     let bytes = &v.content;
     let cursor_byte = v.hex_cursor;
     if bytes.is_empty() {
-        return (vec![Line::from("(empty file)")], vec![Line::from("")], 0);
+        return (
+            vec![Line::from("(empty file)")],
+            vec![Line::from("")],
+            0,
+        );
     }
     let bpl = hex_bpl_two_columns(left_width, right_width);
     let total_lines = (bytes.len() + bpl - 1) / bpl;
@@ -792,13 +795,22 @@ pub fn draw(
                     height: 1,
                 };
                 let header = Line::from(vec![
-                    Span::styled(file_path.as_str(), Style::default().fg(vp.header_path)),
+                    Span::styled(
+                        file_path.as_str(),
+                        Style::default().fg(vp.header_path),
+                    ),
                     Span::raw("  "),
                     Span::styled("Loading…", Style::default().fg(vp.muted)),
                 ]);
-                f.render_widget(Paragraph::new(header).style(content_style), header_rect);
+                f.render_widget(
+                    Paragraph::new(header).style(content_style),
+                    header_rect,
+                );
                 let msg = "Reading file in background — Esc to close";
-                f.render_widget(Paragraph::new(msg).style(content_style), content_rect);
+                f.render_widget(
+                    Paragraph::new(msg).style(content_style),
+                    content_rect,
+                );
                 f.render_widget(
                     Paragraph::new(" Esc: close ").style(content_style.fg(vp.muted)),
                     bottom_rect,
@@ -833,7 +845,7 @@ pub fn draw(
                 // Clear the whole content area each frame to prevent stale glyphs when
                 // new page has fewer/shorter lines than the previous one.
                 f.render_widget(
-                    ratatui::widgets::Block::default().style(content_style),
+                    Block::default().style(content_style),
                     content_rect,
                 );
 
@@ -842,8 +854,7 @@ pub fn draw(
                         let (lines, total) =
                             text_visible_lines_cached(v, v.scroll, content_height_usize);
                         let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
-                        let para = Paragraph::new(ratatui::text::Text::from(text_lines))
-                            .style(content_style);
+                        let para = Paragraph::new(Text::from(text_lines)).style(content_style);
                         f.render_widget(para, content_rect);
                         total
                     }
@@ -862,8 +873,8 @@ pub fn draw(
                             chunks[1].width,
                             vp.hex_cursor_highlight_style(),
                         );
-                        let left_text = ratatui::text::Text::from(left_lines);
-                        let right_text = ratatui::text::Text::from(right_lines);
+                        let left_text = Text::from(left_lines);
+                        let right_text = Text::from(right_lines);
                         f.render_widget(
                             Paragraph::new(left_text)
                                 .style(content_style)
@@ -890,7 +901,10 @@ pub fn draw(
                     .saturating_sub(path_span.len() + right_info.len())
                     .max(1);
                 let header_line = Line::from(vec![
-                    Span::styled(path_span, Style::default().fg(vp.header_path)),
+                    Span::styled(
+                        path_span,
+                        Style::default().fg(vp.header_path),
+                    ),
                     Span::raw(" ".repeat(pad_len)),
                     Span::styled(right_info, Style::default().fg(vp.muted)),
                 ]);

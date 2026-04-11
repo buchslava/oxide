@@ -13,7 +13,11 @@ fn log_refresh_panel_restore(
 ) {
     util::log_if_err(
         context,
-        panel.refresh_files_restore_selection(preferred_after, preferred_before, panel_height),
+        panel.refresh_files_restore_selection(
+            preferred_after,
+            preferred_before,
+            panel_height,
+        ),
     );
 }
 

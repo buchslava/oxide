@@ -1,9 +1,11 @@
 //! System clipboard get/set for text input fields (Ctrl+C / Ctrl+V).
 //! Uses the arboard crate; may fail on headless or some Wayland setups.
 
+use arboard::Clipboard;
+
 /// Get text from the system clipboard. Returns None on failure or empty.
 pub fn get() -> Option<String> {
-    arboard::Clipboard::new()
+    Clipboard::new()
         .ok()?
         .get_text()
         .ok()
@@ -12,5 +14,5 @@ pub fn get() -> Option<String> {
 
 /// Set the system clipboard to the given text. Ignores errors.
 pub fn set(text: &str) {
-    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string()));
+    let _ = Clipboard::new().and_then(|mut c| c.set_text(text.to_string()));
 }

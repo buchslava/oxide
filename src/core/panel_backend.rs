@@ -33,12 +33,24 @@ pub fn list(
             format: ArchiveFormat::Zip,
             archive,
             path_inside,
-        } => zip_list(archive, path_inside, show_hidden, sort_mode, dirs_first),
+        } => zip_list(
+            archive,
+            path_inside,
+            show_hidden,
+            sort_mode,
+            dirs_first,
+        ),
         PanelLocation::Archive {
             format: ArchiveFormat::TarGz,
             archive,
             path_inside,
-        } => tar_gz_list(archive, path_inside, show_hidden, sort_mode, dirs_first),
+        } => tar_gz_list(
+            archive,
+            path_inside,
+            show_hidden,
+            sort_mode,
+            dirs_first,
+        ),
     }
 }
 
@@ -122,7 +134,10 @@ pub fn write_file(
     content: &[u8],
 ) -> io::Result<()> {
     match loc {
-        PanelLocation::Fs(p) => fs::write(FileOperations::join_path(p, name), content),
+        PanelLocation::Fs(p) => fs::write(
+            FileOperations::join_path(p, name),
+            content,
+        ),
         PanelLocation::Archive {
             format: ArchiveFormat::Zip,
             archive,
@@ -144,7 +159,13 @@ pub fn create_archive(
     items: &[(String, bool)],
     archive_name: &str,
 ) -> io::Result<()> {
-    create_archive_with_progress(loc, items, archive_name, &mut |_, _, _| {}, None)
+    create_archive_with_progress(
+        loc,
+        items,
+        archive_name,
+        &mut |_, _, _| {},
+        None,
+    )
 }
 
 /// Like create_archive but calls progress(current_1based, total, current_item_path) for each top-level item.
@@ -167,13 +188,7 @@ pub fn create_archive_with_progress(
     };
     let lower = archive_name.to_lowercase();
     if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        return create_tar_gz_archive_with_progress(
-            loc,
-            items,
-            archive_name,
-            progress,
-            cancel,
-        );
+        return create_tar_gz_archive_with_progress(loc, items, archive_name, progress, cancel);
     }
     let archive_path = FileOperations::join_path(base_dir, archive_name);
     let file = fs::File::create(&archive_path)?;
@@ -231,7 +246,10 @@ pub fn create_archive_with_progress(
             }
         } else {
             writer.start_file(name_clean, opts)?;
-            io::copy(&mut fs::File::open(&full_path)?, &mut writer)?;
+            io::copy(
+                &mut fs::File::open(&full_path)?,
+                &mut writer,
+            )?;
         }
     }
 
@@ -306,7 +324,10 @@ fn create_tar_gz_archive_with_progress(
                 );
                 if path.is_dir() {
                     let mut header = Header::new_gnu();
-                    let dir_path = format!("{}/", name_in_archive.trim_end_matches('/'));
+                    let dir_path = format!(
+                        "{}/",
+                        name_in_archive.trim_end_matches('/')
+                    );
                     header
                         .set_path(&dir_path)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -351,7 +372,13 @@ pub fn copy_items_to_fs(
                     .and_then(|d| d.get(i))
                     .map(|s| s.as_str())
                     .unwrap_or(name.as_str());
-                copy_ops::copy_item_as(p.as_path(), target_dir, name, dst, *is_dir)?;
+                copy_ops::copy_item_as(
+                    p.as_path(),
+                    target_dir,
+                    name,
+                    dst,
+                    *is_dir,
+                )?;
             }
             Ok(())
         }
@@ -432,7 +459,13 @@ pub fn move_items_into_archive(
     target_archive: &Path,
     path_inside: &str,
 ) -> io::Result<()> {
-    copy_items_into_archive(source, items, target_archive, path_inside, None)?;
+    copy_items_into_archive(
+        source,
+        items,
+        target_archive,
+        path_inside,
+        None,
+    )?;
     delete_items(source, items, false)
 }
 
@@ -480,7 +513,11 @@ pub fn join_path_display(
             let full = if prefix.is_empty() {
                 name.to_string()
             } else {
-                format!("{}/{}", prefix, name.trim_end_matches('/'))
+                format!(
+                    "{}/{}",
+                    prefix,
+                    name.trim_end_matches('/')
+                )
             };
             format!("{}/{}", archive.to_string_lossy(), full)
         }
@@ -574,7 +611,11 @@ fn zip_list(
 
     let mut files: Vec<FileInfo> = map.into_values().collect();
     if !prefix.is_empty() || archive_path.parent().is_some() {
-        files.push(FileInfo::new("..".to_string(), true, false));
+        files.push(FileInfo::new(
+            "..".to_string(),
+            true,
+            false,
+        ));
     }
     apply_sort_mode(&mut files, sort_mode, dirs_first);
     Ok(files)
@@ -788,13 +829,19 @@ fn zip_add_items(
                 if target_prefix_slash.is_empty() {
                     to_add.insert(format!("{}/", dst_root));
                 } else {
-                    to_add.insert(format!("{}{}/", target_prefix_slash, dst_root));
+                    to_add.insert(format!(
+                        "{}{}/",
+                        target_prefix_slash, dst_root
+                    ));
                 }
                 for (rel, rel_is_dir) in entries {
                     let zip_name = if target_prefix_slash.is_empty() {
                         format!("{}/{}", dst_root, rel)
                     } else {
-                        format!("{}{}/{}", target_prefix_slash, dst_root, rel)
+                        format!(
+                            "{}{}/{}",
+                            target_prefix_slash, dst_root, rel
+                        )
                     };
                     let zip_name = if rel_is_dir {
                         format!("{}/", zip_name.trim_end_matches('/'))
@@ -858,7 +905,10 @@ fn zip_add_items(
                 let zip_name = if target_prefix_slash.is_empty() {
                     format!("{}/{}", dst_root, rel)
                 } else {
-                    format!("{}{}/{}", target_prefix_slash, dst_root, rel)
+                    format!(
+                        "{}{}/{}",
+                        target_prefix_slash, dst_root, rel
+                    )
                 };
                 if rel_is_dir {
                     let dir_entry = format!("{}/", zip_name.trim_end_matches('/'));
@@ -1065,10 +1115,7 @@ fn zip_write_file(
 // --- tar.gz implementation ---
 
 fn archive_temp_path(archive_path: &Path) -> PathBuf {
-    let mut name = archive_path
-        .file_name()
-        .unwrap_or_default()
-        .to_os_string();
+    let mut name = archive_path.file_name().unwrap_or_default().to_os_string();
     name.push(".tmp");
     archive_path
         .parent()
@@ -1124,7 +1171,10 @@ fn tar_gz_read_all_entries(archive_path: &Path) -> io::Result<Vec<TarEntry>> {
     Ok(out)
 }
 
-fn write_tar_gz_entries(archive_path: &Path, entries: &[TarEntry]) -> io::Result<()> {
+fn write_tar_gz_entries(
+    archive_path: &Path,
+    entries: &[TarEntry],
+) -> io::Result<()> {
     let tmp = archive_temp_path(archive_path);
     let out = fs::File::create(&tmp)?;
     let enc = GzEncoder::new(out, Compression::default());
@@ -1244,7 +1294,11 @@ fn tar_gz_list(
 
     let mut files: Vec<FileInfo> = map.into_values().collect();
     if !prefix.is_empty() || archive_path.parent().is_some() {
-        files.push(FileInfo::new("..".to_string(), true, false));
+        files.push(FileInfo::new(
+            "..".to_string(),
+            true,
+            false,
+        ));
     }
     apply_sort_mode(&mut files, sort_mode, dirs_first);
     Ok(files)
@@ -1280,7 +1334,10 @@ fn tar_gz_read_file(
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let ename = normalize_tar_path(&path.to_string_lossy());
         let ename_clean = ename.trim_end_matches('/').to_string();
-        if ename_clean == full_name && !entry.header().entry_type().is_dir() && !ename.ends_with('/') {
+        if ename_clean == full_name
+            && !entry.header().entry_type().is_dir()
+            && !ename.ends_with('/')
+        {
             let mut buf = Vec::with_capacity(entry.size() as usize);
             io::copy(&mut entry, &mut buf)?;
             return Ok(buf);
@@ -1450,13 +1507,19 @@ fn tar_gz_add_items(
                 if target_prefix_slash.is_empty() {
                     to_add.insert(format!("{}/", dst_root));
                 } else {
-                    to_add.insert(format!("{}{}/", target_prefix_slash, dst_root));
+                    to_add.insert(format!(
+                        "{}{}/",
+                        target_prefix_slash, dst_root
+                    ));
                 }
                 for (rel, rel_is_dir) in entries {
                     let arc_name = if target_prefix_slash.is_empty() {
                         format!("{}/{}", dst_root, rel)
                     } else {
-                        format!("{}{}/{}", target_prefix_slash, dst_root, rel)
+                        format!(
+                            "{}{}/{}",
+                            target_prefix_slash, dst_root, rel
+                        )
                     };
                     let arc_name = if rel_is_dir {
                         format!("{}/", arc_name.trim_end_matches('/'))
@@ -1502,7 +1565,10 @@ fn tar_gz_add_items(
                 let path = if target_prefix_slash.is_empty() {
                     format!("{}/{}", dst_root, rel)
                 } else {
-                    format!("{}{}/{}", target_prefix_slash, dst_root, rel)
+                    format!(
+                        "{}{}/{}",
+                        target_prefix_slash, dst_root, rel
+                    )
                 };
                 if rel_is_dir {
                     entries.push(TarEntry {
@@ -1605,7 +1671,10 @@ fn tar_gz_mkdir(
     };
 
     let mut entries = tar_gz_read_all_entries(archive_path)?;
-    if entries.iter().any(|e| e.path == dir_path || e.path.trim_end_matches('/') == name_clean) {
+    if entries
+        .iter()
+        .any(|e| e.path == dir_path || e.path.trim_end_matches('/') == name_clean)
+    {
         return Ok(());
     }
     entries.push(TarEntry {
