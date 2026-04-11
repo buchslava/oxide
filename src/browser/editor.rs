@@ -1,5 +1,5 @@
-//! Embedded code editor (F4): open file, edit, F2 save, ESC exit, Page Up/Down, Home/End,
-//! Ctrl+F search (in file), unsaved-changes dialog.
+//! Embedded code editor (F4): open file, edit, F2 save, F8 delete current line, ESC exit,
+//! Page Up/Down, Home/End, Ctrl+F search (in file), unsaved-changes dialog.
 //! Selection (MC-style): F3 starts or stops selection; then ←→↑↓ extend. Ctrl+C copies then clears.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -10,6 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+use ratatui_code_editor::actions::DeleteLine;
 use ratatui_code_editor::editor::Editor;
 use ratatui_code_editor::selection::Selection;
 use ratatui_code_editor::theme::vesper;
@@ -654,6 +655,12 @@ pub fn handle_editor_key(
                 ed.search_query = None;
                 return Some(AppAction::Continue);
             }
+            KeyCode::F(8) => {
+                ed.editor.apply(DeleteLine);
+                ed.selection_extend_mode = false;
+                ed.editor.focus(&ed.area);
+                return Some(AppAction::Continue);
+            }
             _ => return Some(AppAction::Continue),
         }
     }
@@ -679,6 +686,13 @@ pub fn handle_editor_key(
             ed.editor.clear_selection();
             ed.selection_extend_mode = true; // clear any selection, start new from cursor
         }
+        return Some(AppAction::Continue);
+    }
+    // F8: delete the entire line under the cursor (same as Ctrl+K in the editor widget).
+    if key.code == KeyCode::F(8) {
+        ed.editor.apply(DeleteLine);
+        ed.selection_extend_mode = false;
+        ed.editor.focus(&ed.area);
         return Some(AppAction::Continue);
     }
     if key.code == KeyCode::Esc {
@@ -1302,7 +1316,7 @@ pub fn draw(
         }
         if area.height > bottom_height {
             let hint =
-                " F3: start/stop selection | ←→↑↓ extend | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
+                " F3: start/stop selection | ←→↑↓ extend | F8: del line | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
             let row = area.bottom().saturating_sub(bottom_height);
             let w = hint.chars().count().min(area.width as usize) as u16;
             let r = Rect {
