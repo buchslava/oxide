@@ -190,10 +190,18 @@ Here’s a quick tour in motion:
 
 ![Adaptive bottom function-key row in Oxide](images/adaptive-menu.gif)
 
+## Themes
+
+A file manager is not only paths and shortcuts; it is something you look at for long stretches. I care about how the app looks in a real terminal—contrast, calm versus punch, whether the eye can rest—so Oxide ships with six built-in color themes. You pick one from `F9 → Theme`, and the choice is saved with the rest of your settings.
+
+The preset names are a bit deliberate: not throwaway labels, but hooks for the kind of aside that fits a later chapter better than this one. If you are already curious about the intriguing names, that is by design. Here, I only wanted to flag the feature; the short story behind each theme is for the next episode.
+
+![Themes](images/themes-1.gif)
+
 ---
 
 So, no: this isn’t the final word; it’s the first lap. **Oxide** is the name of the story, and everything above is still opening scenes: a few habits that annoyed me in the old two-panel world, and how this build tries to answer them without throwing away what worked.
 
 There’s plenty left to tell: details you only notice after living in the app for a while, rough edges I keep sanding, and the occasional choice that looks odd until you see why it’s there. If any of this clicked with you, I’d be glad to share more as the thing grows.
 
-*To be continued.*
+*Be in touch!*

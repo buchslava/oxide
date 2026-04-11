@@ -7,6 +7,8 @@ pub mod copy_state;
 pub mod disk_space;
 pub mod file_ops;
 pub mod find;
+#[cfg(target_os = "linux")]
+pub mod linux_home_trash;
 pub mod location;
 pub mod panel_backend;
 pub mod settings;

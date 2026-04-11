@@ -171,36 +171,71 @@ impl Panel {
         Ok(panel)
     }
 
+    /// Restore hints after F5 **Copy** completes: keep the highlight on the source row that was copied.
+    pub fn restore_hints_after_copy(&self) -> (Option<String>, Option<String>) {
+        let focus = self
+            .get_selected_file()
+            .filter(|f| !f.is_parent_dir())
+            .map(|f| f.name.trim_end_matches('/').to_string());
+        (focus, None)
+    }
+
     /// Navigate to a new location (e.g. from Find file "Chdir"). Public for use from main.
     pub fn navigate_to_location(
         &mut self,
         new_location: PanelLocation,
     ) -> io::Result<()> {
+        let prev_location = self.current_location.clone();
+        let prev_display = self.current_dir_display.clone();
+        let prev_index = self.selected_index;
+        let prev_scroll = self.scroll_offset;
+
         self.marked_indices.clear();
-        self.navigation_history.push((
-            self.current_location.clone(),
-            self.selected_index,
-        ));
+        self.navigation_history.push((prev_location.clone(), prev_index));
         self.current_location = new_location;
         self.current_dir_display = self.current_location.display_string();
         self.selected_index = 0;
         self.scroll_offset = 0;
-        self.refresh_files()
+
+        if let Err(e) = self.refresh_files() {
+            let _ = self.navigation_history.pop();
+            self.current_location = prev_location;
+            self.current_dir_display = prev_display;
+            self.selected_index = prev_index;
+            self.scroll_offset = prev_scroll;
+            self.marked_indices.clear();
+            self.climb_to_existing_path();
+            self.files = self.try_list_current_location()?;
+            return Err(e);
+        }
+        Ok(())
     }
 
     fn navigate_to_parent(&mut self) -> io::Result<()> {
         let Some(parent) = self.current_location.parent() else {
             return Ok(());
         };
+        let prev_location = self.current_location.clone();
+        let prev_display = self.current_dir_display.clone();
+        let prev_index = self.selected_index;
+        let prev_scroll = self.scroll_offset;
+
         self.marked_indices.clear();
-        self.navigation_history.push((
-            self.current_location.clone(),
-            self.selected_index,
-        ));
+        self.navigation_history.push((prev_location.clone(), prev_index));
         self.current_location = parent.clone();
         self.current_dir_display = self.current_location.display_string();
         self.scroll_offset = 0;
-        self.refresh_files()?;
+        if let Err(e) = self.refresh_files() {
+            let _ = self.navigation_history.pop();
+            self.current_location = prev_location;
+            self.current_dir_display = prev_display;
+            self.selected_index = prev_index;
+            self.scroll_offset = prev_scroll;
+            self.marked_indices.clear();
+            self.climb_to_existing_path();
+            self.files = self.try_list_current_location()?;
+            return Err(e);
+        }
 
         // Try to find the directory we came from in the parent list
         if let Some((prev_loc, _)) = self.navigation_history.pop() {

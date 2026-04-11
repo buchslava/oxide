@@ -13,8 +13,8 @@ use crate::core::location::archive_format_for_filename;
 use crate::core::panel_backend;
 use crate::core::text_format::{format_byte_size, truncate_str, TruncateMode};
 use crate::dialogs::{
-    archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
-    pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
+    archive_dialog, error_detail_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog,
+    panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
 };
 use crate::ui::dialog_layout::{self, paint_modal_dim_layer, DEFAULT_PAD_H};
 use crate::ui::menu_bar_key;
@@ -279,6 +279,7 @@ impl Renderer {
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
             || app.help_dialog.is_some()
+            || app.error_detail.is_some()
             || app.settings_dialog.is_some()
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
@@ -341,6 +342,9 @@ impl Renderer {
         }
         if app.help_dialog.is_some() {
             help_dialog::draw(f, app);
+        }
+        if app.error_detail.is_some() {
+            error_detail_dialog::draw(f, app);
         }
         if app.settings_dialog.is_some() {
             settings_dialog::draw(f, app);

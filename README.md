@@ -25,18 +25,20 @@ For Linux (Debian/Ubuntu), see [BUILD_LINUX.md](doc/BUILD_LINUX.md) for system d
 
 For theory on the subshell, PTY, terminals, and file descriptors, see [SHELL_PTY_TERMINAL.md](doc/SHELL_PTY_TERMINAL.md).
 
-### Alternative manifest (`Cargo.old.toml`)
+### Precompiled binaries
 
-The default [Cargo.toml](Cargo.toml) tracks current dependency versions. If you are on **older hardware** or a **restricted toolchain** where those versions do not build or run well, use [Cargo.old.toml](Cargo.old.toml) instead: it pins **older, more conservative** dependency versions for the same crate.
+Prebuilt **xd** binaries live under [install/](install/):
 
-Replace the manifest and build as usual (keep a backup of [Cargo.toml](Cargo.toml) if you need to switch back):
+- **Generic Linux** (x86_64): [`install/linux-x86_64/xd`](install/linux-x86_64/xd)
+- **Intel macOS** (x86_64): [`install/darwin-x86_64/xd`](install/darwin-x86_64/xd)
+
+Install with [install/install.sh](install/install.sh) (run from the `install` directory and pass the path to the binary that matches your machine):
 
 ```bash
-cp Cargo.toml Cargo.toml.bak && cp Cargo.old.toml Cargo.toml
-cargo build --release
+cd install
+./install.sh -p "$HOME/.local/bin" linux-x86_64/xd    # Linux
+./install.sh -p "$HOME/.local/bin" darwin-x86_64/xd # Intel Mac
 ```
-
-To restore the default dependency set: `cp Cargo.toml.bak Cargo.toml` (or `git checkout -- Cargo.toml` if you have not committed the swap).
 
 ### Build commands
 
@@ -51,6 +53,32 @@ cargo build --release
 cargo run
 cargo run --release
 ```
+
+### Build static binary (most portable)
+
+Some dependencies (for example **zstd** inside **zip**) compile **C** code. Installing the Rust stdlib for `x86_64-unknown-linux-musl` is not enough on its own: the build also needs a **musl C toolchain** for that target (so `cc` can find something like `x86_64-linux-musl-gcc`, or an equivalent via Zig—see below).
+
+✅ No glibc dependency  
+✅ Runs on almost any Linux (Debian, Ubuntu, Kali, Alpine)
+
+**On Debian/Ubuntu amd64** (build *on* Linux):
+
+```bash
+sudo apt install musl-tools
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+The `musl-tools` package provides `x86_64-linux-musl-gcc` on typical PC images. More Linux detail: [BUILD_LINUX.md](doc/BUILD_LINUX.md#static-linux-binary-musl).
+
+**Cross-compiling from macOS** — Rust’s Apple toolchain does not supply a Linux musl C compiler, so plain `cargo build --target x86_64-unknown-linux-musl` fails at crates like `zstd-sys`. Practical options:
+
+1. **Zig as linker** — install [Zig](https://ziglang.org/download/) (e.g. `brew install zig`), then [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild): `cargo install cargo-zigbuild`, then  
+   `cargo zigbuild --release --target x86_64-unknown-linux-musl`
+2. **Install a musl cross toolchain** for macOS (Homebrew or similar) and set `CC_x86_64_unknown_linux_musl` / linker in `~/.cargo/config.toml` per that toolchain’s instructions.
+3. **Build inside Linux** (VM, container, CI) using the Debian commands above and copy `target/x86_64-unknown-linux-musl/release/xd` out.
+
+Release binary: `target/x86_64-unknown-linux-musl/release/xd`
 
 ### Output
 

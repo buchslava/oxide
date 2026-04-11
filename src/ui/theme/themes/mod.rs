@@ -4,5 +4,5 @@ pub mod breeze_nostalgia;
 pub mod commander;
 pub mod cosmos;
 pub mod neos_dream;
-pub mod orange_monochrome;
+pub mod orange_tradition;
 pub mod oxide;

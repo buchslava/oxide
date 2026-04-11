@@ -83,3 +83,19 @@ cd oxide && cargo build --release
   ```bash
   sudo apt install -y ca-certificates curl
   ```
+
+## Static Linux binary (musl)
+
+For a **Linux x86_64** binary linked against **musl** instead of glibc (often easier to run across distros and versions):
+
+```bash
+sudo apt install -y musl-tools
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+On **amd64** Debian/Ubuntu images, `musl-tools` provides `x86_64-linux-musl-gcc`, which satisfies C build scripts (for example **zstd** pulled in by **zip**). You still need the usual [Required apt packages](#required-apt-packages) for this project (tree-sitter, XCB, etc.) when building on Linux.
+
+Output: `target/x86_64-unknown-linux-musl/release/xd`
+
+**Cross-compiling from macOS** to this target needs a separate musl-capable C toolchain or a tool such as **cargo-zigbuild**; see the musl subsection in the root [README.md](../README.md).

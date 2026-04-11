@@ -8,7 +8,8 @@ use crate::browser::panel::{PanelOperations, ViewMode};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir};
 use crate::dialogs::{
-    find_dialog, help_dialog, panel_overlay, pattern_select_dialog, rename_attr, settings_dialog,
+    error_detail_dialog, find_dialog, help_dialog, panel_overlay, pattern_select_dialog,
+    rename_attr, settings_dialog,
 };
 use crate::ui::dialog_layout;
 use crate::ui::menu_bar_key;
@@ -40,6 +41,7 @@ fn panels_mouse_enabled(app: &AppState) -> bool {
         && app.rename_attr_dialog.is_none()
         && app.settings_dialog.is_none()
         && app.help_dialog.is_none()
+        && app.error_detail.is_none()
         && app.find_dialog.is_none()
         && app.left_panel_settings_overlay.is_none()
         && app.right_panel_settings_overlay.is_none()
@@ -225,6 +227,9 @@ pub(crate) fn handle_mouse_event(
     if let Some(out) = try_mouse_new_file(app, area, &mouse_event) {
         return Ok(Some(out));
     }
+    if let Some(out) = try_mouse_error_detail(app, area, &mouse_event) {
+        return Ok(Some(out));
+    }
     if let Some(out) = try_mouse_help(app, area, &mouse_event) {
         return Ok(Some(out));
     }
@@ -324,9 +329,20 @@ pub(crate) fn handle_mouse_event(
                                 || name_lower.ends_with(".tar.gz")
                                 || name_lower.ends_with(".tgz");
                             if file.is_dir || is_archive {
-                                panel.enter_directory()?;
-                                app.sync_process_cwd_to_active_panel_if_no_autosave();
-                                return Ok(Some(AppAction::PanelNavigated));
+                                match panel.enter_directory() {
+                                    Ok(()) => {
+                                        app.sync_process_cwd_to_active_panel_if_no_autosave();
+                                        return Ok(Some(AppAction::PanelNavigated));
+                                    }
+                                    Err(e) => {
+                                        error_detail_dialog::open_from_io(
+                                            app,
+                                            "Could not open",
+                                            e,
+                                        );
+                                        return Ok(Some(AppAction::Continue));
+                                    }
+                                }
                             } else if !file.is_parent_dir() && file.is_executable {
                                 let cmd = format!("./{}", file.name);
                                 return Ok(Some(AppAction::RunCommand(cmd)));
@@ -520,6 +536,14 @@ fn try_mouse_new_file(
     )
 }
 
+fn try_mouse_error_detail(
+    app: &mut AppState,
+    area: Rect,
+    mouse_event: &MouseEvent,
+) -> Option<AppAction> {
+    error_detail_dialog::handle_mouse(app, area, mouse_event)
+}
+
 fn try_mouse_help(
     app: &mut AppState,
     area: Rect,
@@ -644,9 +668,16 @@ fn menu_bar_copy_or_move_confirm(
         app.focus_command_line();
         return None;
     }
-    let (names, restore_after, restore_before) = app
-        .active_panel_mut()
-        .get_names_to_copy_with_restore_neighbors();
+    let (names, restore_after, restore_before) = if op == Operation::Copy {
+        let (names, _, _) = app
+            .active_panel_ref()
+            .get_names_to_copy_with_restore_neighbors();
+        let (ra, rb) = app.active_panel_ref().restore_hints_after_copy();
+        (names, ra, rb)
+    } else {
+        app.active_panel_mut()
+            .get_names_to_copy_with_restore_neighbors()
+    };
     if names.is_empty() {
         if op == Operation::Move {
             app.focus_command_line();

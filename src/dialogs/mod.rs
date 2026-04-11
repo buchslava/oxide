@@ -1,4 +1,5 @@
 pub mod archive_dialog;
+pub mod error_detail_dialog;
 pub mod find_dialog;
 pub mod help_dialog;
 pub mod mkdir_dialog;

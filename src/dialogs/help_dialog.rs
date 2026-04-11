@@ -360,7 +360,7 @@ fn help_build_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             t(", "),
             k("Commander"),
             t(", "),
-            k("Orange monochrome"),
+            k("Orange tradition"),
             t(", "),
             k("Breeze nostalgia"),
             t(", "),

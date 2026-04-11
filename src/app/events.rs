@@ -11,8 +11,8 @@ use crate::core::copy_state::same_folder_copy_dest_name;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir, supports_new_file};
 use crate::dialogs::{
-    archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
-    pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
+    archive_dialog, error_detail_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog,
+    panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
 };
 use crate::util::compute_panel_height;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -86,6 +86,8 @@ pub enum AppAction {
     OpenHelpDialog,
     /// ESC or click outside Help dialog: close.
     HelpClose,
+    /// Close scrollable error details dialog.
+    ErrorDetailClose,
     /// F9: open Settings dialog.
     OpenSettingsDialog,
     /// ESC or click outside Settings dialog: close.
@@ -188,6 +190,7 @@ impl EventHandler {
             || app.rename_attr_dialog.is_some()
             || app.settings_dialog.is_some()
             || app.help_dialog.is_some()
+            || app.error_detail.is_some()
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
             || app.right_panel_settings_overlay.is_some()
@@ -475,6 +478,13 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
+                // Scrollable error details (same keys as Help).
+                if app.error_detail.is_some() {
+                    return Ok(Some(
+                        error_detail_dialog::handle_key(app, key.code, key.modifiers)
+                            .unwrap_or(AppAction::Continue),
+                    ));
+                }
                 // F1 Help dialog: Esc/q close; all other keys are absorbed (modal).
                 if app.help_dialog.is_some() {
                     return Ok(Some(
@@ -533,16 +543,30 @@ impl EventHandler {
                     KeyCode::PageUp => app.active_panel_mut().page_up(panel_height),
                     KeyCode::PageDown => app.active_panel_mut().page_down(panel_height),
                     KeyCode::Enter => {
-                        let panel = app.active_panel_mut();
-                        if let Some(file) = panel.get_selected_file() {
-                            if !file.is_dir && file.is_executable {
-                                let cmd = format!("./{}", file.name);
-                                return Ok(Some(AppAction::RunCommand(cmd)));
+                        let enter_result = {
+                            let panel = app.active_panel_mut();
+                            if let Some(file) = panel.get_selected_file() {
+                                if !file.is_dir && file.is_executable {
+                                    let cmd = format!("./{}", file.name);
+                                    return Ok(Some(AppAction::RunCommand(cmd)));
+                                }
+                            }
+                            panel.enter_directory()
+                        };
+                        match enter_result {
+                            Ok(()) => {
+                                app.sync_process_cwd_to_active_panel_if_no_autosave();
+                                return Ok(Some(AppAction::PanelNavigated));
+                            }
+                            Err(e) => {
+                                error_detail_dialog::open_from_io(
+                                    app,
+                                    "Could not open",
+                                    e,
+                                );
+                                return Ok(Some(AppAction::Continue));
                             }
                         }
-                        panel.enter_directory()?;
-                        app.sync_process_cwd_to_active_panel_if_no_autosave();
-                        return Ok(Some(AppAction::PanelNavigated));
                     }
                     KeyCode::Char(' ') => {
                         // Space = toggle mark on the current file, then move selection down.
@@ -572,9 +596,11 @@ impl EventHandler {
                     KeyCode::F(5) => {
                         let source = app.get_current_dir().to_string();
                         let target = app.get_opposite_panel_dir().to_string();
-                        let (items, restore_after, restore_before) = app
-                            .active_panel_mut()
+                        let (items, _, _) = app
+                            .active_panel_ref()
                             .get_names_to_copy_with_restore_neighbors();
+                        let (restore_after, restore_before) =
+                            app.active_panel_ref().restore_hints_after_copy();
                         if !items.is_empty() {
                             let target_names = if source == target {
                                 Some(

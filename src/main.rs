@@ -46,6 +46,7 @@ use browser::panel::{PanelOperations, ViewMode};
 use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
 use core::location::PanelLocation;
 use core::settings::{ensure_config_dir, load, save as save_settings};
+use dialogs::error_detail_dialog;
 use dialogs::find_dialog::FindDisplayRow;
 use dialogs::pattern_select_dialog::PatternSelectMode;
 use dialogs::rename_attr;
@@ -539,6 +540,7 @@ fn main() -> Result<(), io::Error> {
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
             AppAction::OpenHelpDialog => help_dialog::open(&mut app),
             AppAction::HelpClose => help_dialog::close(&mut app),
+            AppAction::ErrorDetailClose => error_detail_dialog::close(&mut app),
             AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
             AppAction::SettingsClose => settings_dialog::close(&mut app),
             AppAction::OpenLeftPanelSettings => panel_overlay::open_left(&mut app),
@@ -555,7 +557,13 @@ fn main() -> Result<(), io::Error> {
                         match row {
                             FindDisplayRow::Folder(path) => {
                                 let loc = PanelLocation::fs(path);
-                                if app.active_panel_mut().navigate_to_location(loc).is_ok() {}
+                                if let Err(e) = app.active_panel_mut().navigate_to_location(loc) {
+                                    error_detail_dialog::open_from_io(
+                                        &mut app,
+                                        "Could not open folder",
+                                        e,
+                                    );
+                                }
                             }
                             FindDisplayRow::File(r) => {
                                 if let (Some(parent), Some(name)) = (
@@ -564,15 +572,24 @@ fn main() -> Result<(), io::Error> {
                                 ) {
                                     let loc = PanelLocation::fs(parent);
                                     let panel_height = util::compute_panel_height();
-                                    if app.active_panel_mut().navigate_to_location(loc).is_ok() {
-                                        log_if_err(
-                                            "Refresh panel",
-                                            app.active_panel_mut().refresh_files_restore_selection(
-                                                Some(name.as_str()),
-                                                None,
-                                                Some(panel_height),
-                                            ),
-                                        );
+                                    match app.active_panel_mut().navigate_to_location(loc) {
+                                        Ok(()) => {
+                                            log_if_err(
+                                                "Refresh panel",
+                                                app.active_panel_mut().refresh_files_restore_selection(
+                                                    Some(name.as_str()),
+                                                    None,
+                                                    Some(panel_height),
+                                                ),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error_detail_dialog::open_from_io(
+                                                &mut app,
+                                                "Could not open folder",
+                                                e,
+                                            );
+                                        }
                                     }
                                 }
                             }

@@ -1,4 +1,5 @@
-//! OS trash integration: macOS Finder Trash, Linux Freedesktop `~/.local/share/Trash` (via `trash` crate).
+//! OS trash integration: macOS Finder Trash, Linux Freedesktop home trash (Rust implementation;
+//! avoids `trash` crate’s `getmntent` path on Linux).
 
 use std::io;
 use std::path::Path;
@@ -54,7 +55,11 @@ pub fn move_to_trash(path: &Path) -> io::Result<()> {
             .delete(path)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::core::linux_home_trash::move_to_home_trash(path)
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {
         trash::delete(path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }

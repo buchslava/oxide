@@ -3,6 +3,7 @@ use crate::browser::editor::EditorViewState;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::core::settings::{self, PersistedSettings};
 use crate::core::trash_delete::trash_available;
+use crate::dialogs::error_detail_dialog::ErrorDetailState;
 use crate::dialogs::help_dialog::HelpDialogState;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::theme::{ThemeId, UiPalette};
@@ -125,6 +126,8 @@ pub struct AppState {
     pub settings_dialog: Option<SettingsDialogState>,
     /// When Some, F1 Help dialog is open (scroll position in state).
     pub help_dialog: Option<HelpDialogState>,
+    /// When Some, scrollable error details (invalid zip, navigation I/O, etc.).
+    pub error_detail: Option<ErrorDetailState>,
     /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
     pub left_panel_settings_overlay: Option<PanelSettingsOverlayState>,
     /// When Some, Ctrl+W "Right panel settings" overlay is open over the right panel.
@@ -232,6 +235,7 @@ impl AppState {
             pattern_select_dialog: None,
             settings_dialog: None,
             help_dialog: None,
+            error_detail: None,
             left_panel_settings_overlay: None,
             right_panel_settings_overlay: None,
             left_panel_rect: None,

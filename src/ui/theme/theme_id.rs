@@ -1,6 +1,6 @@
 //! Built-in theme identifiers and slug ↔ preset resolution.
 
-use super::themes::{breeze_nostalgia, commander, cosmos, neos_dream, orange_monochrome, oxide};
+use super::themes::{breeze_nostalgia, commander, cosmos, neos_dream, orange_tradition, oxide};
 use super::UiPalette;
 
 /// Closed set of built-in themes; extend when adding presets in [`super::themes`].
@@ -9,7 +9,7 @@ pub enum ThemeId {
     #[default]
     Oxide,
     Commander,
-    OrangeMonochrome,
+    OrangeTradition,
     BreezeNostalgia,
     NeosDream,
     Cosmos,
@@ -20,7 +20,7 @@ impl ThemeId {
     pub const ALL: &'static [ThemeId] = &[
         ThemeId::Oxide,
         ThemeId::Commander,
-        ThemeId::OrangeMonochrome,
+        ThemeId::OrangeTradition,
         ThemeId::BreezeNostalgia,
         ThemeId::NeosDream,
         ThemeId::Cosmos,
@@ -31,7 +31,7 @@ impl ThemeId {
         match self {
             ThemeId::Oxide => "oxide",
             ThemeId::Commander => "commander",
-            ThemeId::OrangeMonochrome => "orangemonochrome",
+            ThemeId::OrangeTradition => "orangetradition",
             ThemeId::BreezeNostalgia => "breezenostalgia",
             ThemeId::NeosDream => "neosdream",
             ThemeId::Cosmos => "cosmos",
@@ -47,8 +47,10 @@ impl ThemeId {
             ThemeId::NeosDream
         } else if s.eq_ignore_ascii_case(ThemeId::BreezeNostalgia.slug()) {
             ThemeId::BreezeNostalgia
-        } else if s.eq_ignore_ascii_case(ThemeId::OrangeMonochrome.slug()) {
-            ThemeId::OrangeMonochrome
+        } else if s.eq_ignore_ascii_case(ThemeId::OrangeTradition.slug())
+            || s.eq_ignore_ascii_case("orangemonochrome")
+        {
+            ThemeId::OrangeTradition
         } else if s.eq_ignore_ascii_case(ThemeId::Commander.slug()) {
             ThemeId::Commander
         } else if s.eq_ignore_ascii_case(ThemeId::Oxide.slug()) {
@@ -63,7 +65,7 @@ impl ThemeId {
         match self {
             ThemeId::Oxide => "Oxide (default)",
             ThemeId::Commander => "Commander",
-            ThemeId::OrangeMonochrome => "Orange monochrome",
+            ThemeId::OrangeTradition => "Orange tradition",
             ThemeId::BreezeNostalgia => "Breeze nostalgia",
             ThemeId::NeosDream => "Neo's dream",
             ThemeId::Cosmos => "Cosmos",
@@ -75,7 +77,7 @@ impl ThemeId {
         match self {
             ThemeId::Oxide => oxide::PALETTE,
             ThemeId::Commander => commander::PALETTE,
-            ThemeId::OrangeMonochrome => orange_monochrome::PALETTE,
+            ThemeId::OrangeTradition => orange_tradition::PALETTE,
             ThemeId::BreezeNostalgia => breeze_nostalgia::PALETTE,
             ThemeId::NeosDream => neos_dream::PALETTE,
             ThemeId::Cosmos => cosmos::PALETTE,
@@ -108,14 +110,22 @@ mod tests {
     }
 
     #[test]
-    fn from_slug_orange_monochrome() {
+    fn from_slug_orange_tradition() {
+        assert_eq!(
+            ThemeId::from_slug("orangetradition"),
+            ThemeId::OrangeTradition
+        );
+        assert_eq!(
+            ThemeId::from_slug("ORANGETRADITION"),
+            ThemeId::OrangeTradition
+        );
         assert_eq!(
             ThemeId::from_slug("orangemonochrome"),
-            ThemeId::OrangeMonochrome
+            ThemeId::OrangeTradition
         );
         assert_eq!(
             ThemeId::from_slug("ORANGEMONOCHROME"),
-            ThemeId::OrangeMonochrome
+            ThemeId::OrangeTradition
         );
     }
 
