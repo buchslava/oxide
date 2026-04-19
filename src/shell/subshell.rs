@@ -508,7 +508,7 @@ impl Subshell {
     /// Shell keeps running.
     /// Caller must leave alternate screen before calling and re-enter after return (see main.rs Suspend).
     /// If `prepared` is Some, caller already set relay raw and wrote reset sequence to stdout; we skip that and use saved termios for restore. If None, we set raw and write reset ourselves.
-    /// If `show_prompt_first` is true (Ctrl+O toggle), send " \b" and flush PTY so the prompt is visible.
+    /// If `show_prompt_first` is true (Ctrl+O toggle), send LF to the PTY and flush so the shell redraws its prompt.
     fn run_relay_until_ctrl_o(
         &self,
         show_prompt_first: bool,
@@ -544,9 +544,10 @@ impl Subshell {
             // Drain any stale PTY output from the previous session so the new prompt is not mixed with old data.
             let _ = Self::drain_pty_output(self.master_fd);
             // Force a new prompt every time: send newline so the shell prints a fresh prompt (works on 2nd+ attempt).
-            let _ = Self::write_all_fd(self.master_fd, b"\r\n");
+            // let _ = Self::write_all_fd(self.master_fd, b"\r\n");
+            let _ = Self::write_all_fd(self.master_fd, b"\n");
             // MC: " \b" hack so prompt reappears.
-            let _ = Self::write_all_fd(self.master_fd, b" \x08");
+            // let _ = Self::write_all_fd(self.master_fd, b" \x08");
             // Brief yield so the shell can write the new prompt before we start reading.
             std::thread::sleep(std::time::Duration::from_millis(20));
             let _ = Self::flush_pty_prompt_to_stdout(self.master_fd);
@@ -690,7 +691,9 @@ impl Subshell {
             Self::write_all_fd(self.master_fd, &buf)?;
             let _ = Self::drain_pty_output(self.master_fd);
         }
-        let _ = self.run_relay_until_ctrl_o(false, prepared, None)?;
+        // Caller already moved the real cursor (relay reset). If we did not send `cd`, the PTY
+        // has no fresh echo to realign the terminal — force a prompt so cursor matches (2nd+ Ctrl+O).
+        let _ = self.run_relay_until_ctrl_o(!need_cd, prepared, None)?;
         Ok(())
     }
 
