@@ -116,7 +116,7 @@ pub struct AppState {
     pub rename_attr_dialog: Option<RenameAttrDialogState>,
     /// When Some, an error alert is shown on top of the F2 dialog (message to display).
     pub rename_attr_error: Option<String>,
-    /// When Some, Ctrl+G "Size info" dialog is open (total size of selected items).
+    /// When Some, Ctrl+X then S "Size info" dialog is open (total size of selected items).
     pub size_info_dialog: Option<SizeInfoDialogState>,
     /// When Some, Ctrl+F "Find file" dialog is open.
     pub find_dialog: Option<FindDialogState>,
@@ -128,9 +128,9 @@ pub struct AppState {
     pub help_dialog: Option<HelpDialogState>,
     /// When Some, scrollable error details (invalid zip, navigation I/O, etc.).
     pub error_detail: Option<ErrorDetailState>,
-    /// When Some, Ctrl+Q "Left panel settings" overlay is open over the left panel.
+    /// When Some, Ctrl+X then 1 "Left panel settings" overlay is open over the left panel.
     pub left_panel_settings_overlay: Option<PanelSettingsOverlayState>,
-    /// When Some, Ctrl+W "Right panel settings" overlay is open over the right panel.
+    /// When Some, Ctrl+X then 2 "Right panel settings" overlay is open over the right panel.
     pub right_panel_settings_overlay: Option<PanelSettingsOverlayState>,
     /// Last frame's left panel area (set by UI renderer); used to position left panel overlay.
     pub left_panel_rect: Option<Rect>,
@@ -158,6 +158,8 @@ pub struct AppState {
     pub theme_id: ThemeId,
     /// Resolved colors for this frame; update when `theme_id` changes via [`ThemeId::palette`].
     pub ui_palette: UiPalette,
+    /// After **Ctrl+X**, the next key completes an Oxide shortcut (e.g. `F` for find, `O` for shell).
+    pub ctrl_x_chord_pending: bool,
 }
 
 pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
@@ -251,6 +253,7 @@ impl AppState {
             trash_available: trash_available(),
             theme_id: ThemeId::default(),
             ui_palette: ThemeId::default().palette(),
+            ctrl_x_chord_pending: false,
         };
         app.sync_from_persisted_settings();
         Ok(app)

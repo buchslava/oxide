@@ -297,7 +297,7 @@ pub enum SingleInputKeyResult {
     Confirm,
     /// User cancelled (Esc or Ctrl+C or Enter with focus on Cancel).
     Cancel,
-    /// Ctrl+O: suspend to shell.
+    /// **Ctrl+O**: suspend to shell (dialogs call [`crate::app::ctrl_x_chord::poll_suspend_chord`] first for Ctrl+X then O).
     Suspend,
 }
 
@@ -373,7 +373,7 @@ pub fn handle_single_input_key(
         KeyCode::Esc => (input, focus, SingleInputKeyResult::Cancel),
         KeyCode::Char(c) => {
             if modifiers.contains(KeyModifiers::CONTROL) {
-                if c == 'o' {
+                if c == 'o' || c == '\x0f' {
                     return (
                         input,
                         focus,

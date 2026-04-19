@@ -40,7 +40,7 @@ use browser::diff_viewer::{
 };
 use browser::editor::{
     apply_confirm_choice, close, finish_editor_pending_decode, open_editor, open_editor_path,
-    poll_editor_loading, save,
+    poll_editor_loading, save, EditorViewState,
 };
 use browser::panel::{PanelOperations, ViewMode};
 use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
@@ -226,8 +226,21 @@ fn main() -> Result<(), io::Error> {
                 ..
             })
         );
+        // ratatui hides the caret when the frame sets no cursor position; `main` then called
+        // `show_cursor` whenever the editor was open, which left the hardware caret at stale
+        // coordinates after mouse-wheel scroll (viewport moved, caret not redrawn).
+        let embedded_editor_caret_drawn = match app.editor_screen.as_ref() {
+            Some(EditorViewState::Ready(ed)) => {
+                if ed.search_query.is_some() {
+                    true
+                } else {
+                    ed.editor.get_visible_cursor(&ed.area).is_some()
+                }
+            }
+            _ => false,
+        };
         let show_cursor = !app.post_command_countdown_active()
-            && (app.editor_screen.is_some()
+            && (embedded_editor_caret_drawn
                 || mkdir_input_focused
                 || pattern_select_input_focused
                 || archive_input_focused
@@ -384,10 +397,17 @@ fn main() -> Result<(), io::Error> {
                 break;
             }
             AppAction::CopyOverwriteChoice(n) => {
+                // Dismiss the modal before running copy I/O so the progress overlay is visible
+                // (same frame) instead of leaving the overwrite dialog up until the work finishes.
+                app.copy_overwrite_dialog = None;
+                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 handle_copy_overwrite_choice(&mut app, n);
             }
             AppAction::CopyErrorChoice(choice) => {
                 app.copy_error_dialog = None;
+                if app.copy_in_progress.is_some() {
+                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                }
                 match choice {
                     CopyErrorChoice::Ignore => {
                         if let Some(ref mut c) = app.copy_in_progress {
@@ -671,7 +691,7 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::RenameAttrCancel => rename_attr::cancel(&mut app),
             AppAction::Suspend => {
-                // --- Ctrl+O: hand terminal to subshell. Use single-writer flow (REFERENCE.md "Solution: Second Ctrl+O uglification"): do NOT use backend for leave alternate; write everything to stdout.
+                // --- Ctrl+O (or Ctrl+X then O): hand terminal to subshell. Use single-writer flow (REFERENCE.md "Solution: Second Ctrl+O uglification"): do NOT use backend for leave alternate; write everything to stdout.
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
                 let _ = std::io::stdout().flush();

@@ -66,3 +66,15 @@ pub(crate) fn read_path_chunked(
     }
     Ok(buf)
 }
+
+/// True when the effective user is **root** (UID 0). Always false on non-Unix targets.
+#[cfg(unix)]
+pub(crate) fn process_is_root() -> bool {
+    // SAFETY: `geteuid` is a POSIX query with no pointer arguments.
+    unsafe { ::libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn process_is_root() -> bool {
+    false
+}

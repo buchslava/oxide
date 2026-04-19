@@ -12,6 +12,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::browser::clipboard;
@@ -365,6 +366,13 @@ pub fn handle_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
+    if app.rename_attr_dialog.is_some() {
+        match ctrl_x_chord::poll_suspend_chord(app, code, modifiers) {
+            SuspendChordResult::Consumed => return Some(AppAction::Continue),
+            SuspendChordResult::SuspendToShell => return Some(AppAction::Suspend),
+            SuspendChordResult::NotHandled => {}
+        }
+    }
     let d = app.rename_attr_dialog.as_mut()?;
     let code = match code {
         KeyCode::Char('\t') => KeyCode::Tab,
@@ -435,9 +443,6 @@ pub fn handle_key(
                             return Some(AppAction::Continue);
                         }
                     }
-                }
-                if c == 'o' {
-                    return Some(AppAction::Suspend);
                 }
                 if c == 'h' {
                     if let RenameAttrDialogState::Single {

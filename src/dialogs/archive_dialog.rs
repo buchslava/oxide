@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
+use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::events::AppAction;
 use crate::app::state::{AppState, ArchiveMessage, ArchiveProgress};
 use crate::core::file_ops::FileOperations;
@@ -129,6 +130,13 @@ pub fn handle_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
+    if app.archive_dialog.is_some() {
+        match ctrl_x_chord::poll_suspend_chord(app, code, modifiers) {
+            SuspendChordResult::Consumed => return Some(AppAction::Continue),
+            SuspendChordResult::SuspendToShell => return Some(AppAction::Suspend),
+            SuspendChordResult::NotHandled => {}
+        }
+    }
     let d = app.archive_dialog.take()?;
     let (input, focus, result) =
         text_input::handle_single_input_key(d.input, d.focus, code, modifiers);

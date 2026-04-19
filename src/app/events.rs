@@ -1,3 +1,4 @@
+use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::state::{
     AppState, CopyParams, Focus, Operation, RenameAttrDialogState, RenameAttrField,
 };
@@ -14,6 +15,7 @@ use crate::dialogs::{
     archive_dialog, error_detail_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog,
     panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
 };
+use crate::ui::text_input;
 use crate::util::compute_panel_height;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
@@ -48,7 +50,7 @@ pub enum AppAction {
     OpenViewer,
     /// ESC in viewer: close viewer.
     ViewerClose,
-    /// Ctrl+D: two marked non-dir files → full-screen diff; no marks → compare both panel dirs (C/S/X prefixes).
+    /// Ctrl+X then D: two marked non-dir files → full-screen diff; no marks → compare both panel dirs (C/S/X prefixes).
     OpenDiffViewer,
     /// ESC in diff viewer: close.
     DiffViewerClose,
@@ -58,7 +60,7 @@ pub enum AppAction {
     MkdirConfirm(String),
     /// ESC in mkdir dialog: cancel and close.
     MkdirCancel,
-    /// Ctrl+A: open "Archive" dialog (create zip of selected items; originals kept).
+    /// Ctrl+X then A: open "Archive" dialog (create zip of selected items; originals kept).
     OpenArchiveDialog,
     /// Enter in archive dialog: create archive and close (name from dialog field).
     ArchiveConfirm(String),
@@ -66,7 +68,7 @@ pub enum AppAction {
     ArchiveCancel,
     /// ESC during archive progress: stop archiving and close progress dialog (like CopyCancel).
     ArchiveProgressCancel,
-    /// Ctrl+N: open "New file" dialog (create empty file in current directory or archive).
+    /// Ctrl+X then N: open "New file" dialog (create empty file in current directory or archive).
     OpenNewFileDialog,
     /// Enter in new file dialog: create file and close (or show error if exists).
     NewFileConfirm(String),
@@ -78,7 +80,7 @@ pub enum AppAction {
     RenameAttrConfirm,
     /// ESC in F2 dialog: cancel and close.
     RenameAttrCancel,
-    /// Ctrl+G: open "Size info" dialog (total size of selected files and folders).
+    /// Ctrl+X then S: open "Size info" dialog (total size of selected files and folders).
     OpenSizeInfoDialog,
     /// ESC in size info dialog: close.
     SizeInfoClose,
@@ -92,15 +94,15 @@ pub enum AppAction {
     OpenSettingsDialog,
     /// ESC or click outside Settings dialog: close.
     SettingsClose,
-    /// Ctrl+Q: open Left panel settings overlay over the left panel.
+    /// Ctrl+X then 1: open Left panel settings overlay over the left panel.
     OpenLeftPanelSettings,
-    /// Ctrl+W: open Right panel settings overlay over the right panel.
+    /// Ctrl+X then 2: open Right panel settings overlay over the right panel.
     OpenRightPanelSettings,
     /// Close Left panel settings overlay.
     CloseLeftPanelSettings,
     /// Close Right panel settings overlay.
     CloseRightPanelSettings,
-    /// Ctrl+F: open Find file dialog.
+    /// Ctrl+X then F: open Find file dialog.
     OpenFindDialog,
     /// Close Find file dialog (ESC / Cancel).
     FindClose,
@@ -120,15 +122,15 @@ pub enum AppAction {
     PatternSelectConfirm,
     /// Close +/− pattern dialog without applying.
     PatternSelectCancel,
-    /// Ctrl+H: toggle hidden files visibility.
+    /// Ctrl+X then H: toggle hidden files visibility.
     ToggleShowHidden,
-    /// Ctrl+E: save left/right paths and active panel to settings.json (same as autosave snapshot).
+    /// Ctrl+X then C: save left/right paths and active panel to settings.json (configuration snapshot; same as autosave).
     PersistPanelState,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
     PanelNavigated,
     /// A specific setting was toggled/changed in the F9 Settings dialog. Main applies to persisted_settings, saves, applies to panels.
     SettingChange(SettingChange),
-    /// Ctrl+T toggled view mode; persist to file.
+    /// Ctrl+X then T toggled view mode; persist to file.
     ViewModeToggled,
 }
 
@@ -136,13 +138,13 @@ pub enum AppAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingChange {
     AutosaveToggle,
-    /// Sync active panel to shell's cwd when returning from Ctrl+O (F9 Settings → General).
+    /// Sync active panel to shell's cwd when returning from subshell (F9 Settings → General).
     SyncPanelToShellCwdToggle,
     /// Toggle auto-return to panels after running a command/executable.
     AutoReopenPanelsAfterCommandToggle,
     /// Cycle the delay (seconds) for auto-return to panels.
     AutoReopenPanelsAfterCommandDelayCycle,
-    /// Toggle file name pattern mode for Find (Ctrl+F) and +/−: wildcards vs regex (F9 General).
+    /// Toggle file name pattern mode for Find (Ctrl+X then F) and +/−: wildcards vs regex (F9 General).
     FilePatternModeCycle,
     LeftViewCycle,
     LeftShowHiddenToggle,
@@ -469,7 +471,7 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // Panel settings overlay (Ctrl+Q left, Ctrl+W right)
+                // Panel settings overlay (Ctrl+X then 1 left, 2 right)
                 if app.left_panel_settings_overlay.is_some()
                     || app.right_panel_settings_overlay.is_some()
                 {
@@ -499,13 +501,22 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // Size info banner: Ctrl+O still opens subshell; any other key dismisses the banner
-                // and is handled as usual (do not consume the first key after Ctrl+G).
+                // Size info banner: Ctrl+O or Ctrl+X then O opens subshell; any other key dismisses the banner
+                // and is handled as usual (do not consume the first key after Ctrl+X then S).
                 if app.size_info_dialog.is_some() {
-                    if let KeyCode::Char(c) = key.code {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'o' {
+                    let code_sz = match key.code {
+                        KeyCode::Char('\t') => KeyCode::Tab,
+                        KeyCode::Char('\u{7f}') => KeyCode::Backspace,
+                        other => other,
+                    };
+                    match ctrl_x_chord::poll_suspend_chord(app, code_sz, key.modifiers) {
+                        SuspendChordResult::Consumed => {
+                            return Ok(Some(AppAction::Continue));
+                        }
+                        SuspendChordResult::SuspendToShell => {
                             return Ok(Some(AppAction::Suspend));
                         }
+                        SuspendChordResult::NotHandled => {}
                     }
                     size_info_dialog::close(app);
                 }
@@ -521,8 +532,10 @@ impl EventHandler {
                     ));
                 }
                 // Some terminals send Tab as Char('\t'); treat it as Tab.
+                // DEL (0x7F) is occasionally reported as Char instead of KeyCode::Backspace.
                 let code = match key.code {
                     KeyCode::Char('\t') => KeyCode::Tab,
+                    KeyCode::Char('\u{7f}') => KeyCode::Backspace,
                     other => other,
                 };
                 if app.focus == Focus::CommandLine {
@@ -534,6 +547,35 @@ impl EventHandler {
                 }
                 // Panel height: outer frame, inner content; visible list rows = terminal - 4.
                 let panel_height = compute_panel_height();
+                if let Some(action) = Self::handle_legacy_panel_control_shortcuts(
+                    app,
+                    code,
+                    key.modifiers,
+                    panel_height,
+                ) {
+                    return Ok(Some(action));
+                }
+                // Oxide shortcuts: Ctrl+X then a letter (e.g. F find, O shell).
+                if app.ctrl_x_chord_pending {
+                    app.ctrl_x_chord_pending = false;
+                    if code == KeyCode::Esc {
+                        return Ok(Some(AppAction::Continue));
+                    }
+                    if ctrl_x_chord::is_ctrl_x_prefix(code, key.modifiers) {
+                        return Ok(Some(AppAction::Continue));
+                    }
+                    if let KeyCode::Char(c) = code {
+                        let c = if c == '\x04' {
+                            '\x04'
+                        } else {
+                            c.to_ascii_lowercase()
+                        };
+                        return Ok(Some(Self::handle_ctrl_key(app, c, panel_height)));
+                    }
+                } else if ctrl_x_chord::is_ctrl_x_prefix(code, key.modifiers) {
+                    app.ctrl_x_chord_pending = true;
+                    return Ok(Some(AppAction::Continue));
+                }
                 // Panel has focus: navigation, panel switch, or move to command line.
                 match code {
                     KeyCode::Up => app.active_panel_mut().move_up(panel_height),
@@ -568,6 +610,11 @@ impl EventHandler {
                             }
                         }
                     }
+                    KeyCode::Backspace if !app.command_line.is_empty() => {
+                        // Esc returns to the panel but leaves the prompt text; Linux often sends BS as Ctrl+H.
+                        app.focus_command_line();
+                        app.command_line_backspace();
+                    }
                     KeyCode::Char(' ') => {
                         // Space = toggle mark on the current file, then move selection down.
                         app.active_panel_mut()
@@ -580,12 +627,15 @@ impl EventHandler {
                             return Ok(Some(AppAction::OpenPatternSelectMark));
                         } else if c == '-' {
                             return Ok(Some(AppAction::OpenPatternSelectUnmark));
-                        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            return Ok(Some(Self::handle_ctrl_key(
-                                app,
-                                c,
-                                panel_height,
-                            )));
+                        } else if key.modifiers.contains(KeyModifiers::ALT)
+                            && c.eq_ignore_ascii_case(&'h')
+                        {
+                            return Ok(Some(AppAction::ToggleShowHidden));
+                        } else if text_input::is_ctrl_backspace(key.modifiers, c)
+                            && !app.command_line.is_empty()
+                        {
+                            app.focus_command_line();
+                            app.command_line_backspace();
                         } else if c.is_ascii() && !c.is_control() {
                             app.focus_command_line();
                             app.command_line_insert(c);
@@ -820,39 +870,54 @@ impl EventHandler {
         if code == KeyCode::F(10) {
             return AppAction::Quit;
         }
+        let panel_height = compute_panel_height();
+        if let Some(action) =
+            Self::handle_legacy_command_line_control_shortcuts(app, code, modifiers, panel_height)
+        {
+            return action;
+        }
+        if app.ctrl_x_chord_pending {
+            app.ctrl_x_chord_pending = false;
+            if code == KeyCode::Esc {
+                return AppAction::Continue;
+            }
+            if ctrl_x_chord::is_ctrl_x_prefix(code, modifiers) {
+                return AppAction::Continue;
+            }
+            if let KeyCode::Char(c) = code {
+                let c = if c == '\x04' {
+                    '\x04'
+                } else {
+                    c.to_ascii_lowercase()
+                };
+                return Self::handle_ctrl_key(app, c, panel_height);
+            }
+        } else if ctrl_x_chord::is_ctrl_x_prefix(code, modifiers) {
+            app.ctrl_x_chord_pending = true;
+            return AppAction::Continue;
+        }
         // Tab may be passed as KeyCode::Tab (normalized from Char('\t') in dispatch_event).
         match code {
             KeyCode::Char(c) => {
-                if modifiers.contains(KeyModifiers::CONTROL) {
-                    if c == 'q' {
-                        return AppAction::OpenLeftPanelSettings;
-                    }
-                    if c == 'w' {
-                        return AppAction::OpenRightPanelSettings;
-                    }
-                    if c == 'o' {
-                        return AppAction::Suspend;
-                    }
-                    if c == 'c' {
-                        if !app.command_line.is_empty() {
-                            clipboard::set(&app.command_line);
-                        } else {
-                            app.command_line_clear();
-                        }
-                        return AppAction::Continue;
-                    }
-                    if c == 'h' {
+                // Linux: many terminals send the physical Backspace key as Ctrl+H (^H), same as a
+                // real Ctrl+H chord — only there do we treat Ctrl+H as erase on the command line.
+                // macOS: Backspace is usually KeyCode::Backspace (^?), so Ctrl+H can toggle hidden.
+                if text_input::is_ctrl_backspace(modifiers, c) {
+                    #[cfg(target_os = "macos")]
+                    {
                         return AppAction::ToggleShowHidden;
                     }
-                    if c == 'v' {
-                        if let Some(s) = clipboard::get() {
-                            app.command_line_insert_str(&s);
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        app.command_line_backspace();
+                        if app.command_line.is_empty() {
+                            app.focus_panel();
                         }
                         return AppAction::Continue;
                     }
-                    if c == 'e' {
-                        return AppAction::PersistPanelState;
-                    }
+                }
+                if modifiers.contains(KeyModifiers::ALT) && c.eq_ignore_ascii_case(&'h') {
+                    return AppAction::ToggleShowHidden;
                 }
                 app.command_line_insert(c);
                 AppAction::Continue
@@ -911,16 +976,105 @@ impl EventHandler {
         }
     }
 
+    /// **Ctrl+O** / **Ctrl+R** shared by panel and command line (single source for suspend + refresh).
+    fn try_legacy_shared_control_o_r(
+        app: &mut AppState,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        panel_height: usize,
+    ) -> Option<AppAction> {
+        if ctrl_x_chord::is_direct_ctrl_o_suspend(code, modifiers) {
+            app.ctrl_x_chord_pending = false;
+            return Some(AppAction::Suspend);
+        }
+        if !modifiers.contains(KeyModifiers::CONTROL) {
+            return None;
+        }
+        match code {
+            KeyCode::Char('\x12' | 'r' | 'R') => {
+                app.ctrl_x_chord_pending = false;
+                let _ = app.active_panel_mut().refresh_files_restore_selection(
+                    None,
+                    None,
+                    Some(panel_height),
+                );
+                Some(AppAction::Continue)
+            }
+            _ => None,
+        }
+    }
+
+    /// **Ctrl+O** / **Ctrl+R** / **Ctrl+C** / **Ctrl+V** without a Ctrl+X prefix (panel focus).
+    /// Clears a stale Ctrl+X chord. C/V are absorbed on the panel like before the chord system.
+    fn handle_legacy_panel_control_shortcuts(
+        app: &mut AppState,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        panel_height: usize,
+    ) -> Option<AppAction> {
+        if let Some(action) =
+            Self::try_legacy_shared_control_o_r(app, code, modifiers, panel_height)
+        {
+            return Some(action);
+        }
+        if !modifiers.contains(KeyModifiers::CONTROL) {
+            return None;
+        }
+        match code {
+            KeyCode::Char('\x03' | 'c' | 'C' | '\x16' | 'v' | 'V') => {
+                app.ctrl_x_chord_pending = false;
+                Some(AppAction::Continue)
+            }
+            _ => None,
+        }
+    }
+
+    /// **Ctrl+O** / **Ctrl+R** / **Ctrl+C** / **Ctrl+V** without a Ctrl+X prefix (command line).
+    fn handle_legacy_command_line_control_shortcuts(
+        app: &mut AppState,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        panel_height: usize,
+    ) -> Option<AppAction> {
+        if let Some(action) =
+            Self::try_legacy_shared_control_o_r(app, code, modifiers, panel_height)
+        {
+            return Some(action);
+        }
+        if !modifiers.contains(KeyModifiers::CONTROL) {
+            return None;
+        }
+        match code {
+            KeyCode::Char('\x03' | 'c' | 'C') => {
+                app.ctrl_x_chord_pending = false;
+                if !app.command_line.is_empty() {
+                    clipboard::set(&app.command_line);
+                } else {
+                    app.command_line_clear();
+                }
+                Some(AppAction::Continue)
+            }
+            KeyCode::Char('\x16' | 'v' | 'V') => {
+                app.ctrl_x_chord_pending = false;
+                if let Some(s) = clipboard::get() {
+                    app.command_line_insert_str(&s);
+                }
+                Some(AppAction::Continue)
+            }
+            _ => None,
+        }
+    }
+
     fn handle_ctrl_key(
         app: &mut AppState,
         c: char,
         panel_height: usize,
     ) -> AppAction {
         match c {
-            'q' => AppAction::OpenLeftPanelSettings,
-            'w' => AppAction::OpenRightPanelSettings,
+            '1' => AppAction::OpenLeftPanelSettings,
+            '2' => AppAction::OpenRightPanelSettings,
             'o' => AppAction::Suspend,
-            'g' => {
+            's' => {
                 let (items, ..) = app
                     .active_panel_ref()
                     .get_names_to_copy_with_restore_neighbors();
@@ -968,7 +1122,7 @@ impl EventHandler {
                 );
                 AppAction::Continue
             }
-            'e' => AppAction::PersistPanelState,
+            'c' => AppAction::PersistPanelState,
             'd' | '\x04' => AppAction::OpenDiffViewer,
             _ => AppAction::Continue,
         }

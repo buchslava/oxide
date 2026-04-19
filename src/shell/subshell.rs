@@ -1,8 +1,8 @@
-//! PTY subshell for Ctrl+O (toggle shell); command line runs in the original terminal.
+//! PTY subshell (toggle shell); command line runs in the original terminal.
 //!
-//! Ctrl+O flow (MC-style, see REFERENCE.md): leave alternate screen, relay stdin↔PTY until
-//! Ctrl+O (0x0F) is read from stdin; then caller re-enters alternate and redraws. Raw mode
-//! stays on so we can detect Ctrl+O; the subshell runs in a PTY with its own termios.
+//! Return to panels: **Ctrl+O** (`0x0F`, MC-style) or **Ctrl+X** then plain **`o`** / **`O`** (see REFERENCE.md).
+//! Leave alternate screen, relay stdin↔PTY until one of those is read from stdin; then caller
+//! re-enters alternate and redraws. Raw mode stays on; the subshell runs in a PTY with its own termios.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,13 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, BorrowedFd};
 #[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use nix::sys::stat::Mode;
+#[cfg(unix)]
+use nix::unistd::mkfifo;
 #[cfg(unix)]
 use std::process::Command;
 
@@ -20,6 +26,15 @@ const CTRL_O: u8 = 0x0F;
 const CTRL_O_KITTY: &[u8] = b"\x1b[111;5u";
 #[cfg(unix)]
 const CTRL_O_MODIFY_OTHER_KEYS: &[u8] = b"\x1b[27;5;111~";
+
+#[cfg(unix)]
+const CTRL_X: u8 = 0x18;
+/// Kitty keyboard protocol: `CSI u` with Unicode codepoint for `x` (120).
+#[cfg(unix)]
+const CTRL_X_KITTY: &[u8] = b"\x1b[120;5u";
+/// XTerm *modifyOtherKeys* / CSI `27` form for Ctrl+X (codepoint 120 = `x`).
+#[cfg(unix)]
+const CTRL_X_MODIFY_OTHER_KEYS: &[u8] = b"\x1b[27;5;120~";
 
 // Cached "relay raw" termios from first run; reused on 2nd+ run so we always apply the same state
 // (avoids TUI-modified termios causing uglified output). Doc omitted: thread_local! macro does not
@@ -36,24 +51,76 @@ pub struct PreparedRelay;
 /// How a PTY relay session ended (used to show a countdown before restoring the panel UI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelayExit {
-    /// User pressed Ctrl+O, stdin closed, or auto-reopen was off / not applicable.
+    /// User pressed Ctrl+O or Ctrl+X then O, stdin closed, or auto-reopen was off / not applicable.
     Manual,
     /// Command finished (or Ctrl+C with auto-reopen); caller shows a delay toast then restores panels.
     AutoReopenDelay(std::time::Duration),
 }
 
-/// Persistent subshell: command line runs here, Ctrl+O toggles full-screen relay.
+/// Persistent subshell: command line runs here; **Ctrl+O** or **Ctrl+X** then **O** toggles full-screen relay.
 #[cfg(unix)]
 pub struct Subshell {
     master_fd: i32,
     child_pid: i32,
 }
 
+/// FIFO opened for read before the shell runs `printf '\\n' > '…'` after `eval` finishes — PTY bytes
+/// are relayed unfiltered (sudo prompts, etc.). `Drop` unlinks the path.
+#[cfg(unix)]
+struct OwnedFifo {
+    file: std::fs::File,
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+impl OwnedFifo {
+    fn open_in_temp() -> io::Result<Self> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("oxide_cmd_{}.fifo", nonce));
+        let _ = std::fs::remove_file(&path);
+        mkfifo(&path, Mode::S_IRUSR | Mode::S_IWUSR).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("mkfifo: {}", e))
+        })?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)?;
+        Ok(Self { file, path })
+    }
+
+    fn as_raw_fd(&self) -> i32 {
+        self.file.as_raw_fd()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for OwnedFifo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Legacy: scan PTY stream for a completion token (fragile with shell echo / short lines).
+#[cfg(unix)]
+struct StreamMonitoredCompletion {
+    completion_lf: Vec<u8>,
+    completion_crlf: Vec<u8>,
+    helper_echo: Vec<u8>,
+}
+
 #[cfg(unix)]
 struct AutoExitConfig {
     delay: std::time::Duration,
-    marker: Vec<u8>,
-    helper_echo: Vec<u8>,
+    completion: AutoExitCompletion,
+}
+
+#[cfg(unix)]
+enum AutoExitCompletion {
+    Fifo(OwnedFifo),
+    Stream(StreamMonitoredCompletion),
 }
 
 #[cfg(unix)]
@@ -82,43 +149,109 @@ impl Subshell {
         keep
     }
 
-    /// Feed stdin bytes into relay and intercept Ctrl+O in both raw and escaped encodings.
-    /// Returns true when Ctrl+O is detected (caller should exit relay).
-    fn relay_stdin_chunk(
-        &self,
-        carry: &mut Vec<u8>,
-        chunk: &[u8],
-    ) -> io::Result<bool> {
-        carry.extend_from_slice(chunk);
+    fn trailing_ctrl_x_prefix_len(buf: &[u8]) -> usize {
+        let patterns = [CTRL_X_KITTY, CTRL_X_MODIFY_OTHER_KEYS];
+        let mut keep = 0usize;
+        for pat in patterns {
+            let max_k = pat.len().saturating_sub(1).min(buf.len());
+            for k in 1..=max_k {
+                if buf[buf.len() - k..] == pat[..k] {
+                    keep = keep.max(k);
+                }
+            }
+        }
+        keep
+    }
+
+    fn earliest_ctrl_o_in_carry(carry: &[u8]) -> Option<(usize, usize)> {
         let plain_pos = carry.iter().position(|&b| b == CTRL_O).map(|p| (p, 1usize));
         let kitty_pos =
             Self::find_subsequence(carry, CTRL_O_KITTY).map(|p| (p, CTRL_O_KITTY.len()));
         let mok_pos = Self::find_subsequence(carry, CTRL_O_MODIFY_OTHER_KEYS)
             .map(|p| (p, CTRL_O_MODIFY_OTHER_KEYS.len()));
+        [plain_pos, kitty_pos, mok_pos]
+            .into_iter()
+            .flatten()
+            .min_by_key(|t| t.0)
+    }
 
-        let mut found: Option<(usize, usize)> = None;
-        for cand in [plain_pos, kitty_pos, mok_pos].into_iter().flatten() {
-            found = match found {
-                None => Some(cand),
-                Some(curr) => Some(if cand.0 < curr.0 { cand } else { curr }),
-            };
-        }
+    /// Feed stdin bytes into relay and intercept **Ctrl+O** (and Kitty / modifyOtherKeys forms) or
+    /// **Ctrl+X** then plain **`o`** / **`O`**. Returns true when the relay should exit.
+    fn relay_stdin_chunk(
+        &self,
+        carry: &mut Vec<u8>,
+        chunk: &[u8],
+        chord_withheld: &mut Option<Vec<u8>>,
+    ) -> io::Result<bool> {
+        carry.extend_from_slice(chunk);
 
-        if let Some((pos, len)) = found {
-            if pos > 0 {
-                Self::write_all_fd(self.master_fd, &carry[..pos])?;
+        loop {
+            if let Some(w) = chord_withheld.as_ref() {
+                if carry.is_empty() {
+                    return Ok(false);
+                }
+                let b0 = carry[0];
+                if b0 == b'o' || b0 == b'O' {
+                    carry.drain(..1);
+                    chord_withheld.take();
+                    return Ok(true);
+                }
+                Self::write_all_fd(self.master_fd, w)?;
+                chord_withheld.take();
+                continue;
             }
-            carry.drain(..pos + len);
-            return Ok(true);
-        }
 
-        let keep = Self::trailing_ctrl_o_prefix_len(carry);
-        let forward_len = carry.len().saturating_sub(keep);
-        if forward_len > 0 {
-            Self::write_all_fd(self.master_fd, &carry[..forward_len])?;
-            carry.drain(..forward_len);
+            if let Some((pos, len)) = Self::earliest_ctrl_o_in_carry(carry) {
+                if pos > 0 {
+                    Self::write_all_fd(self.master_fd, &carry[..pos])?;
+                }
+                carry.drain(..pos + len);
+                return Ok(true);
+            }
+
+            let plain_x = carry
+                .iter()
+                .position(|&b| b == CTRL_X)
+                .map(|p| (p, 1usize));
+            let kitty_x =
+                Self::find_subsequence(carry, CTRL_X_KITTY).map(|p| (p, CTRL_X_KITTY.len()));
+            let mok_x = Self::find_subsequence(carry, CTRL_X_MODIFY_OTHER_KEYS)
+                .map(|p| (p, CTRL_X_MODIFY_OTHER_KEYS.len()));
+
+            let earliest = [plain_x, kitty_x, mok_x]
+                .into_iter()
+                .flatten()
+                .min_by_key(|t| t.0);
+
+            if let Some((pos, x_len)) = earliest {
+                if pos > 0 {
+                    Self::write_all_fd(self.master_fd, &carry[..pos])?;
+                    carry.drain(..pos);
+                    continue;
+                }
+                if carry.len() == x_len {
+                    *chord_withheld = Some(carry[..x_len].to_vec());
+                    carry.drain(..x_len);
+                    return Ok(false);
+                }
+                let follow = carry[x_len];
+                if follow == b'o' || follow == b'O' {
+                    carry.drain(..x_len + 1);
+                    return Ok(true);
+                }
+                Self::write_all_fd(self.master_fd, &carry[..x_len + 1])?;
+                carry.drain(..x_len + 1);
+                continue;
+            }
+
+            let keep = Self::trailing_ctrl_o_prefix_len(carry).max(Self::trailing_ctrl_x_prefix_len(carry));
+            let forward_len = carry.len().saturating_sub(keep);
+            if forward_len > 0 {
+                Self::write_all_fd(self.master_fd, &carry[..forward_len])?;
+                carry.drain(..forward_len);
+            }
+            return Ok(false);
         }
-        Ok(false)
     }
 
     /// Read from PTY in non-blocking mode (MC: read_nonblock). Avoids lockup when slave tcflush() revokes data between poll and read.
@@ -176,20 +309,23 @@ impl Subshell {
         Ok(())
     }
 
-    /// Stream PTY bytes to stdout while suppressing the auto-return marker.
-    /// Returns true when marker is detected (possibly across chunk boundaries).
+    /// Stream PTY bytes to stdout while suppressing the auto-return **completion** token
+    /// (`marker + '\n'` from `printf '%s\n'`).
+    /// Returns true when that token is detected (possibly across chunk boundaries).
     fn write_pty_chunk_without_marker(
         pending: &mut Vec<u8>,
         chunk: &[u8],
-        marker: &[u8],
+        completion_lf: &[u8],
+        completion_crlf: &[u8],
         helper_echo: &[u8],
     ) -> io::Result<bool> {
         pending.extend_from_slice(chunk);
 
         loop {
             let echo_pos = Self::find_subsequence(pending, helper_echo);
-            let marker_pos = Self::find_subsequence(pending, marker);
-            match (echo_pos, marker_pos) {
+            let done_pos = Self::find_subsequence(pending, completion_crlf)
+                .or_else(|| Self::find_subsequence(pending, completion_lf));
+            match (echo_pos, done_pos) {
                 (Some(e), Some(m)) if e < m => {
                     if e > 0 {
                         Self::write_all_fd(1, &pending[..e])?;
@@ -215,7 +351,11 @@ impl Subshell {
             }
         }
 
-        let keep = marker.len().max(helper_echo.len()).saturating_sub(1);
+        // Tail withheld so a completion token split across PTY reads is not flushed early.
+        let keep = completion_lf
+            .len()
+            .max(completion_crlf.len())
+            .saturating_sub(1);
         if pending.len() > keep {
             let flush_len = pending.len() - keep;
             Self::write_all_fd(1, &pending[..flush_len])?;
@@ -293,7 +433,7 @@ impl Subshell {
         Ok(())
     }
 
-    /// After Ctrl+O, flush any PTY bytes already produced so we don't cut escape/UTF-8 sequences
+    /// After Ctrl+O (or Ctrl+X then O), flush any PTY bytes already produced so we don't cut escape/UTF-8 sequences
     /// in half and so the full prompt and latest command results are shown before re-entering alternate screen.
     fn drain_pty_output(master_fd: i32) -> io::Result<()> {
         use nix::errno::Errno;
@@ -341,7 +481,7 @@ impl Subshell {
 
     /// Set PTY slave to cooked/shell termios (MC: tcsetattr(slave, &shell_mode)).
     /// The shell must see a normal terminal: ICANON, ECHO, ONLCR so output is correct.
-    /// Disable VDISCARD so Ctrl+O never toggles kernel output discard on the slave.
+    /// Disable VDISCARD so stray control keys never toggle kernel output discard on the slave.
     fn set_pty_slave_cooked_mode(slave_fd: i32) {
         let mut tio: libc::termios = unsafe { std::mem::zeroed() };
         if unsafe { libc::tcgetattr(slave_fd, &mut tio) } != 0 {
@@ -355,7 +495,7 @@ impl Subshell {
         tio.c_oflag |= libc::OPOST | libc::ONLCR;
         tio.c_cc[libc::VMIN] = 1;
         tio.c_cc[libc::VTIME] = 0;
-        // Disable VDISCARD so Ctrl+O doesn't toggle output discard (macOS/BSD)
+        // Disable VDISCARD so control keys don't toggle output discard (macOS/BSD)
         if libc::VDISCARD < libc::NCCS {
             tio.c_cc[libc::VDISCARD] = libc::_POSIX_VDISABLE as libc::cc_t;
         }
@@ -373,6 +513,10 @@ impl Subshell {
 
     /// Set real tty to MC-style raw for relay (invoke_subshell: tcsetattr(STDOUT, &raw_mode)).
     /// Use STDOUT (fd 1) like MC. On 2nd+ run reuse cached relay-raw termios so we apply the same state as the first run (avoids TUI-modified termios causing uglified output).
+    ///
+    /// **macOS:** Crossterm’s raw mode is applied to stdin when it is a tty; we also apply the same
+    /// relay-raw attributes to fd 0 when both 0 and 1 are ttys so stdin and stdout stay consistent
+    /// for the relay (helps odd prompt / echo edge cases after leaving the alternate screen).
     fn set_real_tty_relay_raw() -> Option<libc::termios> {
         let mut saved: libc::termios = unsafe { std::mem::zeroed() };
         if unsafe { libc::tcgetattr(1, &mut saved) } != 0 {
@@ -389,7 +533,12 @@ impl Subshell {
                 cell.replace(Some(raw));
             }
             if let Some(ref r) = *cell.borrow() {
-                let _ = unsafe { libc::tcsetattr(1, libc::TCSANOW, r) };
+                // Drain queued TUI output before applying relay raw (avoids mid-sequence handoff).
+                let _ = unsafe { libc::tcsetattr(1, libc::TCSADRAIN, r) };
+                #[cfg(target_os = "macos")]
+                if unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 } {
+                    let _ = unsafe { libc::tcsetattr(0, libc::TCSADRAIN, r) };
+                }
             }
         });
         Some(saved)
@@ -398,6 +547,10 @@ impl Subshell {
     fn restore_real_tty(saved: Option<libc::termios>) {
         if let Some(tio) = saved {
             let _ = unsafe { libc::tcsetattr(1, libc::TCSANOW, &tio) };
+            #[cfg(target_os = "macos")]
+            if unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 } {
+                let _ = unsafe { libc::tcsetattr(0, libc::TCSANOW, &tio) };
+            }
         }
     }
 
@@ -407,19 +560,25 @@ impl Subshell {
         PreparedRelay(Self::set_real_tty_relay_raw())
     }
 
-    /// Write the full relay transition: leave alternate, show cursor, disable mouse, CAN, reset (wrap, G0/G1, SGR, keypad, scroll, cursor). Caller must set relay raw first and pass prepared to run_relay. See REFERENCE.md "Solution: Second Ctrl+O uglification (macOS Terminal.app)" — do not use backend for the switch; this sequence must stay in sync with that doc.
+    /// Write the full relay transition: leave alternate, show cursor, disable mouse, CAN, reset (wrap, G0/G1, SGR, keypad, scroll, cursor). Caller must set relay raw first and pass prepared to run_relay.
     #[cfg(unix)]
     pub fn write_relay_reset_sequence<W: Write>(w: &mut W) -> io::Result<()> {
         w.write_all(b"\x1b[?1049l\x1b[?47l")?; // leave alternate (main screen)
         w.write_all(b"\x1b[?25h")?; // show cursor (DECTCEM)
         w.write_all(b"\x1b[?1002l\x1b[?1006l")?; // disable mouse (X10, SGR)
+        // Crossterm/Ratatui stacks: clear modes that can defer or alter host painting of PTY output.
+        w.write_all(b"\x1b[?1003l\x1b[?1004l\x1b[?2004l\x1b[?2026l")?;
         w.write_all(b"\x18")?; // CAN: parser to ground
         #[cfg(not(target_os = "macos"))]
         w.write_all(b"\x1b[!p")?; // DECSTR (skip on macOS Terminal.app)
+        // Without DECSTR (macOS) or partial DECSTR: drop origin / LR margin so `999;999H` is viewport-relative.
+        w.write_all(b"\x1b[?6l\x1b[?69l")?; // DECOM off, DECLRMM off
         w.write_all(b"\x1b[?7h\x1b(B\x1b)B\x1b[0m")?; // wrap, G0/G1 ASCII, SGR
         w.write_all(b"\x1b>")?; // numeric keypad
         w.write_all(b"\x1b[r\x1b[999;999H\r")?; // scroll region, cursor to bottom
-        w.flush()
+        w.flush()?;
+        let _ = unsafe { libc::tcdrain(1) };
+        Ok(())
     }
 
     /// Set PTY window size to match the real terminal (stdout). MC: tty_resize in lib/tty/tty.c.
@@ -504,11 +663,11 @@ impl Subshell {
         }
     }
 
-    /// Full-screen relay: stdin → pty, pty → stdout, until Ctrl+O (0x0F) on stdin.
+    /// Full-screen relay: stdin → pty, pty → stdout, until **Ctrl+O** or **Ctrl+X** then **`o`** / **`O`** on stdin.
     /// Shell keeps running.
     /// Caller must leave alternate screen before calling and re-enter after return (see main.rs Suspend).
     /// If `prepared` is Some, caller already set relay raw and wrote reset sequence to stdout; we skip that and use saved termios for restore. If None, we set raw and write reset ourselves.
-    /// If `show_prompt_first` is true (Ctrl+O toggle), send LF to the PTY and flush so the shell redraws its prompt.
+    /// If `show_prompt_first` is true (return from panels chord), send LF to the PTY and flush so the shell redraws its prompt.
     fn run_relay_until_ctrl_o(
         &self,
         show_prompt_first: bool,
@@ -530,12 +689,15 @@ impl Subshell {
             Some(p) => p.0,
             None => {
                 let saved = Self::set_real_tty_relay_raw();
+                let _ = Self::write_all_fd(1, b"\x1b[?1003l\x1b[?1004l\x1b[?2004l\x1b[?2026l");
                 let _ = Self::write_all_fd(1, b"\x18");
                 #[cfg(not(target_os = "macos"))]
                 let _ = Self::write_all_fd(1, b"\x1b[!p");
+                let _ = Self::write_all_fd(1, b"\x1b[?6l\x1b[?69l");
                 let _ = Self::write_all_fd(1, b"\x1b[?7h\x1b(B\x1b)B\x1b[0m");
                 let _ = Self::write_all_fd(1, b"\x1b>");
                 let _ = Self::write_all_fd(1, b"\x1b[r\x1b[999;999H\r");
+                let _ = unsafe { libc::tcdrain(1) };
                 saved
             }
         };
@@ -544,7 +706,9 @@ impl Subshell {
             // Drain any stale PTY output from the previous session so the new prompt is not mixed with old data.
             let _ = Self::drain_pty_output(self.master_fd);
             // Force a new prompt every time: send newline so the shell prints a fresh prompt (works on 2nd+ attempt).
-            // let _ = Self::write_all_fd(self.master_fd, b"\r\n");
+            #[cfg(not(target_os = "macos"))]
+            let _ = Self::write_all_fd(self.master_fd, b"\r\n");
+            #[cfg(target_os = "macos")]
             let _ = Self::write_all_fd(self.master_fd, b"\n");
             // MC: " \b" hack so prompt reappears.
             // let _ = Self::write_all_fd(self.master_fd, b" \x08");
@@ -557,24 +721,44 @@ impl Subshell {
         let mut stdin_buf = [0u8; 256];
         let mut pty_buf = [0u8; 4096];
         let mut stdin_carry: Vec<u8> = Vec::with_capacity(32);
+        let mut chord_withheld: Option<Vec<u8>> = None;
+        let fifo_fd = auto_exit.as_ref().and_then(|c| match &c.completion {
+            AutoExitCompletion::Fifo(f) => Some(f.as_raw_fd()),
+            AutoExitCompletion::Stream(_) => None,
+        });
         let max_auto_token_len = auto_exit
             .as_ref()
-            .map(|c| c.marker.len().max(c.helper_echo.len()))
+            .and_then(|c| match &c.completion {
+                AutoExitCompletion::Stream(s) => Some(
+                    s.completion_lf
+                        .len()
+                        .max(s.completion_crlf.len())
+                        .max(s.helper_echo.len()),
+                ),
+                AutoExitCompletion::Fifo(_) => None,
+            })
             .unwrap_or(0);
-        let mut marker_pending: Vec<u8> = Vec::with_capacity(max_auto_token_len);
+        let mut marker_pending: Vec<u8> = Vec::with_capacity(max_auto_token_len.max(1));
 
         let relay_result = (|| -> io::Result<RelayExit> {
+            let mut fifo_scratch = [0u8; 64];
             loop {
-                let mut fds = [
+                let mut fds = vec![
                     PollFd::new(
                         unsafe { BorrowedFd::borrow_raw(0) },
-                        PollFlags::POLLIN,
+                        PollFlags::POLLIN | PollFlags::POLLHUP,
                     ),
                     PollFd::new(
                         unsafe { BorrowedFd::borrow_raw(self.master_fd) },
-                        PollFlags::POLLIN,
+                        PollFlags::POLLIN | PollFlags::POLLHUP,
                     ),
                 ];
+                if let Some(fd) = fifo_fd {
+                    fds.push(PollFd::new(
+                        unsafe { BorrowedFd::borrow_raw(fd) },
+                        PollFlags::POLLIN | PollFlags::POLLHUP,
+                    ));
+                }
                 match poll(&mut fds, 100u16) {
                     Ok(0) => continue,
                     Ok(_) => {}
@@ -590,7 +774,11 @@ impl Subshell {
                         Ok(n) => {
                             let saw_ctrl_c =
                                 auto_exit.is_some() && stdin_buf[..n].iter().any(|b| *b == 0x03);
-                            if self.relay_stdin_chunk(&mut stdin_carry, &stdin_buf[..n])? {
+                            if self.relay_stdin_chunk(
+                                &mut stdin_carry,
+                                &stdin_buf[..n],
+                                &mut chord_withheld,
+                            )? {
                                 let _ = Self::drain_pty_output(self.master_fd);
                                 return Ok(RelayExit::Manual);
                             }
@@ -607,6 +795,39 @@ impl Subshell {
                     }
                 }
 
+                if fifo_fd.is_some()
+                    && fds
+                        .get(2)
+                        .and_then(|p| p.revents())
+                        .map_or(false, |r| {
+                            r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP)
+                        })
+                {
+                    let fd = fifo_fd.expect("fds[2] only when fifo_fd is set");
+                    // With no writer yet, some OSes report readable but read() returns 0 — not completion.
+                    let mut got_byte = false;
+                    loop {
+                        match unistd::read(fd, &mut fifo_scratch) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if n > 0 {
+                                    got_byte = true;
+                                }
+                            }
+                            Err(Errno::EAGAIN) => break,
+                            Err(Errno::EINTR) => continue,
+                            Err(e) => {
+                                return Err(io::Error::new(io::ErrorKind::Other, e));
+                            }
+                        }
+                    }
+                    if got_byte {
+                        let _ = Self::drain_pty_output(self.master_fd);
+                        let delay = auto_exit.as_ref().expect("fifo auto_exit").delay;
+                        return Ok(RelayExit::AutoReopenDelay(delay));
+                    }
+                }
+
                 if fds[1].revents().map_or(false, |r| {
                     r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP)
                 }) {
@@ -614,13 +835,21 @@ impl Subshell {
                         Some(0) => break,
                         Some(n) => {
                             if let Some(cfg) = auto_exit.as_ref() {
-                                if Self::write_pty_chunk_without_marker(
-                                    &mut marker_pending,
-                                    &pty_buf[..n],
-                                    &cfg.marker,
-                                    &cfg.helper_echo,
-                                )? {
-                                    return Ok(RelayExit::AutoReopenDelay(cfg.delay));
+                                match &cfg.completion {
+                                    AutoExitCompletion::Fifo(_) => {
+                                        Self::write_all_fd(1, &pty_buf[..n])?;
+                                    }
+                                    AutoExitCompletion::Stream(stream) => {
+                                        if Self::write_pty_chunk_without_marker(
+                                            &mut marker_pending,
+                                            &pty_buf[..n],
+                                            &stream.completion_lf,
+                                            &stream.completion_crlf,
+                                            &stream.helper_echo,
+                                        )? {
+                                            return Ok(RelayExit::AutoReopenDelay(cfg.delay));
+                                        }
+                                    }
                                 }
                             } else {
                                 Self::write_all_fd(1, &pty_buf[..n])?;
@@ -631,8 +860,13 @@ impl Subshell {
                 }
             }
             if let Some(cfg) = auto_exit.as_ref() {
-                if !marker_pending.is_empty() {
-                    Self::flush_pty_pending_without_marker(&mut marker_pending, &cfg.helper_echo)?;
+                if let AutoExitCompletion::Stream(stream) = &cfg.completion {
+                    if !marker_pending.is_empty() {
+                        Self::flush_pty_pending_without_marker(
+                            &mut marker_pending,
+                            &stream.helper_echo,
+                        )?;
+                    }
                 }
             }
             Ok(RelayExit::Manual)
@@ -666,7 +900,7 @@ impl Subshell {
         }
     }
 
-    /// Change shell cwd to match the active panel then relay until Ctrl+O (for Suspend so ls matches panel).
+    /// Change shell cwd to match the active panel then relay until Ctrl+O or Ctrl+X then O (for Suspend so ls matches panel).
     /// Only sends `cd 'cwd'` when the shell is not already in that directory, to avoid redundant commands in history.
     pub fn run_cd_then_relay(
         &self,
@@ -692,12 +926,12 @@ impl Subshell {
             let _ = Self::drain_pty_output(self.master_fd);
         }
         // Caller already moved the real cursor (relay reset). If we did not send `cd`, the PTY
-        // has no fresh echo to realign the terminal — force a prompt so cursor matches (2nd+ Ctrl+O).
+        // has no fresh echo to realign the terminal — force a prompt so cursor matches (2nd+ return from shell).
         let _ = self.run_relay_until_ctrl_o(!need_cd, prepared, None)?;
         Ok(())
     }
 
-    /// Run a command in the subshell then relay until Ctrl+O (MC: invoke_subshell with command).
+    /// Run a command in the subshell then relay until Ctrl+O or Ctrl+X then O (MC: invoke_subshell with command).
     /// Only sends `cd 'cwd'` when the shell is not already in that directory.
     pub fn run_command_then_relay(
         &self,
@@ -724,34 +958,57 @@ impl Subshell {
         }
         let mut auto_exit_cfg: Option<AutoExitConfig> = None;
         if let Some(delay) = auto_exit_after_idle {
-            // Keep marker compact so shell echo is unlikely to wrap.
-            let nonce = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64
-                ^ (self.child_pid as u64);
-            // Marker uses only [A-Za-z0-9_] so helper can be emitted without shell quoting.
-            let marker = format!(
-                "OXD_{:08x}_{}",
-                (nonce & 0xffff_ffff) as u32,
-                self.child_pid
-            );
-            let helper = format!("printf %s {marker}");
             let cmd_escaped = Self::shell_escape_path(cmd);
-            // Print marker when the command line completes (including interrupted foreground jobs),
-            // so the relay can return through the same path as Ctrl+O.
-            // IMPORTANT: send one shell line (`eval ...; helper`) so interactive apps (like top)
-            // don't consume helper bytes as queued stdin.
-            buf.extend_from_slice(b"eval ");
-            buf.extend_from_slice(cmd_escaped.as_bytes());
-            buf.extend_from_slice(b"; ");
-            buf.extend_from_slice(helper.as_bytes());
-            buf.push(b'\n');
-            auto_exit_cfg = Some(AutoExitConfig {
-                delay,
-                marker: marker.into_bytes(),
-                helper_echo: helper.into_bytes(),
-            });
+            match OwnedFifo::open_in_temp() {
+                Ok(fifo) => {
+                    let fifo_q = Self::shell_escape_path(&fifo.path.to_string_lossy());
+                    // One line: `eval` runs the user command; `printf` runs only after it finishes.
+                    // Side channel avoids scanning the PTY stream (sudo prompts, echo, short reads).
+                    buf.extend_from_slice(b"eval ");
+                    buf.extend_from_slice(cmd_escaped.as_bytes());
+                    buf.extend_from_slice(b"; printf '\\n' > ");
+                    buf.extend_from_slice(fifo_q.as_bytes());
+                    buf.push(b'\n');
+                    auto_exit_cfg = Some(AutoExitConfig {
+                        delay,
+                        completion: AutoExitCompletion::Fifo(fifo),
+                    });
+                }
+                Err(e) => {
+                    eprintln!(
+                        "oxide: mkfifo/open failed ({}); using PTY marker for auto-reopen",
+                        e
+                    );
+                    let nonce = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as u64
+                        ^ (self.child_pid as u64);
+                    let marker = format!(
+                        "OXD_{:08x}_{}",
+                        (nonce & 0xffff_ffff) as u32,
+                        self.child_pid
+                    );
+                    let mut completion_lf = marker.clone().into_bytes();
+                    completion_lf.push(b'\n');
+                    let mut completion_crlf = marker.clone().into_bytes();
+                    completion_crlf.extend_from_slice(b"\r\n");
+                    let helper = format!("printf '%s\\n' '{marker}'");
+                    buf.extend_from_slice(b"eval ");
+                    buf.extend_from_slice(cmd_escaped.as_bytes());
+                    buf.extend_from_slice(b"; ");
+                    buf.extend_from_slice(helper.as_bytes());
+                    buf.push(b'\n');
+                    auto_exit_cfg = Some(AutoExitConfig {
+                        delay,
+                        completion: AutoExitCompletion::Stream(StreamMonitoredCompletion {
+                            completion_lf,
+                            completion_crlf,
+                            helper_echo: helper.into_bytes(),
+                        }),
+                    });
+                }
+            }
         } else {
             buf.extend_from_slice(cmd.as_bytes());
             buf.push(b'\n');

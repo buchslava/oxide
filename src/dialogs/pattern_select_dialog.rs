@@ -10,6 +10,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::browser::clipboard;
@@ -70,6 +71,13 @@ pub fn handle_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
+    if app.pattern_select_dialog.is_some() {
+        match ctrl_x_chord::poll_suspend_chord(app, code, modifiers) {
+            SuspendChordResult::Consumed => return Some(AppAction::Continue),
+            SuspendChordResult::SuspendToShell => return Some(AppAction::Suspend),
+            SuspendChordResult::NotHandled => {}
+        }
+    }
     let d = app.pattern_select_dialog.take()?;
     let (new_d, action) = d.handle_key(code, modifiers);
     app.pattern_select_dialog = new_d;
@@ -89,9 +97,6 @@ impl PatternSelectDialogState {
         };
         match code {
             KeyCode::Esc => (None, AppAction::PatternSelectCancel),
-            KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'o' => {
-                (Some(self), AppAction::Suspend)
-            }
             KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
                 if self.focus == 0 {
                     if let Some(s) = self.pattern_input.get_selected_text() {

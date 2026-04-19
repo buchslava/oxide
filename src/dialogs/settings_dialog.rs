@@ -10,6 +10,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::events::{AppAction, SettingChange};
 use crate::app::state::AppState;
 use crate::core::file_ops::SORT_MODES;
@@ -89,6 +90,13 @@ pub fn handle_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
+    if app.settings_dialog.is_some() {
+        match ctrl_x_chord::poll_suspend_chord(app, code, modifiers) {
+            SuspendChordResult::Consumed => return Some(AppAction::Continue),
+            SuspendChordResult::SuspendToShell => return Some(AppAction::Suspend),
+            SuspendChordResult::NotHandled => {}
+        }
+    }
     let state = app.settings_dialog.as_mut()?;
     if state.selected_section == 3 {
         let n = ThemeId::ALL.len().max(1);
@@ -99,9 +107,6 @@ pub fn handle_key(
         KeyCode::Esc => {
             close(app);
             return Some(AppAction::SettingsClose);
-        }
-        KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'o' => {
-            return Some(AppAction::Suspend);
         }
         KeyCode::Tab | KeyCode::BackTab => {
             // Only Tab / Shift+Tab switch between the sections list (left) and details (right).
@@ -513,7 +518,7 @@ pub fn draw(
             f.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::raw(chk1),
-                    Span::raw(" Sync panel to shell dir when returning (Ctrl+O)"),
+                    Span::raw(" Sync panel to shell dir when returning (Ctrl+O or Ctrl+X O)"),
                 ]))
                 .style(style1),
                 Rect {

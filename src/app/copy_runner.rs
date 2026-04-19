@@ -661,6 +661,5 @@ pub(crate) fn handle_copy_overwrite_choice(
         }
         app.copy_in_progress = Some(c);
     }
-    app.copy_overwrite_dialog = None;
     finish_copy_if_no_items_left(app);
 }

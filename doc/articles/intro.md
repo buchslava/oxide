@@ -106,7 +106,7 @@ You often need a **hand-picked set** of files, not just one row under the cursor
 
 `Space` toggles the **mark** on the current row and moves **down** one line, with no **Insert** required. Marked entries get a `> ` prefix, so the group stays visually distinct.
 
-`Ctrl+G` shows **combined size** for the same scope as `F5`/`F6`: all marked rows, or the single highlighted file when nothing is marked.
+**Ctrl+X** then **S** shows **combined size** for the same scope as `F5`/`F6`: all marked rows, or the single highlighted file when nothing is marked.
 
 ![Marked file group, copy, and size info in Oxide](images/file-group.gif)
 

@@ -1,4 +1,4 @@
-//! Ctrl+Q / Ctrl+W panel settings overlay. Same options as F9 Settings → Left panel / Right panel.
+//! Panel settings overlay (Ctrl+X then 1 / 2). Same options as F9 Settings → Left panel / Right panel.
 //! in the F9 Settings dialog, positioned over the respective panel.
 
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -9,6 +9,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::events::{AppAction, SettingChange};
 use crate::app::state::AppState;
 use crate::core::file_ops::SORT_MODES;
@@ -30,13 +31,13 @@ pub fn overlay_dialog_rect(panel_rect: Rect) -> Rect {
     }
 }
 
-/// Open the Left panel settings overlay (Ctrl+Q). Closes the right panel overlay if open.
+/// Open the Left panel settings overlay (Ctrl+X then 1). Closes the right panel overlay if open.
 pub fn open_left(app: &mut AppState) {
     app.right_panel_settings_overlay = None;
     app.left_panel_settings_overlay = Some(Default::default());
 }
 
-/// Open the Right panel settings overlay (Ctrl+W). Closes the left panel overlay if open.
+/// Open the Right panel settings overlay (Ctrl+X then 2). Closes the left panel overlay if open.
 pub fn open_right(app: &mut AppState) {
     app.left_panel_settings_overlay = None;
     app.right_panel_settings_overlay = Some(Default::default());
@@ -185,6 +186,13 @@ pub fn handle_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<AppAction> {
+    if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
+        match ctrl_x_chord::poll_suspend_chord(app, code, modifiers) {
+            SuspendChordResult::Consumed => return Some(AppAction::Continue),
+            SuspendChordResult::SuspendToShell => return Some(AppAction::Suspend),
+            SuspendChordResult::NotHandled => {}
+        }
+    }
     let (is_left, state) = if let Some(s) = app.left_panel_settings_overlay.as_mut() {
         (true, s)
     } else if let Some(s) = app.right_panel_settings_overlay.as_mut() {
@@ -202,9 +210,6 @@ pub fn handle_key(
             } else {
                 AppAction::CloseRightPanelSettings
             });
-        }
-        KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) && c == 'o' => {
-            return Some(AppAction::Suspend);
         }
         KeyCode::Tab => {
             state.content_focus = (state.content_focus + 1) % 4;

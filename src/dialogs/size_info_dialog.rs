@@ -1,4 +1,4 @@
-//! Ctrl+G "Size info" — shows total size of selected files and folders in the panel's bottom bar.
+//! Ctrl+X then S "Size info" — shows total size of selected files and folders in the panel's bottom bar.
 //! Directories computed recursively. Not a dimmed modal: panels stay visible. Any key or mouse
 //! click dismisses the size line and returns to normal bottom bar.
 
@@ -25,7 +25,7 @@ pub enum SizeInfoProgress {
     },
 }
 
-/// State for Ctrl+G "Size info" dialog. Shows progress during calculation, then final result.
+/// State for Ctrl+X then S "Size info" dialog. Shows progress during calculation, then final result.
 #[derive(Debug, Clone)]
 pub enum SizeInfoDialogState {
     /// Calculation in progress; show progress bar.
@@ -47,7 +47,7 @@ use crate::browser::panel::PanelOperations;
 use crate::core::file_ops::FileOperations;
 use crate::core::text_format::format_byte_size;
 
-/// Open size info (start background calculation). Ctrl+G. Result shown in panel bottom bar.
+/// Open size info (start background calculation). Ctrl+X then S. Result shown in panel bottom bar.
 pub fn open(app: &mut AppState) {
     let cwd = app.get_current_dir().to_string();
     let panel = app.active_panel_ref();

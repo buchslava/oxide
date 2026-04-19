@@ -1,5 +1,5 @@
 //! Embedded code editor (F4): open file, edit, F2 save, F8 delete current line, ESC exit,
-//! Page Up/Down, Home/End, Ctrl+F search (in file), unsaved-changes dialog.
+//! Page Up/Down, Home/End, Ctrl+X then F search (in file), unsaved-changes dialog.
 //! Selection (MC-style): F3 starts or stops selection; then ←→↑↓ extend. Ctrl+C copies then clears.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
+use crate::app::ctrl_x_chord;
 use crate::app::events::AppAction;
 use crate::app::state::{AppState, Focus};
 use crate::browser::panel::PanelOperations;
@@ -67,7 +68,7 @@ pub struct EditorScreenState {
     pub editor: Editor,
     /// Last draw area for the editor (used for input/mouse). When search is open, height is reduced by 1.
     pub area: Rect,
-    /// When Some, search bar is open and the string is the current query (Ctrl+F).
+    /// When Some, search bar is open and the string is the current query (Ctrl+X then F).
     pub search_query: Option<String>,
     /// Cursor position in the search query (0..=len). Only used when search_query is Some.
     pub search_query_cursor: usize,
@@ -602,6 +603,28 @@ pub fn handle_editor_key(
     let paste_mod = ctrl || cmd_like;
     let copy_mod = ctrl || cmd_like;
 
+    if app.ctrl_x_chord_pending {
+        app.ctrl_x_chord_pending = false;
+        if key.code == KeyCode::Esc
+            || ctrl_x_chord::is_ctrl_x_prefix(key.code, key.modifiers)
+        {
+            return Some(AppAction::Continue);
+        }
+        if matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'f')) {
+            if ed.search_query.is_some() {
+                ed.editor.clear_selection();
+                ed.search_query = None;
+            } else {
+                ed.search_query = Some(String::new());
+                ed.search_query_cursor = 0;
+            }
+            return Some(AppAction::Continue);
+        }
+    } else if ctrl_x_chord::is_ctrl_x_prefix(key.code, key.modifiers) {
+        app.ctrl_x_chord_pending = true;
+        return Some(AppAction::Continue);
+    }
+
     // When search bar is open, handle search-specific keys first
     if let Some(ref mut query) = ed.search_query {
         let cursor = &mut ed.search_query_cursor;
@@ -653,11 +676,6 @@ pub fn handle_editor_key(
                 *cursor = pos + 1;
                 return Some(AppAction::Continue);
             }
-            KeyCode::Char('f') if ctrl => {
-                ed.editor.clear_selection();
-                ed.search_query = None;
-                return Some(AppAction::Continue);
-            }
             KeyCode::F(3) => {
                 ed.editor.clear_selection();
                 ed.search_query = None;
@@ -671,13 +689,6 @@ pub fn handle_editor_key(
             }
             _ => return Some(AppAction::Continue),
         }
-    }
-
-    // Ctrl+F: open search
-    if key.code == KeyCode::Char('f') && ctrl {
-        ed.search_query = Some(String::new());
-        ed.search_query_cursor = 0;
-        return Some(AppAction::Continue);
     }
 
     if key.code == KeyCode::F(10) {
@@ -1332,7 +1343,7 @@ pub fn draw(
         }
         if area.height > bottom_height {
             let hint =
-                " F3: start/stop selection | ←→↑↓ extend | F8: del line | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
+                " F3: start/stop selection | ←→↑↓ extend | F8: del line | Ctrl+X F find | Ctrl+C / Ctrl+V | F2: Save | Esc: exit ";
             let row = area.bottom().saturating_sub(bottom_height);
             let w = hint.chars().count().min(area.width as usize) as u16;
             let r = Rect {

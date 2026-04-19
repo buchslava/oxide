@@ -10,10 +10,10 @@
 - **Safe delete (F9 → General)** — When **on** (default), **F8** delete moves filesystem files and folders to the **OS trash** where supported (macOS; Linux when a standard trash location is writable). When **off**, or when trash is not available on the platform, delete is **permanent**. Deleting entries inside a **ZIP** or **tar.gz** panel still removes them from the archive only (not the system trash). Stored in `~/.oxide/settings.json`.
 - **Viewer (F3)** — Text and hex modes; scroll with **↑↓**, **PgUp/PgDn**, and **mouse wheel**. Large files are read in a background thread so Esc closes immediately; a "Loading…" screen is shown until the read completes. In text mode, binary and non-printable characters are shown as `.` to avoid terminal corruption
 - **Compare files (Ctrl+D)** — Mark **exactly two** non-directory files with **Space** (they can be on one panel or split across left and right). Opens a full-screen **side-by-side diff**: line numbers in each gutter, patience line diff, synchronized scrolling, wrapped long lines, and **intra-line** highlights on changed lines (insert/delete runs). **↑↓**, **PgUp/PgDn**, **Home**/**End**, and **mouse wheel** scroll; **Esc** closes. Reads both files in the background (like F3). If the mark count is not two, a short **toast** explains what to do. Works on normal directories and inside **ZIP** / **tar.gz** panels (same read path as the viewer)
-- **Embedded editor (F4)** — Syntax highlighting, Ctrl+F search, save/discard; **mouse wheel** scrolls in the editor surface
+- **Embedded editor (F4)** — Syntax highlighting, **Ctrl+X** then **F** in-file find, save/discard; **mouse wheel** scrolls in the editor surface. The terminal caret is hidden while the edit position is scrolled out of view and reappears when you move the caret back into the viewport
 - **Create directory (F7)**
 - **Rename / Attributes (F2)** — Change name, permissions, owner/group (Unix)
-- **Size info (Ctrl+G)** — Total size of selected files/folders shown in the panel bottom bar. Requires at least one selected item. Shows progress during calculation, then final total. Any key or mouse click dismisses (Ctrl+O spawns shell instead).
+- **Size info (Ctrl+X then S)** — Total size of selected files/folders shown in the panel bottom bar. Requires at least one selected item. Shows progress during calculation, then final total. Any key or mouse click dismisses (Ctrl+O spawns shell instead).
 - **Hidden files (Ctrl+H)** — Shown by default; Ctrl+H toggles visibility in both panels
 - **Shell relay (Ctrl+O)** — Spawn subshell, run commands, return to panels
 - **Command line** — Run shell commands; F12 inserts the current (selected) file name at the cursor without running (Enter runs the command)
@@ -63,8 +63,8 @@ When focus is on the command line (e.g. after typing a character or F6):
 
 | Keys | Action |
 |------|--------|
-| Ctrl+E | Save panel paths & active panel to `~/.oxide/settings.json` (same snapshot as **Autosave latest state**) |
-| Ctrl+G | Size info |
+| Ctrl+X C | Save panel paths & active panel to `~/.oxide/settings.json` (configuration snapshot; same as **Autosave latest state**) |
+| Ctrl+X S | Size info |
 | Ctrl+H | Toggle hidden files |
 | Ctrl+O | Shell |
 | Ctrl+R | Refresh |
@@ -94,7 +94,7 @@ While the dialog is open: **Tab / ↑↓** move between fields and options; **En
 | F3 | Line numbers |
 | Ctrl+C/V | Copy/Paste |
 | F2 | Save |
-| Ctrl+F | Find |
+| Ctrl+X F | Find in file |
 | Mouse wheel | Scroll |
 | Esc | Exit |
 

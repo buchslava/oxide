@@ -24,7 +24,7 @@ use crate::ui::theme::{DialogPalette, UiPalette};
 use crate::ui::toast::{self, TimedToast};
 use ratatui::{
     layout::{Alignment, Margin, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Gauge, Paragraph},
     Frame,
@@ -355,7 +355,7 @@ impl Renderer {
         if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
             panel_overlay::draw(f, app);
         }
-        // Bottom-left timed toast (e.g. Ctrl+E save layout) — same pattern as editor save.
+        // Bottom-left timed toast (e.g. Ctrl+X C save layout) — same pattern as editor save.
         if app.viewer_screen.is_none() && app.editor_screen.is_none() {
             TimedToast::clear_if_expired(&mut app.timed_toast);
             if let Some(ref t) = app.timed_toast {
@@ -1127,7 +1127,23 @@ impl Renderer {
         app: &AppState,
     ) {
         let c = &app.ui_palette.chrome;
-        let menu_bg = c.menu_overlay_bg;
+        let (menu_bg, menu_hotkey, menu_label, menu_unavailable) =
+            if crate::util::process_is_root() {
+                // High-contrast “danger” strip so root sessions are obvious regardless of theme.
+                (
+                    Color::Rgb(110, 0, 0),
+                    Color::Rgb(255, 235, 160),
+                    Color::Rgb(255, 220, 220),
+                    Color::Rgb(130, 70, 70),
+                )
+            } else {
+                (
+                    c.menu_overlay_bg,
+                    c.menu_hotkey,
+                    c.menu_label,
+                    c.menu_unavailable,
+                )
+            };
         f.render_widget(
             Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(menu_bg)),
             area,
@@ -1138,9 +1154,9 @@ impl Renderer {
             return;
         }
         let slot_w = area.width / menu_item_count;
-        let num_style = Style::default().fg(c.menu_hotkey).bg(menu_bg);
-        let label_style = Style::default().fg(c.menu_label).bg(menu_bg);
-        let unavailable_style = Style::default().fg(c.menu_unavailable).bg(menu_bg);
+        let num_style = Style::default().fg(menu_hotkey).bg(menu_bg);
+        let label_style = Style::default().fg(menu_label).bg(menu_bg);
+        let unavailable_style = Style::default().fg(menu_unavailable).bg(menu_bg);
         for (i, (label, key)) in items.iter().enumerate() {
             let slot_start = area.x + (i as u16) * slot_w;
             let unavailable = !Self::is_menu_action_available(app, *key);
@@ -1319,7 +1335,7 @@ impl Renderer {
         Self::draw_menu_bar(f, menu_rect, app);
     }
 
-    /// Bottom bar: filename left, file size right (second color) per panel; Ctrl+G replaces active side with green size summary; disk space only on Ctrl+G.
+    /// Bottom bar: filename left, file size right (second color) per panel; size info (Ctrl+X then S) replaces active side with green size summary; disk space only while that banner is open.
     fn draw_bottom_file_bar(
         f: &mut Frame,
         app: &AppState,
