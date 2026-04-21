@@ -385,7 +385,7 @@ fn handle_key_parameter(
                 *input = std::mem::take(input).backspace();
                 return Some(AppAction::Continue);
             }
-            if c.is_ascii() && !c.is_control() && dialog.focus <= 3 {
+            if text_input::is_dialog_char_key(c, modifiers) && dialog.focus <= 3 {
                 let input = match dialog.focus {
                     0 => &mut dialog.start_dir_input,
                     1 => &mut dialog.file_pattern_input,

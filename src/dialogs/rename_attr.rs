@@ -486,7 +486,7 @@ pub fn handle_key(
                 if !is_perm {
                     return Some(AppAction::RenameAttrConfirm);
                 }
-            } else if c.is_ascii() && !c.is_control() {
+            } else if text_input::is_dialog_char_key(c, modifiers) {
                 if let RenameAttrDialogState::Single {
                     name_input, focus, ..
                 } = d

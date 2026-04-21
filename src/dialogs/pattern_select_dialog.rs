@@ -155,10 +155,6 @@ impl PatternSelectDialogState {
                 }
                 (Some(self), AppAction::Continue)
             }
-            KeyCode::Char(' ') if self.focus == 1 => {
-                self.file_case_sensitive = !self.file_case_sensitive;
-                (Some(self), AppAction::Continue)
-            }
             KeyCode::Backspace if self.focus == 0 => {
                 self.pattern_input = self.pattern_input.backspace();
                 (Some(self), AppAction::Continue)
@@ -195,8 +191,15 @@ impl PatternSelectDialogState {
                 self.pattern_input = self.pattern_input.backspace();
                 (Some(self), AppAction::Continue)
             }
-            KeyCode::Char(c) if self.focus == 0 && c.is_ascii() && !c.is_control() => {
-                self.pattern_input = self.pattern_input.insert_char(c);
+            KeyCode::Char(c) if text_input::is_dialog_char_key(c, modifiers) => {
+                if self.focus == 1 && c == ' ' {
+                    self.file_case_sensitive = !self.file_case_sensitive;
+                } else {
+                    if self.focus != 0 {
+                        self.focus = 0;
+                    }
+                    self.pattern_input = self.pattern_input.insert_char(c);
+                }
                 (Some(self), AppAction::Continue)
             }
             _ => (Some(self), AppAction::Continue),

@@ -313,6 +313,17 @@ pub fn is_ctrl_backspace(
     modifiers.contains(KeyModifiers::CONTROL) && c == 'h'
 }
 
+/// Whether `KeyCode::Char(c)` should insert into a dialog text field. Control characters and
+/// Ctrl+letter chords are excluded (shortcuts are matched earlier). Non-ASCII letters (e.g. other
+/// keyboard layouts) are accepted.
+#[inline]
+pub fn is_dialog_char_key(
+    c: char,
+    modifiers: KeyModifiers,
+) -> bool {
+    !c.is_control() && !modifiers.contains(KeyModifiers::CONTROL)
+}
+
 /// Pure key handler: (input, focus) + key → (new_input, new_focus, result). No mutation.
 #[must_use]
 pub fn handle_single_input_key(
@@ -426,10 +437,10 @@ pub fn handle_single_input_key(
                     SingleInputKeyResult::Continue,
                 );
             }
-            if focus == 0 && c.is_ascii() && !c.is_control() {
+            if is_dialog_char_key(c, modifiers) {
                 (
                     input.insert_char(c),
-                    focus,
+                    0,
                     SingleInputKeyResult::Continue,
                 )
             } else {
