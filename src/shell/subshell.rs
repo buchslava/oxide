@@ -95,12 +95,13 @@ struct OwnedFifo {
 
 #[cfg(unix)]
 impl OwnedFifo {
-    fn open_in_temp() -> io::Result<Self> {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("oxide_cmd_{}.fifo", nonce));
+    /// One path per Oxide process + subshell child. `remove_file` before `mkfifo` clears a stale
+    /// FIFO or a **regular file** accidentally created if someone re-runs `printf > path` after the
+    /// real FIFO was already unlinked (shell `>` does not recreate a FIFO).
+    fn open_for_subshell(child_pid: i32) -> io::Result<Self> {
+        let parent = std::process::id();
+        let path =
+            std::env::temp_dir().join(format!("oxide_cmd_{}_{}.fifo", parent, child_pid));
         let _ = std::fs::remove_file(&path);
         mkfifo(&path, Mode::S_IRUSR | Mode::S_IWUSR).map_err(|e| {
             io::Error::new(io::ErrorKind::Other, format!("mkfifo: {}", e))
@@ -1224,7 +1225,7 @@ impl Subshell {
         let mut auto_exit_cfg: Option<AutoExitConfig> = None;
         if let Some(delay) = auto_exit_after_idle {
             let cmd_escaped = Self::shell_escape_path(cmd);
-            match OwnedFifo::open_in_temp() {
+            match OwnedFifo::open_for_subshell(self.child_pid) {
                 Ok(command_done) => {
                     let sudo_early_panels = if cmd_allocates_interactive_sudo_shell(cmd) {
                         Some(SudoEarlyPanelReopen::new())
