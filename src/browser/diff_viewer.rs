@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 use std::io;
 use std::mem::take;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -21,13 +23,11 @@ use similar::{Algorithm, ChangeTag, DiffOp, TextDiff};
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
 use crate::browser::panel::PanelOperations;
-use crate::core::file_ops::FileInfo;
+use crate::core::file_ops::{FileInfo, FileOperations};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
 use crate::ui::theme::DiffViewerPalette;
-
-/// Background load result: left bytes, right bytes.
-type LoadPair = io::Result<(Vec<u8>, Vec<u8>)>;
+use crate::util;
 
 /// One marked file resolved for diff I/O: [`panel_backend::read_file`] needs `location` + `name`;
 /// `display_path` is shown in the UI header.
@@ -48,9 +48,29 @@ pub enum DiffViewerState {
     Loading {
         left_path: String,
         right_path: String,
-        rx: mpsc::Receiver<LoadPair>,
+        rx: mpsc::Receiver<io::Result<DiffViewerReady>>,
+        /// Set when closing during load so background reads stop cooperatively (same pattern as F3 viewer).
+        cancel: Arc<AtomicBool>,
     },
     Ready(DiffViewerReady),
+}
+
+/// Panel-directory compare (Ctrl+X D with no marks): background work; Esc sets `cancel` and drops the receiver.
+pub struct FolderComparePending {
+    rx: mpsc::Receiver<FolderCompareState>,
+    cancel: Arc<AtomicBool>,
+    anchor_left: PanelLocation,
+    anchor_right: PanelLocation,
+}
+
+impl FolderComparePending {
+    fn stale_against(
+        &self,
+        left: &PanelLocation,
+        right: &PanelLocation,
+    ) -> bool {
+        &self.anchor_left != left || &self.anchor_right != right
+    }
 }
 
 pub struct DiffViewerReady {
@@ -87,7 +107,39 @@ struct AlignedRow {
 }
 
 pub fn close_diff_viewer(app: &mut AppState) {
+    if let Some(DiffViewerState::Loading { cancel, .. }) = app.diff_viewer_screen.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+    }
     app.diff_viewer_screen = None;
+}
+
+/// Stop an in-flight panel-directory compare (Esc); background thread may still exit shortly.
+pub fn cancel_folder_compare_pending(app: &mut AppState) {
+    if let Some(p) = app.folder_compare_pending.take() {
+        p.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+fn read_panel_file_bytes_cancellable(
+    loc: &PanelLocation,
+    name: &str,
+    cancel: &AtomicBool,
+) -> io::Result<Vec<u8>> {
+    match loc {
+        PanelLocation::Fs(p) => {
+            let path = FileOperations::join_path(p, name);
+            util::read_path_chunked(&path, cancel)
+        }
+        _ => {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "compare cancelled",
+                ));
+            }
+            panel_backend::read_file(loc, name)
+        }
+    }
 }
 
 /// Prefix column for folder compare (Ctrl+D with no marks): same size, different bytes.
@@ -128,33 +180,82 @@ impl FolderCompareState {
 }
 
 /// Drop folder-compare prefixes if either panel is no longer at the directory where compare ran.
+/// Also cancels an in-flight background compare when either panel cwd no longer matches the run.
 pub fn clear_folder_compare_if_stale(app: &mut AppState) {
-    let Some(fc) = app.folder_compare.as_ref() else {
-        return;
-    };
-    let left = app.left_panel().current_location();
-    let right = app.right_panel().current_location();
-    if fc.anchor_left != *left || fc.anchor_right != *right {
-        app.folder_compare = None;
+    let left = app.left_panel().current_location().clone();
+    let right = app.right_panel().current_location().clone();
+    if let Some(fc) = app.folder_compare.as_ref() {
+        if fc.anchor_left != left || fc.anchor_right != right {
+            app.folder_compare = None;
+        }
+    }
+    if app
+        .folder_compare_pending
+        .as_ref()
+        .is_some_and(|p| p.stale_against(&left, &right))
+    {
+        cancel_folder_compare_pending(app);
     }
 }
 
-/// Compare left and right panel directories: clear marks, then set [`AppState::folder_compare`].
-/// Only non-directory entries get `C`/`S`/`X` tags; matching directories are left untagged.
-pub fn try_compare_panel_directories(app: &mut AppState) {
+/// Compare left and right panel directories on a background thread (Esc cancels; see [`poll_folder_compare_pending`]).
+/// Clears marks and any previous [`AppState::folder_compare`] for this run; sets [`AppState::folder_compare_pending`].
+pub fn start_compare_panel_directories(app: &mut AppState) {
+    cancel_folder_compare_pending(app);
     clear_folder_compare_if_stale(app);
+    app.folder_compare = None;
     app.left_panel_mut().clear_marks();
     app.right_panel_mut().clear_marks();
 
-    let left_loc = app.left_panel().current_location().clone();
-    let right_loc = app.right_panel().current_location().clone();
-    let left_map = collect_name_to_file(app.left_panel().get_files());
-    let right_map = collect_name_to_file(app.right_panel().get_files());
+    let anchor_left = app.left_panel().current_location().clone();
+    let anchor_right = app.right_panel().current_location().clone();
+    let loc_left = anchor_left.clone();
+    let loc_right = anchor_right.clone();
+    let left_files = app.left_panel().get_files().to_vec();
+    let right_files = app.right_panel().get_files().to_vec();
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_t = Arc::clone(&cancel);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        if let Some(state) = compute_folder_compare_state(
+            loc_left,
+            loc_right,
+            &left_files,
+            &right_files,
+            &cancel_t,
+        ) {
+            let _ = tx.send(state);
+        }
+    });
+    app.folder_compare_pending = Some(FolderComparePending {
+        rx,
+        cancel,
+        anchor_left,
+        anchor_right,
+    });
+}
+
+fn compute_folder_compare_state(
+    left_loc: PanelLocation,
+    right_loc: PanelLocation,
+    left_files: &[FileInfo],
+    right_files: &[FileInfo],
+    cancel: &AtomicBool,
+) -> Option<FolderCompareState> {
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    let left_map = collect_name_to_file(left_files);
+    let right_map = collect_name_to_file(right_files);
 
     let mut left_tags = HashMap::with_capacity(left_map.len());
     let mut right_tags = HashMap::with_capacity(right_map.len());
 
     for (name, lf) in &left_map {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
         match right_map.get(name.as_str()) {
             None => {
                 left_tags.insert(name.clone(), FolderDiffTag::AbsentOnOther);
@@ -173,8 +274,11 @@ pub fn try_compare_panel_directories(app: &mut AppState) {
                     right_tags.insert(name.clone(), FolderDiffTag::SizeDiff);
                     continue;
                 }
-                let bl = panel_backend::read_file(&left_loc, &lf.name);
-                let br = panel_backend::read_file(&right_loc, &rf.name);
+                let bl = read_panel_file_bytes_cancellable(&left_loc, &lf.name, cancel);
+                if cancel.load(Ordering::Relaxed) {
+                    return None;
+                }
+                let br = read_panel_file_bytes_cancellable(&right_loc, &rf.name, cancel);
                 match (bl, br) {
                     (Ok(a), Ok(b)) if a == b => {}
                     (Ok(_), Ok(_)) => {
@@ -191,17 +295,43 @@ pub fn try_compare_panel_directories(app: &mut AppState) {
     }
 
     for name in right_map.keys() {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
         if !left_map.contains_key(name) {
             right_tags.insert(name.clone(), FolderDiffTag::AbsentOnOther);
         }
     }
 
-    app.folder_compare = Some(FolderCompareState {
+    Some(FolderCompareState {
         anchor_left: left_loc,
         anchor_right: right_loc,
         left_tags,
         right_tags,
-    });
+    })
+}
+
+/// Apply a completed folder compare from the background thread; returns true if UI should redraw.
+pub fn poll_folder_compare_pending(app: &mut AppState) -> bool {
+    let pending = match app.folder_compare_pending.take() {
+        None => return false,
+        Some(p) => p,
+    };
+    match pending.rx.try_recv() {
+        Ok(state) => {
+            let apply = app.left_panel().current_location() == &pending.anchor_left
+                && app.right_panel().current_location() == &pending.anchor_right;
+            if apply {
+                app.folder_compare = Some(state);
+            }
+            true
+        }
+        Err(TryRecvError::Empty) => {
+            app.folder_compare_pending = Some(pending);
+            false
+        }
+        Err(TryRecvError::Disconnected) => true,
+    }
 }
 
 fn collect_name_to_file(files: &[FileInfo]) -> HashMap<String, &FileInfo> {
@@ -273,6 +403,47 @@ fn two_marked_files(app: &AppState) -> Option<DiffPairSources> {
     })
 }
 
+/// Reads both files, builds line lists and patience diff on a worker thread so the UI thread stays responsive to Esc.
+fn diff_worker_build_ready(
+    loc_l: PanelLocation,
+    name_l: String,
+    loc_r: PanelLocation,
+    name_r: String,
+    left_path: String,
+    right_path: String,
+    cancel: &AtomicBool,
+) -> io::Result<DiffViewerReady> {
+    let left_bytes = read_panel_file_bytes_cancellable(&loc_l, &name_l, cancel)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "diff cancelled",
+        ));
+    }
+    let right_bytes = read_panel_file_bytes_cancellable(&loc_r, &name_r, cancel)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "diff cancelled",
+        ));
+    }
+    let old_lines = logical_lines_from_bytes_cancellable(&left_bytes, cancel)?;
+    let new_lines = logical_lines_from_bytes_cancellable(&right_bytes, cancel)?;
+    let aligned = build_aligned_rows_cancellable(&old_lines, &new_lines, cancel)?;
+    let line_num_width = line_number_column_width(&aligned);
+    Ok(DiffViewerReady {
+        left_path,
+        right_path,
+        aligned,
+        cached_widths: (0, 0),
+        line_num_width,
+        left_display: Vec::new(),
+        right_display: Vec::new(),
+        scroll: 0,
+        area: Rect::default(),
+    })
+}
+
 /// Open diff viewer when exactly two marked files exist. Returns `false` if not opened (caller shows toast).
 pub fn try_open_diff(app: &mut AppState) -> bool {
     let n = marked_non_dir_file_count(app);
@@ -288,61 +459,63 @@ pub fn try_open_diff(app: &mut AppState) -> bool {
     let name_r = pair.right.name.clone();
     let left_path = pair.left.display_path;
     let right_path = pair.right.display_path;
+    let left_path_worker = left_path.clone();
+    let right_path_worker = right_path.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_thread = Arc::clone(&cancel);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let a = panel_backend::read_file(&loc_l, &name_l);
-        let b = panel_backend::read_file(&loc_r, &name_r);
-        let combined = match (a, b) {
-            (Ok(x), Ok(y)) => Ok((x, y)),
-            (Err(e), _) | (_, Err(e)) => Err(e),
-        };
-        let _ = tx.send(combined);
+        let res = diff_worker_build_ready(
+            loc_l,
+            name_l,
+            loc_r,
+            name_r,
+            left_path_worker,
+            right_path_worker,
+            &cancel_thread,
+        );
+        let _ = tx.send(res);
     });
     app.diff_viewer_screen = Some(DiffViewerState::Loading {
         left_path,
         right_path,
         rx,
+        cancel,
     });
     true
 }
 
 pub fn poll_diff_loading(app: &mut AppState) -> bool {
-    let rx = match &mut app.diff_viewer_screen {
-        Some(DiffViewerState::Loading { rx, .. }) => rx,
-        _ => return false,
+    let taken = take(&mut app.diff_viewer_screen);
+    let Some(DiffViewerState::Loading {
+        left_path,
+        right_path,
+        rx,
+        cancel,
+    }) = taken
+    else {
+        app.diff_viewer_screen = taken;
+        return false;
     };
     match rx.try_recv() {
-        Ok(Ok((left_bytes, right_bytes))) => {
-            let (left_path, right_path) = match take(&mut app.diff_viewer_screen) {
-                Some(DiffViewerState::Loading {
-                    left_path,
-                    right_path,
-                    ..
-                }) => (left_path, right_path),
-                _ => return false,
-            };
-            let old_lines = logical_lines_from_bytes(&left_bytes);
-            let new_lines = logical_lines_from_bytes(&right_bytes);
-            let aligned = build_aligned_rows(&old_lines, &new_lines);
-            let line_num_width = line_number_column_width(&aligned);
-            app.diff_viewer_screen = Some(DiffViewerState::Ready(DiffViewerReady {
-                left_path,
-                right_path,
-                aligned,
-                cached_widths: (0, 0),
-                line_num_width,
-                left_display: Vec::new(),
-                right_display: Vec::new(),
-                scroll: 0,
-                area: Rect::default(),
-            }));
+        Ok(Ok(ready)) => {
+            let _ = (left_path, right_path);
+            app.diff_viewer_screen = Some(DiffViewerState::Ready(ready));
             true
         }
         Ok(Err(_)) => {
             app.diff_viewer_screen = None;
             true
         }
-        Err(TryRecvError::Empty) => false,
+        Err(TryRecvError::Empty) => {
+            app.diff_viewer_screen = Some(DiffViewerState::Loading {
+                left_path,
+                right_path,
+                rx,
+                cancel,
+            });
+            false
+        }
         Err(TryRecvError::Disconnected) => {
             app.diff_viewer_screen = None;
             true
@@ -354,9 +527,20 @@ fn safe_text_char(c: char) -> bool {
     c == '\n' || (c.is_ascii() && c >= ' ' && c <= '~')
 }
 
-fn sanitize_text_for_display(s: &str) -> String {
+fn sanitize_text_for_display_cancellable(
+    s: &str,
+    cancel: &AtomicBool,
+) -> io::Result<String> {
     let mut out = String::with_capacity(s.len());
+    let mut n = 0usize;
     for c in s.chars() {
+        if n % 65_536 == 0 && cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "diff cancelled",
+            ));
+        }
+        n += 1;
         match c {
             '\r' => {}
             '\t' => out.push_str("    "),
@@ -365,13 +549,39 @@ fn sanitize_text_for_display(s: &str) -> String {
             _ => out.push('.'),
         }
     }
-    out
+    Ok(out)
 }
 
-fn logical_lines_from_bytes(content: &[u8]) -> Vec<String> {
+fn logical_lines_from_bytes_cancellable(
+    content: &[u8],
+    cancel: &AtomicBool,
+) -> io::Result<Vec<String>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "diff cancelled",
+        ));
+    }
     let s = String::from_utf8_lossy(content);
-    let sanitized = sanitize_text_for_display(&s);
-    let mut lines: Vec<String> = sanitized.lines().map(|l| l.to_string()).collect();
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "diff cancelled",
+        ));
+    }
+    let sanitized = sanitize_text_for_display_cancellable(&s, cancel)?;
+    let mut lines: Vec<String> = Vec::new();
+    let mut line_idx = 0usize;
+    for line in sanitized.lines() {
+        if line_idx % 8192 == 0 && cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "diff cancelled",
+            ));
+        }
+        lines.push(line.to_string());
+        line_idx += 1;
+    }
     if !content.is_empty() && !s.ends_with('\n') {
         if lines.is_empty() {
             lines.push(String::new());
@@ -382,7 +592,7 @@ fn logical_lines_from_bytes(content: &[u8]) -> Vec<String> {
     if lines.is_empty() {
         lines.push(String::new());
     }
-    lines
+    Ok(lines)
 }
 
 fn wrap_line(
@@ -534,19 +744,40 @@ fn extend_aligned_rows_with_paired_sides(
 }
 
 #[rustfmt::skip]
-fn build_aligned_rows(
+fn build_aligned_rows_cancellable(
     old: &[String],
     new: &[String],
-) -> Vec<AlignedRow> {
+    cancel: &AtomicBool,
+) -> io::Result<Vec<AlignedRow>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "diff cancelled",
+        ));
+    }
     let old_r: Vec<&str> = old.iter().map(String::as_str).collect();
     let new_r: Vec<&str> = new.iter().map(String::as_str).collect();
     let diff = TextDiff::configure()
         .algorithm(Algorithm::Patience)
         .diff_slices(&old_r, &new_r);
+    if cancel.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "diff cancelled",
+        ));
+    }
     let mut out = Vec::new();
     let ops = diff.ops();
     let mut i = 0usize;
+    let mut step = 0usize;
     while i < ops.len() {
+        if step % 2048 == 0 && cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "diff cancelled",
+            ));
+        }
+        step += 1;
         match ops[i] {
             DiffOp::Equal {
                 old_index,
@@ -621,7 +852,7 @@ fn build_aligned_rows(
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Largest 1-based line index on one side (minimum 1 so width is never zero).

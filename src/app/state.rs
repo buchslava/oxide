@@ -1,4 +1,4 @@
-use crate::browser::diff_viewer::{DiffViewerState, FolderCompareState};
+use crate::browser::diff_viewer::{DiffViewerState, FolderComparePending, FolderCompareState};
 use crate::browser::editor::EditorViewState;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::core::settings::{self, PersistedSettings};
@@ -98,6 +98,8 @@ pub struct AppState {
     pub diff_viewer_screen: Option<DiffViewerState>,
     /// When Some, Ctrl+D compared both panel directories: `C `/`S `/`X ` prefixes until either cwd changes.
     pub folder_compare: Option<FolderCompareState>,
+    /// While a no-marks panel-directory compare runs in the background; Esc cancels (see [`crate::browser::diff_viewer::poll_folder_compare_pending`]).
+    pub folder_compare_pending: Option<FolderComparePending>,
     /// When Some, F7 "Create directory" dialog is open (text field for new folder name).
     pub mkdir_dialog: Option<MkdirDialogState>,
     /// When Some, Ctrl+A "Archive" dialog is open (text field for archive file name).
@@ -223,6 +225,7 @@ impl AppState {
             viewer_screen: None,
             diff_viewer_screen: None,
             folder_compare: None,
+            folder_compare_pending: None,
             mkdir_dialog: None,
             archive_dialog: None,
             new_file_dialog: None,

@@ -517,6 +517,10 @@ fn help_build_lines(d: &DialogPalette) -> Vec<Line<'static>> {
             k("X"),
             Span::styled(" prefixes in lists. Side-by-side diff, aligned scroll, line + char highlights.", Style::default().fg(body)),
         ]),
+        help_muted(
+            d,
+            "    While a two-file diff or a folder compare is loading, Esc abandons it.",
+        ),
         help_spacer(),
         help_h(d, "Viewer (F3)"),
         Line::from(vec![

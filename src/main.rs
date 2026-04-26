@@ -35,8 +35,8 @@ use app::state::{
 };
 use app::subshell_helpers::{get_or_create_subshell, maybe_sync_panel_to_shell_cwd};
 use browser::diff_viewer::{
-    close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, try_compare_panel_directories,
-    try_open_diff,
+    close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, poll_folder_compare_pending,
+    start_compare_panel_directories, try_open_diff,
 };
 use browser::editor::{
     apply_confirm_choice, close, finish_editor_pending_decode, open_editor, open_editor_path,
@@ -301,7 +301,7 @@ fn main() -> Result<(), io::Error> {
         if poll_viewer_loading(&mut app) {
             terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
-        if poll_diff_loading(&mut app) {
+        if poll_folder_compare_pending(&mut app) {
             terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
 
@@ -469,10 +469,10 @@ fn main() -> Result<(), io::Error> {
                 } else {
                     let n = marked_non_dir_file_count(&app);
                     if n == 0 {
-                        try_compare_panel_directories(&mut app);
+                        start_compare_panel_directories(&mut app);
                         app.set_timed_toast(
                             std::time::Duration::from_secs(4),
-                            "Panel diff: C same size · different content, S size, X only here — chdir either panel clears.",
+                            "Panel diff: C same size · different content, S size, X only here — Esc cancels while comparing; chdir either panel clears.",
                         );
                     } else if n == 1 {
                         app.set_timed_toast(
@@ -829,6 +829,11 @@ fn main() -> Result<(), io::Error> {
                 }
             }
             AppAction::Continue => {}
+        }
+
+        // After input: apply diff worker result so Esc can close loading before we recv and block on work.
+        if poll_diff_loading(&mut app) {
+            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
 
         if finish_editor_pending_decode(&mut app) {

@@ -47,6 +47,7 @@ fn panels_mouse_enabled(app: &AppState) -> bool {
         && app.right_panel_settings_overlay.is_none()
         && app.copy_in_progress.is_none()
         && app.archive_progress.is_none()
+        && app.folder_compare_pending.is_none()
 }
 
 /// Which of two primary/secondary dialog buttons was hit (Create/Cancel, Apply/Cancel, Yes/No).

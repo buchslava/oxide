@@ -269,6 +269,7 @@ impl Renderer {
     fn modal_dim_backdrop_active(app: &AppState) -> bool {
         app.copy_progress.is_some()
             || app.archive_progress.is_some()
+            || app.folder_compare_pending.is_some()
             || app.copy_overwrite_dialog.is_some()
             || app.copy_error_dialog.is_some()
             || app.operation_confirm_pending.is_some()
@@ -312,6 +313,9 @@ impl Renderer {
         }
         if let Some(ref progress) = app.archive_progress {
             Self::draw_archive_progress(f, progress, &app.ui_palette);
+        }
+        if app.folder_compare_pending.is_some() {
+            Self::draw_folder_compare_pending(f, &app.ui_palette);
         }
         if let Some(ref filename) = app.copy_overwrite_dialog {
             Self::draw_copy_overwrite_dialog(f, app, filename);
@@ -1051,6 +1055,60 @@ impl Renderer {
                 x: content.x,
                 y: content.y + row,
                 width: content.width,
+                height: 1,
+            },
+        );
+    }
+
+    /// Ctrl+X D with no marks: panel listings are being compared in the background (Esc cancels).
+    fn draw_folder_compare_pending(
+        f: &mut Frame,
+        palette: &UiPalette,
+    ) {
+        let pr = &palette.progress;
+        let area = f.area();
+        let w = 54u16.min(area.width.saturating_sub(4)).max(40);
+        let h = 5u16;
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        };
+        let fill_style = Style::default().bg(pr.background);
+        f.render_widget(Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Compare folders ")
+            .style(fill_style.fg(pr.border));
+        f.render_widget(block, rect);
+        let inner = rect.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let msg = Paragraph::new("Reading files to compare listings…")
+            .style(fill_style.fg(pr.path_text))
+            .alignment(Alignment::Center);
+        f.render_widget(
+            msg,
+            Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width,
+                height: 1,
+            },
+        );
+        let esc = Paragraph::new("ESC: Cancel")
+            .style(fill_style.fg(pr.hint))
+            .alignment(Alignment::Center);
+        f.render_widget(
+            esc,
+            Rect {
+                x: inner.x,
+                y: inner.y + 2,
+                width: inner.width,
                 height: 1,
             },
         );

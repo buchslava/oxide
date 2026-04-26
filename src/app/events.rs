@@ -3,7 +3,7 @@ use crate::app::state::{
     AppState, CopyParams, Focus, Operation, RenameAttrDialogState, RenameAttrField,
 };
 use crate::browser::clipboard;
-use crate::browser::diff_viewer::{handle_diff_key, handle_diff_mouse};
+use crate::browser::diff_viewer::{cancel_folder_compare_pending, handle_diff_key, handle_diff_mouse};
 pub use crate::browser::editor::EditorConfirmChoice;
 use crate::browser::editor::{handle_editor_key, handle_editor_mouse, paste_text_as_is};
 use crate::browser::panel::PanelOperations;
@@ -199,6 +199,7 @@ impl EventHandler {
             || app.editor_confirm_pending
             || app.copy_progress.is_some()
             || app.archive_progress.is_some()
+            || app.folder_compare_pending.is_some()
             || app.diff_viewer_screen.is_some()
     }
 
@@ -441,6 +442,14 @@ impl EventHandler {
                 if app.archive_progress.is_some() {
                     if key.code == KeyCode::Esc {
                         return Ok(Some(AppAction::ArchiveProgressCancel));
+                    }
+                    return Ok(Some(AppAction::Continue));
+                }
+                // Ctrl+X D panel-directory compare (no marks): modal until the worker finishes — Esc cancels.
+                if app.folder_compare_pending.is_some() {
+                    if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
+                        cancel_folder_compare_pending(app);
+                        return Ok(Some(AppAction::Continue));
                     }
                     return Ok(Some(AppAction::Continue));
                 }
