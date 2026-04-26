@@ -8,7 +8,7 @@ use crate::browser::panel::{PanelOperations, ViewMode};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir};
 use crate::dialogs::{
-    error_detail_dialog, find_dialog, help_dialog, panel_overlay, pattern_select_dialog,
+    actions_dialog, error_detail_dialog, find_dialog, panel_overlay, pattern_select_dialog,
     rename_attr, settings_dialog,
 };
 use crate::ui::dialog_layout;
@@ -40,7 +40,7 @@ fn panels_mouse_enabled(app: &AppState) -> bool {
         && app.new_file_error.is_none()
         && app.rename_attr_dialog.is_none()
         && app.settings_dialog.is_none()
-        && app.help_dialog.is_none()
+        && app.actions_dialog.is_none()
         && app.error_detail.is_none()
         && app.find_dialog.is_none()
         && app.left_panel_settings_overlay.is_none()
@@ -231,7 +231,7 @@ pub(crate) fn handle_mouse_event(
     if let Some(out) = try_mouse_error_detail(app, area, &mouse_event) {
         return Ok(Some(out));
     }
-    if let Some(out) = try_mouse_help(app, area, &mouse_event) {
+    if let Some(out) = try_mouse_actions(app, area, &mouse_event) {
         return Ok(Some(out));
     }
     if let Some(out) = try_mouse_settings(app, area, &mouse_event) {
@@ -545,12 +545,15 @@ fn try_mouse_error_detail(
     error_detail_dialog::handle_mouse(app, area, mouse_event)
 }
 
-fn try_mouse_help(
+fn try_mouse_actions(
     app: &mut AppState,
     area: Rect,
     mouse_event: &MouseEvent,
 ) -> Option<AppAction> {
-    help_dialog::handle_mouse(app, area, mouse_event)
+    if app.actions_dialog.is_none() {
+        return None;
+    }
+    actions_dialog::handle_mouse(app, area, mouse_event)
 }
 
 fn try_mouse_settings(
@@ -762,8 +765,9 @@ fn hit_test_menu_bar(
         return None;
     }
     match *key {
-        menu_bar_key::HELP => Some(AppAction::OpenHelpDialog),
-        menu_bar_key::FILE => Some(AppAction::OpenRenameAttrDialog),
+        menu_bar_key::ACTIONS => Some(AppAction::OpenActionsDialog),
+        menu_bar_key::FILE => Renderer::is_menu_action_available(app, menu_bar_key::FILE)
+            .then_some(AppAction::OpenRenameAttrDialog),
         menu_bar_key::VIEW => {
             menu_bar_selection_is_plain_file(app).then_some(AppAction::OpenViewer)
         }

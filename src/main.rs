@@ -27,7 +27,7 @@ use app::panel_refresh::{
 };
 use app::settings_apply::{
     apply_persisted_setting_change, setting_change_skips_panel_resync,
-    toggle_show_hidden_on_active_panel,
+    should_save_settings_after_change, toggle_show_hidden_on_active_panel,
 };
 use app::state::{
     AppState, ArchiveMessage, FindDialogPhase, Focus, Operation, PostCommandCountdown,
@@ -36,6 +36,7 @@ use app::state::{
 use app::subshell_helpers::{
     get_or_create_subshell, maybe_sync_panel_to_shell_cwd, sync_subshell_root_ui_flag,
 };
+use browser::clipboard;
 use browser::diff_viewer::{
     close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, poll_folder_compare_pending,
     start_compare_panel_directories, try_open_diff,
@@ -53,7 +54,7 @@ use dialogs::find_dialog::FindDisplayRow;
 use dialogs::pattern_select_dialog::PatternSelectMode;
 use dialogs::rename_attr;
 use dialogs::{
-    archive_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
+    actions_dialog, archive_dialog, find_dialog, mkdir_dialog, new_file_dialog, panel_overlay,
     pattern_select_dialog, settings_dialog, size_info_dialog,
 };
 use shell::subshell::{RelayExit, Subshell};
@@ -572,8 +573,33 @@ fn main() -> Result<(), io::Error> {
             AppAction::OpenRenameAttrDialog => rename_attr::open(&mut app),
             AppAction::OpenSizeInfoDialog => size_info_dialog::open(&mut app),
             AppAction::SizeInfoClose => size_info_dialog::close(&mut app),
-            AppAction::OpenHelpDialog => help_dialog::open(&mut app),
-            AppAction::HelpClose => help_dialog::close(&mut app),
+            AppAction::OpenActionsDialog => actions_dialog::open(&mut app),
+            AppAction::ActionsClose => actions_dialog::close(&mut app),
+            AppAction::RefreshBothPanels => {
+                refresh_both_panels_restore_selection(&mut app, None, None);
+            }
+            AppAction::RefreshActivePanel => {
+                let ph = util::compute_panel_height();
+                let _ = app.active_panel_mut().refresh_files_restore_selection(
+                    None,
+                    None,
+                    Some(ph),
+                );
+            }
+            AppAction::CommandLineCopy => {
+                app.focus_command_line();
+                if !app.command_line.is_empty() {
+                    clipboard::set(&app.command_line);
+                } else {
+                    app.command_line_clear();
+                }
+            }
+            AppAction::CommandLinePaste => {
+                app.focus_command_line();
+                if let Some(s) = clipboard::get() {
+                    app.command_line_insert_str(&s);
+                }
+            }
             AppAction::ErrorDetailClose => error_detail_dialog::close(&mut app),
             AppAction::OpenSettingsDialog => settings_dialog::open(&mut app),
             AppAction::SettingsClose => settings_dialog::close(&mut app),
@@ -657,10 +683,12 @@ fn main() -> Result<(), io::Error> {
             AppAction::PanelNavigated => app.maybe_persist_panel_dirs(),
             AppAction::SettingChange(change) => {
                 apply_persisted_setting_change(&mut app, change);
-                log_if_err(
-                    "Save settings",
-                    save_settings(&app.persisted_settings),
-                );
+                if should_save_settings_after_change(change, app.persisted_settings.autosave) {
+                    log_if_err(
+                        "Save settings",
+                        save_settings(&app.persisted_settings),
+                    );
+                }
                 if !setting_change_skips_panel_resync(change) {
                     app.sync_from_persisted_settings();
                 }
@@ -676,10 +704,12 @@ fn main() -> Result<(), io::Error> {
                 } else {
                     app.persisted_settings.right_view = view;
                 }
-                log_if_err(
-                    "Save settings",
-                    save_settings(&app.persisted_settings),
-                );
+                if app.persisted_settings.autosave {
+                    log_if_err(
+                        "Save settings",
+                        save_settings(&app.persisted_settings),
+                    );
+                }
             }
             AppAction::ToggleShowHidden => {
                 toggle_show_hidden_on_active_panel(&mut app);

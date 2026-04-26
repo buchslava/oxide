@@ -15,6 +15,20 @@ fn cycle_view_one_two(view: &mut String) {
     };
 }
 
+/// Write `settings.json` after an F9 / panel-overlay [`SettingChange`]: when autosave is on, or when
+/// the user changed the theme or the autosave flag itself (so those choices always stick).
+#[inline]
+pub(crate) fn should_save_settings_after_change(
+    change: SettingChange,
+    autosave_after_apply: bool,
+) -> bool {
+    autosave_after_apply
+        || matches!(
+            change,
+            SettingChange::ThemeSelect(_) | SettingChange::AutosaveToggle
+        )
+}
+
 pub(crate) fn apply_persisted_setting_change(
     app: &mut AppState,
     change: SettingChange,
@@ -116,10 +130,12 @@ pub(crate) fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
         app.persisted_settings.left_show_hidden = new_show;
         app.show_hidden_files = new_show;
         let left_name = app.left_panel().get_selected_file().map(|f| f.name.clone());
-        util::log_if_err(
-            "Save settings",
-            save(&app.persisted_settings),
-        );
+        if app.persisted_settings.autosave {
+            util::log_if_err(
+                "Save settings",
+                save(&app.persisted_settings),
+            );
+        }
         util::log_if_err(
             "Refresh panel",
             app.left_panel_mut().refresh_files_restore_selection(
@@ -137,10 +153,12 @@ pub(crate) fn toggle_show_hidden_on_active_panel(app: &mut AppState) {
             .right_panel()
             .get_selected_file()
             .map(|f| f.name.clone());
-        util::log_if_err(
-            "Save settings",
-            save(&app.persisted_settings),
-        );
+        if app.persisted_settings.autosave {
+            util::log_if_err(
+                "Save settings",
+                save(&app.persisted_settings),
+            );
+        }
         util::log_if_err(
             "Refresh panel",
             app.right_panel_mut().refresh_files_restore_selection(

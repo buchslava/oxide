@@ -37,7 +37,7 @@ impl Default for SettingsDialogState {
     }
 }
 
-/// Section indices for the Settings dialog sidebar (Help is in F1 dialog).
+/// Section indices for the Settings dialog sidebar (F1 opens Actions, not Settings).
 pub const SETTINGS_SECTIONS: [&str; 5] = [
     "General settings",
     "Left panel",

@@ -4,7 +4,7 @@ use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::core::settings::{self, PersistedSettings};
 use crate::core::trash_delete::trash_available;
 use crate::dialogs::error_detail_dialog::ErrorDetailState;
-use crate::dialogs::help_dialog::HelpDialogState;
+use crate::dialogs::actions_dialog::ActionsDialogState;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::theme::{ThemeId, UiPalette};
 use crate::ui::toast::{TimedToast, ToastKind};
@@ -126,8 +126,8 @@ pub struct AppState {
     pub pattern_select_dialog: Option<PatternSelectDialogState>,
     /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
-    /// When Some, F1 Help dialog is open (scroll position in state).
-    pub help_dialog: Option<HelpDialogState>,
+    /// When Some, F1 Actions dialog is open (scroll position in state).
+    pub actions_dialog: Option<ActionsDialogState>,
     /// When Some, scrollable error details (invalid zip, navigation I/O, etc.).
     pub error_detail: Option<ErrorDetailState>,
     /// When Some, Ctrl+X then 1 "Left panel settings" overlay is open over the left panel.
@@ -246,7 +246,7 @@ impl AppState {
             find_dialog: None,
             pattern_select_dialog: None,
             settings_dialog: None,
-            help_dialog: None,
+            actions_dialog: None,
             error_detail: None,
             left_panel_settings_overlay: None,
             right_panel_settings_overlay: None,

@@ -6,6 +6,54 @@ use ratatui::{
     Frame,
 };
 
+/// Scrollable reference-style modal (F1 Actions, error details): centered, fixed max size, inner scrollbar column.
+pub const SCROLL_REFERENCE_MODAL_MARGIN: u16 = 4;
+pub const SCROLL_REFERENCE_MODAL_MAX_W: u16 = 122;
+pub const SCROLL_REFERENCE_MODAL_SCROLLBAR_W: u16 = 1;
+pub const SCROLL_REFERENCE_MODAL_HINT_H: u16 = 1;
+
+/// Bounding box of the scrollable reference modal (must match [`scroll_reference_modal_layout`]).
+#[must_use]
+pub fn scroll_reference_modal_rect(area: Rect) -> Rect {
+    let margin = SCROLL_REFERENCE_MODAL_MARGIN;
+    let max_w = area.width.saturating_sub(margin);
+    let max_h = area.height.saturating_sub(margin);
+    let w = max_w.min(SCROLL_REFERENCE_MODAL_MAX_W);
+    let h = max_h.min(60).max(16);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
+
+/// Layout: outer dialog rect, text body (no scrollbar column), scrollbar column.
+#[must_use]
+pub fn scroll_reference_modal_layout(area: Rect) -> (Rect, Rect, Rect) {
+    let rect = scroll_reference_modal_rect(area);
+    let inner = rect.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let body_h = inner.height.saturating_sub(SCROLL_REFERENCE_MODAL_HINT_H);
+    let text = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width.saturating_sub(SCROLL_REFERENCE_MODAL_SCROLLBAR_W),
+        height: body_h,
+    };
+    let scrollbar = Rect {
+        x: inner.x + inner.width.saturating_sub(SCROLL_REFERENCE_MODAL_SCROLLBAR_W),
+        y: inner.y,
+        width: SCROLL_REFERENCE_MODAL_SCROLLBAR_W,
+        height: body_h,
+    };
+    (rect, text, scrollbar)
+}
+
 use crate::ui::theme::UiPalette;
 
 /// Default horizontal padding inside dialog content (used by most dialogs).

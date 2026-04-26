@@ -1,4 +1,4 @@
-//! Scrollable error details (F1-style layout). Esc / Enter / q / outside click closes.
+//! Scrollable error details (same geometry as F1 Actions). Esc / Enter / q / outside click closes.
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crossterm::terminal::size;
@@ -12,7 +12,7 @@ use ratatui::{
 
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
-use crate::dialogs::help_dialog;
+use crate::ui::dialog_layout;
 use crate::ui::theme::DialogPalette;
 
 /// Scrollable error popup (reuses help modal geometry).
@@ -23,11 +23,10 @@ pub struct ErrorDetailState {
     pub scroll: usize,
 }
 
-const HINT_H: u16 = 1;
 const WHEEL_LINES: usize = 3;
 
 fn layout(area: Rect) -> (Rect, Rect, Rect) {
-    help_dialog::help_layout(area)
+    dialog_layout::scroll_reference_modal_layout(area)
 }
 
 fn viewport_rows(area: Rect) -> usize {
@@ -271,7 +270,7 @@ pub fn draw(
         return;
     };
     let area = f.area();
-    let rect = help_dialog::dialog_rect(area);
+    let rect = dialog_layout::scroll_reference_modal_rect(area);
     let d = &app.ui_palette.dialog;
     let dialog_bg = d.dialog_bg;
     let fill_style = Style::default().bg(dialog_bg).fg(d.text);
@@ -307,12 +306,12 @@ pub fn draw(
 
     render_scrollbar(f, sb_rect, d, state.scroll, total);
 
-    let hint_y = inner.y + inner.height.saturating_sub(HINT_H);
+    let hint_y = inner.y + inner.height.saturating_sub(dialog_layout::SCROLL_REFERENCE_MODAL_HINT_H);
     let hint_rect = Rect {
         x: inner.x,
         y: hint_y,
         width: inner.width,
-        height: HINT_H,
+        height: dialog_layout::SCROLL_REFERENCE_MODAL_HINT_H,
     };
     f.render_widget(
         Paragraph::new(Span::styled(

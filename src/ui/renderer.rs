@@ -13,7 +13,7 @@ use crate::core::location::archive_format_for_filename;
 use crate::core::panel_backend;
 use crate::core::text_format::{format_byte_size, truncate_str, TruncateMode};
 use crate::dialogs::{
-    archive_dialog, error_detail_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog,
+    actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
     panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
 };
 use crate::ui::dialog_layout::{self, paint_modal_dim_layer, DEFAULT_PAD_H};
@@ -265,7 +265,7 @@ fn truncate_for_width(
 }
 
 impl Renderer {
-    /// True when a modal dialog or progress overlay is drawn on top of the panel view (F1-style dim layer).
+    /// True when a modal dialog or progress overlay is drawn on top of the panel view (F1 Actions–style dim layer).
     fn modal_dim_backdrop_active(app: &AppState) -> bool {
         app.copy_progress.is_some()
             || app.archive_progress.is_some()
@@ -279,7 +279,7 @@ impl Renderer {
             || app.new_file_dialog.is_some()
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
-            || app.help_dialog.is_some()
+            || app.actions_dialog.is_some()
             || app.error_detail.is_some()
             || app.settings_dialog.is_some()
             || app.find_dialog.is_some()
@@ -344,8 +344,8 @@ impl Renderer {
         if app.rename_attr_dialog.is_some() {
             rename_attr::draw(f, app);
         }
-        if app.help_dialog.is_some() {
-            help_dialog::draw(f, app);
+        if app.actions_dialog.is_some() {
+            actions_dialog::draw(f, app);
         }
         if app.error_detail.is_some() {
             error_detail_dialog::draw(f, app);
@@ -1117,7 +1117,7 @@ impl Renderer {
     /// Menu bar items (label, F-key number). Used for drawing and hit test. Bottom row.
     pub fn menu_bar_items() -> Vec<(&'static str, u16)> {
         vec![
-            ("1 Help", menu_bar_key::HELP),
+            ("1 Actions", menu_bar_key::ACTIONS),
             ("2 File", menu_bar_key::FILE),
             ("3 View", menu_bar_key::VIEW),
             ("4 Edit", menu_bar_key::EDIT),
@@ -1130,7 +1130,7 @@ impl Renderer {
         ]
     }
 
-    fn is_menu_action_available(
+    pub(crate) fn is_menu_action_available(
         app: &AppState,
         key: u16,
     ) -> bool {
@@ -1143,6 +1143,10 @@ impl Renderer {
             return key == menu_bar_key::QUIT;
         }
         match key {
+            menu_bar_key::FILE => app
+                .active_panel_ref()
+                .get_selected_file()
+                .map_or(false, |f| !f.is_parent_dir()),
             menu_bar_key::VIEW => app
                 .active_panel_ref()
                 .get_selected_file()

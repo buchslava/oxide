@@ -1,6 +1,7 @@
 //! F-key numbers for the bottom menu bar ([`crate::ui::Renderer::menu_bar_items`]).
 
-pub const HELP: u16 = 1;
+/// F1 — Actions (shortcut palette).
+pub const ACTIONS: u16 = 1;
 pub const FILE: u16 = 2;
 pub const VIEW: u16 = 3;
 pub const EDIT: u16 = 4;

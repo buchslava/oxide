@@ -13,7 +13,7 @@ use crate::core::copy_state::same_folder_copy_dest_name;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir, supports_new_file};
 use crate::dialogs::{
-    archive_dialog, error_detail_dialog, find_dialog, help_dialog, mkdir_dialog, new_file_dialog,
+    actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
     panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
 };
 use crate::ui::text_input;
@@ -85,10 +85,18 @@ pub enum AppAction {
     OpenSizeInfoDialog,
     /// ESC in size info dialog: close.
     SizeInfoClose,
-    /// F1: open Help dialog.
-    OpenHelpDialog,
-    /// ESC or click outside Help dialog: close.
-    HelpClose,
+    /// F1: open Actions dialog (Ctrl shortcuts as clickable rows).
+    OpenActionsDialog,
+    /// ESC, q, or click outside Actions dialog: close.
+    ActionsClose,
+    /// Ctrl+R style: refresh both panels (also used from F1 Actions).
+    RefreshBothPanels,
+    /// Ctrl+X R: refresh active panel only.
+    RefreshActivePanel,
+    /// Focus command line and copy/clear (Ctrl+C from Actions).
+    CommandLineCopy,
+    /// Focus command line and paste (Ctrl+V from Actions).
+    CommandLinePaste,
     /// Close scrollable error details dialog.
     ErrorDetailClose,
     /// F9: open Settings dialog.
@@ -129,9 +137,9 @@ pub enum AppAction {
     PersistPanelState,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
     PanelNavigated,
-    /// A specific setting was toggled/changed in the F9 Settings dialog. Main applies to persisted_settings, saves, applies to panels.
+    /// A specific setting was toggled/changed in the F9 Settings dialog (or panel overlay). Main applies to persisted_settings, saves when autosave is on (or theme / autosave flag changed), then resyncs panels if needed.
     SettingChange(SettingChange),
-    /// Ctrl+X then T toggled view mode; persist to file.
+    /// Ctrl+X then T toggled view mode; writes settings when autosave is on (or use Ctrl+X C).
     ViewModeToggled,
 }
 
@@ -192,7 +200,7 @@ impl EventHandler {
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
             || app.settings_dialog.is_some()
-            || app.help_dialog.is_some()
+            || app.actions_dialog.is_some()
             || app.error_detail.is_some()
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
@@ -490,17 +498,17 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // Scrollable error details (same keys as Help).
+                // Scrollable error details (same keys as F1 Actions dialog).
                 if app.error_detail.is_some() {
                     return Ok(Some(
                         error_detail_dialog::handle_key(app, key.code, key.modifiers)
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // F1 Help dialog: Esc/q close; all other keys are absorbed (modal).
-                if app.help_dialog.is_some() {
+                // F1 Actions dialog: Esc/q close; all other keys are absorbed (modal).
+                if app.actions_dialog.is_some() {
                     return Ok(Some(
-                        help_dialog::handle_key(app, key.code, key.modifiers)
+                        actions_dialog::handle_key(app, key.code, key.modifiers)
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
@@ -728,14 +736,20 @@ impl EventHandler {
                             }
                         }
                     }
-                    KeyCode::F(1) => return Ok(Some(AppAction::OpenHelpDialog)),
+                    KeyCode::F(1) => return Ok(Some(AppAction::OpenActionsDialog)),
                     KeyCode::F(9) => return Ok(Some(AppAction::OpenSettingsDialog)),
                     KeyCode::F(7) => {
                         if supports_mkdir(&app.get_current_location()) {
                             return Ok(Some(AppAction::OpenMkdirDialog));
                         }
                     }
-                    KeyCode::F(2) => return Ok(Some(AppAction::OpenRenameAttrDialog)),
+                    KeyCode::F(2) => {
+                        if let Some(f) = app.active_panel_mut().get_selected_file() {
+                            if !f.is_parent_dir() {
+                                return Ok(Some(AppAction::OpenRenameAttrDialog));
+                            }
+                        }
+                    }
                     KeyCode::F(4) => {
                         if supports_edit(&app.get_current_location()) {
                             if let Some(file) = app.active_panel_mut().get_selected_file() {
