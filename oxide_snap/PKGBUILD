@@ -1,0 +1,42 @@
+# Maintainer: TODO <your.email@example.com>
+#
+# Before publishing to the AUR, set _giturl (and url=) to this repository’s public Git clone URL.
+_giturl='https://github.com/TODO/oxide.git'
+
+pkgname=oxide_snap
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Oxide (xd): Midnight Commander-style TUI file manager (Rust, Ratatui, Crossterm)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/TODO/oxide'
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'libxcb' 'libxcb-render' 'libxcb-shape' 'libxcb-xfixes')
+makedepends=('git' 'cargo' 'pkgconf')
+provides=('xd')
+conflicts=('xd')
+source=("$pkgname::git+$_giturl")
+sha256sums=('SKIP')
+
+pkgver() {
+	cd "$srcdir/$pkgname"
+	_ver=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+	printf '%s.r%s.%s' "$_ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+	cd "$srcdir/$pkgname"
+	export RUSTUP_TOOLCHAIN=stable
+	cargo build --release --locked
+}
+
+check() {
+	cd "$srcdir/$pkgname"
+	cargo test --release --locked
+}
+
+package() {
+	cd "$srcdir/$pkgname"
+	install -Dm755 target/release/xd -t "$pkgdir/usr/bin/"
+	install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname/"
+	install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+}

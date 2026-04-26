@@ -22,6 +22,16 @@ pub(crate) fn get_or_create_subshell<'a>(
 }
 
 /// When setting is on, sync active panel to shell's cwd if it changed (after Ctrl+O or RunCommand return).
+/// After any subshell relay, refresh whether the PTY foreground is effectively root (for menu chrome).
+pub(crate) fn sync_subshell_root_ui_flag(
+    app: &mut AppState,
+    sub: Option<&subshell::Subshell>,
+) {
+    app.subshell_pty_foreground_is_root = sub
+        .map(|s| s.pty_foreground_has_root_euid())
+        .unwrap_or(false);
+}
+
 pub(crate) fn maybe_sync_panel_to_shell_cwd(
     app: &mut AppState,
     shell_cwd: Option<PathBuf>,

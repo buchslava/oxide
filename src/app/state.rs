@@ -162,6 +162,8 @@ pub struct AppState {
     pub ui_palette: UiPalette,
     /// After **Ctrl+X**, the next key completes an Oxide shortcut (e.g. `F` for find, `O` for shell).
     pub ctrl_x_chord_pending: bool,
+    /// True when the PTY subshell’s foreground process group is effectively UID 0 (e.g. after `sudo -s`), while Oxide may still run as a normal user.
+    pub subshell_pty_foreground_is_root: bool,
 }
 
 pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
@@ -178,6 +180,11 @@ pub use crate::dialogs::rename_attr::{RenameAttrDialogState, RenameAttrField};
 pub use crate::dialogs::settings_dialog::SettingsDialogState;
 
 impl AppState {
+    /// Red menu strip / root prompt: Oxide runs as root **or** the subshell PTY session is root (e.g. `sudo -s`).
+    pub fn chrome_shows_root_session(&self) -> bool {
+        crate::util::process_is_root() || self.subshell_pty_foreground_is_root
+    }
+
     /// Store trimmed pattern for reuse in Find and +/− (empty clears remembered pattern).
     pub fn set_last_file_name_pattern(
         &mut self,
@@ -257,6 +264,7 @@ impl AppState {
             theme_id: ThemeId::default(),
             ui_palette: ThemeId::default().palette(),
             ctrl_x_chord_pending: false,
+            subshell_pty_foreground_is_root: false,
         };
         app.sync_from_persisted_settings();
         Ok(app)

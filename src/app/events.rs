@@ -1,4 +1,5 @@
 use crate::app::ctrl_x_chord::{self, SuspendChordResult};
+use crate::app::panel_refresh;
 use crate::app::state::{
     AppState, CopyParams, Focus, Operation, RenameAttrDialogState, RenameAttrField,
 };
@@ -556,12 +557,9 @@ impl EventHandler {
                 }
                 // Panel height: outer frame, inner content; visible list rows = terminal - 4.
                 let panel_height = compute_panel_height();
-                if let Some(action) = Self::handle_legacy_panel_control_shortcuts(
-                    app,
-                    code,
-                    key.modifiers,
-                    panel_height,
-                ) {
+                if let Some(action) =
+                    Self::handle_panel_direct_control_shortcuts(app, code, key.modifiers)
+                {
                     return Ok(Some(action));
                 }
                 // Oxide shortcuts: Ctrl+X then a letter (e.g. F find, O shell).
@@ -879,12 +877,12 @@ impl EventHandler {
         if code == KeyCode::F(10) {
             return AppAction::Quit;
         }
-        let panel_height = compute_panel_height();
         if let Some(action) =
-            Self::handle_legacy_command_line_control_shortcuts(app, code, modifiers, panel_height)
+            Self::handle_command_line_direct_control_shortcuts(app, code, modifiers)
         {
             return action;
         }
+        let panel_height = compute_panel_height();
         if app.ctrl_x_chord_pending {
             app.ctrl_x_chord_pending = false;
             if code == KeyCode::Esc {
@@ -985,12 +983,12 @@ impl EventHandler {
         }
     }
 
-    /// **Ctrl+O** / **Ctrl+R** shared by panel and command line (single source for suspend + refresh).
-    fn try_legacy_shared_control_o_r(
+    /// **Ctrl+O** (shell / suspend) and **Ctrl+R** (refresh both panels), shared by panel and command line.
+    /// Direct keys — no **Ctrl+X** prefix (Midnight Commander–style).
+    fn try_direct_ctrl_o_suspend_or_ctrl_r_refresh(
         app: &mut AppState,
         code: KeyCode,
         modifiers: KeyModifiers,
-        panel_height: usize,
     ) -> Option<AppAction> {
         if ctrl_x_chord::is_direct_ctrl_o_suspend(code, modifiers) {
             app.ctrl_x_chord_pending = false;
@@ -1002,11 +1000,7 @@ impl EventHandler {
         match code {
             KeyCode::Char('\x12' | 'r' | 'R') => {
                 app.ctrl_x_chord_pending = false;
-                let _ = app.active_panel_mut().refresh_files_restore_selection(
-                    None,
-                    None,
-                    Some(panel_height),
-                );
+                panel_refresh::refresh_both_panels_restore_selection(app, None, None);
                 Some(AppAction::Continue)
             }
             _ => None,
@@ -1015,14 +1009,12 @@ impl EventHandler {
 
     /// **Ctrl+O** / **Ctrl+R** / **Ctrl+C** / **Ctrl+V** without a Ctrl+X prefix (panel focus).
     /// Clears a stale Ctrl+X chord. C/V are absorbed on the panel like before the chord system.
-    fn handle_legacy_panel_control_shortcuts(
+    fn handle_panel_direct_control_shortcuts(
         app: &mut AppState,
         code: KeyCode,
         modifiers: KeyModifiers,
-        panel_height: usize,
     ) -> Option<AppAction> {
-        if let Some(action) =
-            Self::try_legacy_shared_control_o_r(app, code, modifiers, panel_height)
+        if let Some(action) = Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers)
         {
             return Some(action);
         }
@@ -1039,14 +1031,12 @@ impl EventHandler {
     }
 
     /// **Ctrl+O** / **Ctrl+R** / **Ctrl+C** / **Ctrl+V** without a Ctrl+X prefix (command line).
-    fn handle_legacy_command_line_control_shortcuts(
+    fn handle_command_line_direct_control_shortcuts(
         app: &mut AppState,
         code: KeyCode,
         modifiers: KeyModifiers,
-        panel_height: usize,
     ) -> Option<AppAction> {
-        if let Some(action) =
-            Self::try_legacy_shared_control_o_r(app, code, modifiers, panel_height)
+        if let Some(action) = Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers)
         {
             return Some(action);
         }

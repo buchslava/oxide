@@ -66,11 +66,11 @@ fn current_dir_basename(dir_display: &str) -> String {
         .unwrap_or_else(|| d.to_string())
 }
 
-/// Sh-style `$`, zsh `%`, fish `>`, or `#` when running as root (matches common defaults).
-fn shell_prompt_sigil() -> &'static str {
+/// Sh-style `$`, zsh `%`, fish `>`, or `#` when the session is effectively root (Oxide or subshell PTY).
+fn shell_prompt_sigil(app: &AppState) -> &'static str {
     #[cfg(unix)]
     {
-        if unsafe { libc::geteuid() } == 0 {
+        if app.chrome_shows_root_session() {
             return "#";
         }
     }
@@ -96,7 +96,7 @@ fn format_command_prompt(
     let max_cols = max_cols.max(MIN_TAIL);
     let cwd = app.get_current_dir();
     let path_part = current_dir_basename(cwd);
-    let sigil = shell_prompt_sigil();
+    let sigil = shell_prompt_sigil(app);
     let tail = format!(" {} ", sigil);
     let tail_len = tail.chars().count();
     let budget = max_cols.saturating_sub(tail_len).max(1);
@@ -1186,7 +1186,7 @@ impl Renderer {
     ) {
         let c = &app.ui_palette.chrome;
         let (menu_bg, menu_hotkey, menu_label, menu_unavailable) =
-            if crate::util::process_is_root() {
+            if app.chrome_shows_root_session() {
                 // High-contrast “danger” strip so root sessions are obvious regardless of theme.
                 (
                     Color::Rgb(110, 0, 0),

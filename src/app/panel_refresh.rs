@@ -68,15 +68,16 @@ pub(crate) fn refresh_both_panels_restore_selection(
     left_preferred: Option<&str>,
     right_preferred: Option<&str>,
 ) {
+    let panel_height = Some(util::compute_panel_height());
     util::log_if_err(
         "Refresh panels",
         app.left_panel_mut()
-            .refresh_files_restore_selection(left_preferred, None, None),
+            .refresh_files_restore_selection(left_preferred, None, panel_height),
     );
     util::log_if_err(
         "Refresh panels",
         app.right_panel_mut()
-            .refresh_files_restore_selection(right_preferred, None, None),
+            .refresh_files_restore_selection(right_preferred, None, panel_height),
     );
 }
 

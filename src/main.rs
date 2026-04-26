@@ -33,7 +33,9 @@ use app::state::{
     AppState, ArchiveMessage, FindDialogPhase, Focus, Operation, PostCommandCountdown,
     RenameAttrDialogState, RenameAttrField, SizeInfoDialogState, SizeInfoProgress,
 };
-use app::subshell_helpers::{get_or_create_subshell, maybe_sync_panel_to_shell_cwd};
+use app::subshell_helpers::{
+    get_or_create_subshell, maybe_sync_panel_to_shell_cwd, sync_subshell_root_ui_flag,
+};
 use browser::diff_viewer::{
     close_diff_viewer, marked_non_dir_file_count, poll_diff_loading, poll_folder_compare_pending,
     start_compare_panel_directories, try_open_diff,
@@ -172,7 +174,13 @@ fn main() -> Result<(), io::Error> {
     }
 
     // Preload subshell so first Ctrl+O has no spawn delay (MC inits subshell at startup).
-    let _ = get_or_create_subshell(&mut subshell, app.get_current_dir());
+    if get_or_create_subshell(&mut subshell, app.get_current_dir()).is_ok() {
+        if let Some(s) = subshell.as_ref() {
+            sync_subshell_root_ui_flag(&mut app, Some(s));
+        }
+    } else {
+        sync_subshell_root_ui_flag(&mut app, None);
+    }
 
     // Software blinking for command-line cursor (terminal-native blink is not reliable everywhere).
     let mut cmd_cursor_blink_visible = true;
@@ -191,6 +199,12 @@ fn main() -> Result<(), io::Error> {
                     EnableMouseCapture
                 )?;
                 terminal.clear()?;
+                if let Some(s) = subshell.as_ref() {
+                    sync_subshell_root_ui_flag(&mut app, Some(s));
+                } else {
+                    sync_subshell_root_ui_flag(&mut app, None);
+                }
+                refresh_both_panels_restore_selection(&mut app, None, None);
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 drew_this_frame = true;
             }
@@ -692,6 +706,14 @@ fn main() -> Result<(), io::Error> {
             AppAction::RenameAttrCancel => rename_attr::cancel(&mut app),
             AppAction::Suspend => {
                 // --- Ctrl+O (or Ctrl+X then O): hand terminal to subshell. Use single-writer flow (REFERENCE.md "Solution: Second Ctrl+O uglification"): do NOT use backend for leave alternate; write everything to stdout.
+                let left_selected = app
+                    .left_panel_mut()
+                    .get_selected_file()
+                    .map(|f| f.name.to_string());
+                let right_selected = app
+                    .right_panel_mut()
+                    .get_selected_file()
+                    .map(|f| f.name.to_string());
                 terminal.flush()?;
                 let _ = terminal.backend_mut().flush();
                 let _ = std::io::stdout().flush();
@@ -708,8 +730,11 @@ fn main() -> Result<(), io::Error> {
                     if let Ok(sub) = get_or_create_subshell(&mut subshell, app.get_current_dir()) {
                         let cwd = app.get_current_dir().to_string();
                         let _ = sub.run_cd_then_relay(&cwd, Some(prepared));
-                        sub.get_cwd()
+                        let out = sub.get_cwd();
+                        sync_subshell_root_ui_flag(&mut app, Some(sub));
+                        out
                     } else {
+                        sync_subshell_root_ui_flag(&mut app, None);
                         eprintln!("Subshell error");
                         None
                     };
@@ -727,6 +752,11 @@ fn main() -> Result<(), io::Error> {
                 app.focus_panel();
                 maybe_sync_panel_to_shell_cwd(&mut app, shell_cwd);
                 terminal.clear()?;
+                refresh_both_panels_restore_selection(
+                    &mut app,
+                    left_selected.as_deref(),
+                    right_selected.as_deref(),
+                );
                 terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
                 // Do NOT terminal.flush() after draw(): draw() already flushes; extra flush can paint black.
                 if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
@@ -775,8 +805,11 @@ fn main() -> Result<(), io::Error> {
                             Some(prepared),
                             auto_exit_after_idle,
                         )?;
-                        (sub.get_cwd(), relay_exit)
+                        let cwd_out = sub.get_cwd();
+                        sync_subshell_root_ui_flag(&mut app, Some(sub));
+                        (cwd_out, relay_exit)
                     } else {
+                        sync_subshell_root_ui_flag(&mut app, None);
                         eprintln!("Subshell error");
                         (None, RelayExit::Manual)
                     };
