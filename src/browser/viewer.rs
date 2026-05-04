@@ -15,6 +15,12 @@ use ratatui::{
 
 use crate::util;
 
+use crate::browser::viewer_image::{
+    collect_raster_view_entries, draw_image_loading, draw_image_ready, finish_image_loading,
+    handle_image_loading_key, handle_image_loading_mouse, handle_image_ready_key,
+    handle_image_ready_mouse, single_fs_raster_entry, spawn_image_load_thread, ImageLoadMsg,
+    ImageLoadingState, ImageViewerState,
+};
 use crate::app::state::AppState;
 use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
@@ -35,6 +41,10 @@ pub enum ViewerState {
     },
     /// Content loaded; normal view.
     Ready(ViewerScreenState),
+    /// Raster images (PNG/JPEG/GIF): load bytes in background, then show with ratatui-image.
+    ImageLoading(ImageLoadingState),
+    /// Multi-tab image view.
+    ImageReady(ImageViewerState),
 }
 
 /// State when the file viewer content is ready (F3). Text and hex modes.
@@ -85,17 +95,41 @@ fn hex_bytes_per_line_from_width(width: u16) -> usize {
 
 /// Close the viewer and return to panels.
 pub fn close_viewer(app: &mut AppState) {
-    if let Some(ViewerState::Loading { cancel, .. }) = app.viewer_screen.as_ref() {
-        cancel.store(true, Ordering::Relaxed);
+    match app.viewer_screen.as_ref() {
+        Some(ViewerState::Loading { cancel, .. })
+        | Some(ViewerState::ImageLoading(ImageLoadingState { cancel, .. })) => {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        _ => {}
     }
     app.viewer_screen = None;
 }
 
 /// Open the currently selected file in the viewer. Reads file in a background thread so Esc works immediately for large files.
+/// Raster images (PNG/JPEG/GIF) open in the graphical image viewer (possibly multiple tabs when files are marked).
 /// Works for both filesystem and files inside ZIP (uses panel_backend::read_file).
 /// Returns true if the viewer was opened (shows "Loading..." until read completes).
 pub fn open_viewer(app: &mut AppState) -> bool {
     let loc = app.get_current_location();
+    let panel = app.active_panel_ref();
+    if let Some((entries, start)) = collect_raster_view_entries(panel, &loc) {
+        if !entries.is_empty() {
+            let n = entries.len();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_thread = Arc::clone(&cancel);
+            let (tx, rx) = mpsc::channel();
+            spawn_image_load_thread(entries.clone(), cancel_thread, tx);
+            app.viewer_screen = Some(ViewerState::ImageLoading(ImageLoadingState {
+                entries,
+                current: start,
+                buffers: vec![None; n],
+                loaded: 0,
+                rx,
+                cancel,
+            }));
+            return true;
+        }
+    }
     if let Some(file) = app.active_panel_mut().get_selected_file() {
         if !file.is_dir && !file.is_parent_dir() {
             let file_path_str = panel_backend::join_path_display(&loc, &file.name);
@@ -141,6 +175,24 @@ pub fn open_viewer_path(
     path: std::path::PathBuf,
     line: Option<u64>,
 ) -> bool {
+    if let Some((entries, start)) = single_fs_raster_entry(path.clone()) {
+        if !entries.is_empty() {
+            let n = entries.len();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_thread = Arc::clone(&cancel);
+            let (tx, rx) = mpsc::channel();
+            spawn_image_load_thread(entries.clone(), cancel_thread, tx);
+            app.viewer_screen = Some(ViewerState::ImageLoading(ImageLoadingState {
+                entries,
+                current: start,
+                buffers: vec![None; n],
+                loaded: 0,
+                rx,
+                cancel,
+            }));
+            return true;
+        }
+    }
     let path_clone = path.clone();
     let file_path_str = path.display().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -163,6 +215,45 @@ pub fn open_viewer_path(
 /// Call from the main loop so content appears without blocking Esc.
 /// Returns true if the state changed (caller may redraw).
 pub fn poll_viewer_loading(app: &mut AppState) -> bool {
+    if let Some(ViewerState::ImageLoading(loading)) = app.viewer_screen.as_mut() {
+        let mut progressed = false;
+        while let Ok(msg) = loading.rx.try_recv() {
+            progressed = true;
+            match msg {
+                ImageLoadMsg::Part { index, bytes } => {
+                    if index < loading.buffers.len() && loading.buffers[index].is_none() {
+                        loading.buffers[index] = Some(bytes);
+                        loading.loaded += 1;
+                    }
+                }
+                ImageLoadMsg::Failed(e) => {
+                    app.set_timed_toast_alert(
+                        std::time::Duration::from_secs(4),
+                        format!("Image read: {e}"),
+                    );
+                    app.viewer_screen = None;
+                    return true;
+                }
+            }
+        }
+        let complete = if let Some(ViewerState::ImageLoading(loading)) = app.viewer_screen.as_ref()
+        {
+            !loading.buffers.is_empty() && loading.loaded >= loading.buffers.len()
+        } else {
+            false
+        };
+        if complete {
+            let taken = app.viewer_screen.take();
+            if let Some(ViewerState::ImageLoading(ld)) = taken {
+                if let Some(ready) = finish_image_loading(ld, app) {
+                    app.viewer_screen = Some(ViewerState::ImageReady(ready));
+                }
+            }
+            return true;
+        }
+        return progressed;
+    }
+
     let rx = match &mut app.viewer_screen {
         Some(ViewerState::Loading { rx, .. }) => rx,
         _ => return false,
@@ -264,6 +355,10 @@ pub fn handle_viewer_key(
     key: KeyEvent,
 ) -> Option<AppAction> {
     match app.viewer_screen.as_mut()? {
+        ViewerState::ImageLoading(..) => {
+            handle_image_loading_key(key.code).or(Some(AppAction::Continue))
+        }
+        ViewerState::ImageReady(img) => handle_image_ready_key(img, key),
         ViewerState::Loading { .. } => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
                 return Some(AppAction::ViewerClose);
@@ -392,6 +487,8 @@ pub fn handle_viewer_mouse(
         return false;
     };
     match state {
+        ViewerState::ImageLoading(..) => handle_image_loading_mouse(&mouse_event),
+        ViewerState::ImageReady(img) => handle_image_ready_mouse(img, mouse_event),
         ViewerState::Loading { .. } => true,
         ViewerState::Ready(v) => {
             let n = VIEWER_MOUSE_SCROLL_LINES as isize;
@@ -768,13 +865,21 @@ pub fn draw(
     f: &mut Frame,
     app: &mut AppState,
 ) {
-    if let Some(state) = app.viewer_screen.as_mut() {
-        let area = f.area();
-        let vp: ViewerPalette = app.ui_palette.viewer;
+    let Some(mut state) = app.viewer_screen.take() else {
+        return;
+    };
+    let area = f.area();
+    let vp: ViewerPalette = app.ui_palette.viewer;
 
-        let content_style = Style::default().bg(vp.background).fg(vp.text);
+    let content_style = Style::default().bg(vp.background).fg(vp.text);
 
-        match state {
+    match &mut state {
+            ViewerState::ImageLoading(ld) => {
+                draw_image_loading(f, ld, vp, app.ui_palette.dialog);
+            }
+            ViewerState::ImageReady(img) => {
+                draw_image_ready(f, img, app, vp);
+            }
             ViewerState::Loading { file_path, .. } => {
                 let header_rect = Rect {
                     x: area.x,
@@ -927,5 +1032,6 @@ pub fn draw(
                 );
             }
         }
-    }
+
+    app.viewer_screen = Some(state);
 }

@@ -3,3 +3,4 @@ pub mod diff_viewer;
 pub mod editor;
 pub mod panel;
 pub mod viewer;
+mod viewer_image;

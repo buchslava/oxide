@@ -9,6 +9,7 @@ use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::theme::{ThemeId, UiPalette};
 use crate::ui::toast::{TimedToast, ToastKind};
 use ratatui::layout::Rect;
+use ratatui_image::picker::Picker;
 use std::io;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
@@ -94,6 +95,8 @@ pub struct AppState {
     pub post_command_countdown: Option<PostCommandCountdown>,
     /// When Some, the file viewer is open (F3). Loading = reading file in background; Ready = content available. None = panels or editor view.
     pub viewer_screen: Option<ViewerState>,
+    /// Lazy init for F3 raster viewer ([`ratatui_image`]); created on first image open via terminal capability query.
+    pub image_picker: Option<Picker>,
     /// When Some, Ctrl+D two-file diff viewer is open (full screen, synchronized scroll).
     pub diff_viewer_screen: Option<DiffViewerState>,
     /// When Some, Ctrl+D compared both panel directories: `C `/`S `/`X ` prefixes until either cwd changes.
@@ -194,7 +197,8 @@ impl AppState {
     }
 
     /// Create app with initial panel dirs and settings from ~/.oxide/settings.json (used on startup).
-    /// Path resolution is handled in `main` (autosave vs launch dir vs saved opposite panel). If a
+    /// Path resolution is handled in `main` (autosave, `pinned_layout` from Ctrl+X C, else launch dir
+    /// vs saved opposite panel). If a
     /// path is invalid, that panel falls back to `home_dir`.
     /// Panels are created with default state, then sync_from_persisted_settings() is called so
     /// view_mode and show_hidden (and file lists) match persisted_settings before first render.
@@ -230,6 +234,7 @@ impl AppState {
             timed_toast: None,
             post_command_countdown: None,
             viewer_screen: None,
+            image_picker: None,
             diff_viewer_screen: None,
             folder_compare: None,
             folder_compare_pending: None,
@@ -297,7 +302,8 @@ impl AppState {
     }
 
     /// Write current left/right paths and active panel to `persisted_settings` and `settings.json`
-    /// (same data as **Autosave latest state** when it saves).
+    /// (same path fields as **Autosave latest state** when it saves). Sets `pinned_layout` so the next
+    /// launch restores both panels from disk even when autosave is off.
     pub fn persist_panel_state_to_settings(&mut self) -> io::Result<()> {
         let loc_left = self.left_panel.current_location();
         let loc_right = self.right_panel.current_location();
@@ -308,6 +314,7 @@ impl AppState {
             .as_fs_path()
             .map(|p| p.to_string_lossy().to_string());
         self.persisted_settings.active_panel = if self.active_panel == 0 { 0 } else { 1 };
+        self.persisted_settings.pinned_layout = true;
         settings::save(&self.persisted_settings)
     }
 

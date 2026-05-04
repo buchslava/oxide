@@ -133,7 +133,8 @@ pub enum AppAction {
     PatternSelectCancel,
     /// Ctrl+X then H: toggle hidden files visibility.
     ToggleShowHidden,
-    /// Ctrl+X then C: save left/right paths and active panel to settings.json (configuration snapshot; same as autosave).
+    /// Ctrl+X then C: save left/right paths and active panel to settings.json and set `pinned_layout`
+    /// so both paths restore on the next run even if autosave is off.
     PersistPanelState,
     /// Panel directory changed (Enter or double-click on dir). Used for autosave of panel cwds.
     PanelNavigated,
@@ -817,7 +818,8 @@ impl EventHandler {
                 }
                 Ok(None)
             }
-            _ => Ok(None), // FocusGained, Resize, etc. - drain
+            Event::Resize(_, _) => Ok(None),
+            _ => Ok(None), // FocusGained, etc. - drain
         }
     }
 

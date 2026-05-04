@@ -18,6 +18,8 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
 similar = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+ratatui-image = { version = "9.0", default-features = false, features = ["crossterm", "image-defaults"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -36,6 +36,9 @@ pub(crate) fn apply_persisted_setting_change(
     match change {
         SettingChange::AutosaveToggle => {
             app.persisted_settings.autosave = !app.persisted_settings.autosave;
+            if app.persisted_settings.autosave {
+                app.persisted_settings.pinned_layout = false;
+            }
             app.sync_process_cwd_to_active_panel_if_no_autosave();
         }
         SettingChange::SyncPanelToShellCwdToggle => {

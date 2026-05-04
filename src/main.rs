@@ -107,6 +107,14 @@ fn restore_terminal(
     Ok(())
 }
 
+fn redraw_ui(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut AppState,
+) -> io::Result<()> {
+    terminal.draw(|f| Renderer::draw_ui(f, app))?;
+    Ok(())
+}
+
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -132,11 +140,11 @@ fn main() -> Result<(), io::Error> {
         .unwrap_or_else(|_| home_str.clone());
 
     // Autosave on: restore both saved paths (missing → launch dir, not HOME).
-    // Autosave off: **active** panel (`active_panel` in settings) starts in the launch directory;
-    // the **opposite** panel uses the saved path for that side (`left_cwd` / `right_cwd`), or HOME
-    // if nothing was stored.
+    // **Ctrl+X C** sets `pinned_layout`: same full restore while autosave stays off.
+    // Otherwise autosave off: **active** panel starts in the launch directory; the **opposite** panel
+    // uses the saved path for that side (`left_cwd` / `right_cwd`), or HOME if nothing was stored.
     let active_is_left = app_settings.active_panel == 0;
-    let (left_cwd, right_cwd) = if app_settings.autosave {
+    let (left_cwd, right_cwd) = if app_settings.autosave || app_settings.pinned_layout {
         (
             initial_panel_cwd_when_autosave(app_settings.left_cwd.clone(), &home_str),
             initial_panel_cwd_when_autosave(app_settings.right_cwd.clone(), &home_str),
@@ -167,7 +175,7 @@ fn main() -> Result<(), io::Error> {
         return Ok(());
     }
     // Show first frame; brief delay then process queue so first keypress is handled, not discarded.
-    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+    redraw_ui(&mut terminal, &mut app)?;
     std::thread::sleep(std::time::Duration::from_millis(50));
     if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
         restore_terminal(&mut terminal, true)?;
@@ -206,7 +214,7 @@ fn main() -> Result<(), io::Error> {
                     sync_subshell_root_ui_flag(&mut app, None);
                 }
                 refresh_both_panels_restore_selection(&mut app, None, None);
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                redraw_ui(&mut terminal, &mut app)?;
                 drew_this_frame = true;
             }
         }
@@ -215,13 +223,11 @@ fn main() -> Result<(), io::Error> {
             if app.post_command_countdown_on_main_buffer() {
                 post_command_overlay::paint_main_buffer_countdown(&app)?;
             } else {
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                // Apply async viewer/editor updates before paint so loading progress and images stay in sync.
+                let _ = poll_viewer_loading(&mut app);
+                let _ = poll_editor_loading(&mut app);
+                redraw_ui(&mut terminal, &mut app)?;
             }
-        }
-
-        // Editor: recv file bytes from worker before input so Esc can clear BytesLoaded before Editor::new.
-        if poll_editor_loading(&mut app) {
-            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
         }
 
         let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
@@ -308,16 +314,12 @@ fn main() -> Result<(), io::Error> {
                 || app.copy_error_dialog.is_some()
                 || app.copy_in_progress.is_none()
             {
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                redraw_ui(&mut terminal, &mut app)?;
             }
         }
 
-        // Poll viewer file loading (background thread); Esc stays responsive for large files.
-        if poll_viewer_loading(&mut app) {
-            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
-        }
         if poll_folder_compare_pending(&mut app) {
-            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            redraw_ui(&mut terminal, &mut app)?;
         }
 
         // Poll size info calculation progress (background thread).
@@ -338,7 +340,7 @@ fn main() -> Result<(), io::Error> {
                         dir_count,
                     });
                     app.size_info_pending_rx = Some(rx);
-                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                    redraw_ui(&mut terminal, &mut app)?;
                 }
                 Ok(SizeInfoProgress::Done {
                     total_bytes,
@@ -350,7 +352,7 @@ fn main() -> Result<(), io::Error> {
                         file_count,
                         dir_count,
                     });
-                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                    redraw_ui(&mut terminal, &mut app)?;
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     app.size_info_pending_rx = Some(rx);
@@ -367,7 +369,7 @@ fn main() -> Result<(), io::Error> {
                 Ok(ArchiveMessage::Progress(p)) => {
                     app.archive_progress = Some(p);
                     app.archive_pending_rx = Some(rx);
-                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                    redraw_ui(&mut terminal, &mut app)?;
                 }
                 Ok(ArchiveMessage::Done(res, name_for_selection)) => {
                     app.archive_progress = None;
@@ -403,7 +405,7 @@ fn main() -> Result<(), io::Error> {
                 restore_after.as_deref(),
                 restore_before.as_deref(),
             );
-            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            redraw_ui(&mut terminal, &mut app)?;
         }
 
         match EventHandler::handle_events(&mut app)? {
@@ -415,13 +417,13 @@ fn main() -> Result<(), io::Error> {
                 // Dismiss the modal before running copy I/O so the progress overlay is visible
                 // (same frame) instead of leaving the overwrite dialog up until the work finishes.
                 app.copy_overwrite_dialog = None;
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                redraw_ui(&mut terminal, &mut app)?;
                 handle_copy_overwrite_choice(&mut app, n);
             }
             AppAction::CopyErrorChoice(choice) => {
                 app.copy_error_dialog = None;
                 if app.copy_in_progress.is_some() {
-                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                    redraw_ui(&mut terminal, &mut app)?;
                 }
                 match choice {
                     CopyErrorChoice::Ignore => {
@@ -470,13 +472,14 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::OpenViewer => {
                 open_viewer(&mut app);
+                redraw_ui(&mut terminal, &mut app)?;
             }
             AppAction::ViewerClose => {
                 close_viewer(&mut app);
                 if app.find_dialog.is_some() {
                     app.focus = Focus::FindDialog;
                 }
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                redraw_ui(&mut terminal, &mut app)?;
             }
             AppAction::OpenDiffViewer => {
                 if try_open_diff(&mut app) {
@@ -730,7 +733,7 @@ fn main() -> Result<(), io::Error> {
             },
             AppAction::RenameAttrConfirm => {
                 if rename_attr::apply(&mut app) {
-                    terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                    redraw_ui(&mut terminal, &mut app)?;
                 }
             }
             AppAction::RenameAttrCancel => rename_attr::cancel(&mut app),
@@ -787,7 +790,7 @@ fn main() -> Result<(), io::Error> {
                     left_selected.as_deref(),
                     right_selected.as_deref(),
                 );
-                terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                redraw_ui(&mut terminal, &mut app)?;
                 // Do NOT terminal.flush() after draw(): draw() already flushes; extra flush can paint black.
                 if let Some(AppAction::Quit) = EventHandler::process_queued_events(&mut app)? {
                     break;
@@ -865,7 +868,7 @@ fn main() -> Result<(), io::Error> {
                             left_selected.as_deref(),
                             right_selected.as_deref(),
                         );
-                        terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+                        redraw_ui(&mut terminal, &mut app)?;
                     }
                     RelayExit::AutoReopenDelay(d) => {
                         if let Some(AppAction::Quit) =
@@ -896,11 +899,11 @@ fn main() -> Result<(), io::Error> {
 
         // After input: apply diff worker result so Esc can close loading before we recv and block on work.
         if poll_diff_loading(&mut app) {
-            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            redraw_ui(&mut terminal, &mut app)?;
         }
 
         if finish_editor_pending_decode(&mut app) {
-            terminal.draw(|f| Renderer::draw_ui(f, &mut app))?;
+            redraw_ui(&mut terminal, &mut app)?;
         }
     }
 

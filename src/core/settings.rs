@@ -16,6 +16,10 @@ pub struct PersistedSettings {
     /// When false, the Oxide process `cwd` follows the active panel (filesystem locations only).
     #[serde(default)]
     pub autosave: bool,
+    /// Set by **Ctrl+X C** (save layout). When autosave is off, startup still restores both panel paths
+    /// from `left_cwd` / `right_cwd` like autosave until the user enables autosave (which clears this).
+    #[serde(default)]
+    pub pinned_layout: bool,
     /// When true (default), after returning from shell (Ctrl+O) sync active panel to shell's cwd. When false, use old flow (panel stays as before).
     #[serde(default = "default_true")]
     pub sync_panel_to_shell_cwd: bool,
@@ -93,6 +97,7 @@ impl Default for PersistedSettings {
     fn default() -> Self {
         Self {
             autosave: false,
+            pinned_layout: false,
             sync_panel_to_shell_cwd: true,
             auto_reopen_panels_after_command: true,
             auto_reopen_panels_after_command_delay_secs: default_auto_reopen_panels_delay_secs(),
@@ -189,5 +194,6 @@ mod tests {
         assert!(json.contains("\"file_pattern_mode\""));
         assert!(json.contains("\"safe_delete\""));
         assert!(json.contains("\"theme\""));
+        assert!(json.contains("\"pinned_layout\""));
     }
 }
