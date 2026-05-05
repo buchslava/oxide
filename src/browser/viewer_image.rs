@@ -2,6 +2,9 @@
 //!
 //! Picker env: `OXIDE_IMAGE_SKIP_CAP_QUERY=1` skips stdin/stdout capability probing; `OXIDE_IMAGE_PROTOCOL=halfblocks`
 //! (or `iterm2`, `sixel`, `kitty`) forces the graphics mode after init—`halfblocks` avoids inline protocol escapes.
+//!
+//! On **Apple iTerm2**, capability queries can pick Kitty or Sixel even though OSC 1337 inline images
+//! are the reliable path; we normalize to `Iterm2` unless `OXIDE_IMAGE_PROTOCOL` overrides.
 
 use std::io::{self, Cursor};
 use std::env;
@@ -231,6 +234,12 @@ fn decode_image(bytes: &[u8]) -> io::Result<DynamicImage> {
 
 /// True when the host is likely iTerm2 / WezTerm / etc. and supports inline image escapes (OSC 1337).
 fn env_suggests_iterm2_style_inline_images() -> bool {
+    if env::var("ITERM_SESSION_ID")
+        .ok()
+        .is_some_and(|s| !s.is_empty())
+    {
+        return true;
+    }
     if env::var("TERM_PROGRAM").ok().is_some_and(|term_program| {
         term_program.contains("iTerm")
             || term_program.contains("WezTerm")
@@ -247,6 +256,25 @@ fn env_suggests_iterm2_style_inline_images() -> bool {
     env::var("LC_TERMINAL")
         .ok()
         .is_some_and(|lc_term| lc_term.contains("iTerm"))
+}
+
+/// Apple iTerm2 (including tmux panes that inherited `ITERM_SESSION_ID`).
+///
+/// `ratatui_image`'s stdin/stdout capability query prefers IO-detected Kitty/Sixel over the iTerm2
+/// protocol; on iTerm.app that often yields a blank image area.
+fn env_is_apple_iterm_host() -> bool {
+    if env::var("ITERM_SESSION_ID")
+        .ok()
+        .is_some_and(|s| !s.is_empty())
+    {
+        return true;
+    }
+    env::var("TERM_PROGRAM")
+        .ok()
+        .is_some_and(|p| p.contains("iTerm"))
+        || env::var("LC_TERMINAL")
+            .ok()
+            .is_some_and(|lc| lc.contains("iTerm"))
 }
 
 /// Default (w, h) cell size in **pixels** when OSC queries fail but we still use the iTerm2 inline
@@ -300,8 +328,11 @@ fn build_image_picker() -> Picker {
         }
     };
 
-    // Query can fail (no pkg-config / stdin hiccup) and still return Halfblocks even under iTerm2.
-    if iterm_like && matches!(picker.protocol_type(), ProtocolType::Halfblocks) {
+    // Prefer OSC 1337 on Apple iTerm2: cap query often selects Kitty/Sixel, which do not draw there.
+    if env_is_apple_iterm_host() && !matches!(picker.protocol_type(), ProtocolType::Iterm2) {
+        picker.set_protocol_type(ProtocolType::Iterm2);
+    } else if iterm_like && matches!(picker.protocol_type(), ProtocolType::Halfblocks) {
+        // WezTerm, VS Code, tmux+outer-terminal hints, etc.: only bump pure fallback halfblocks.
         picker.set_protocol_type(ProtocolType::Iterm2);
     }
 

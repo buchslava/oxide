@@ -6,10 +6,10 @@ edition = "2021"
 [dependencies]
 arboard = "3"
 chrono = "0.4"
-ratatui = "0.29"
+ratatui = { version = "0.30", features = ["crossterm"] }
 crossterm = "0.29"
 dirs = "5.0"
-ratatui-code-editor = "0.0.1"
+ratatui-code-editor = "0.0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 walkdir = "2"
@@ -19,7 +19,7 @@ flate2 = "1"
 tar = "0.4"
 similar = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
-ratatui-image = { version = "9.0", default-features = false, features = ["crossterm", "image-defaults"] }
+ratatui-image = { version = "10.0", default-features = false, features = ["crossterm", "image-defaults"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

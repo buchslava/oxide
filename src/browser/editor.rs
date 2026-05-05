@@ -84,7 +84,7 @@ pub struct EditorScreenState {
 /// Files above this size show a warning before load; loading runs in a background thread (Esc cancels).
 pub const EDITOR_LARGE_FILE_WARN_BYTES: u64 = 32 * 1024 * 1024;
 
-/// Hard cap for the embedded editor: [`Editor::new`] runs on the UI thread and the type is not `Send`,
+/// Hard cap for the embedded editor: building the buffer runs on the UI thread and the type is not `Send`,
 /// so larger files would freeze the app (Esc cannot run until decoding finishes). Refuse before/after read.
 pub const EDITOR_MAX_EMBEDDED_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -108,7 +108,7 @@ pub enum EditorViewState {
         cancel: Arc<AtomicBool>,
         spec: EditorOpenSpec,
     },
-    /// Raw bytes received from worker; [`Editor::new`] not run yet so Esc can cancel before that freeze.
+    /// Raw bytes received from worker; editor widget not built yet so Esc can cancel before that work.
     BytesLoaded {
         file_path: String,
         bytes: Vec<u8>,
@@ -161,6 +161,13 @@ fn editor_too_large_toast(app: &mut AppState) {
     );
 }
 
+fn editor_build_failed_toast(app: &mut AppState, err: impl std::fmt::Display) {
+    app.set_timed_toast_alert(
+        Duration::from_secs(10),
+        format!("Embedded editor failed to start: {err}"),
+    );
+}
+
 fn editor_source_size(
     loc: &PanelLocation,
     file: &FileInfo,
@@ -178,17 +185,17 @@ fn editor_ready_from_bytes(
     file_path: String,
     bytes: Vec<u8>,
     spec: EditorOpenSpec,
-) -> EditorScreenState {
+) -> Result<EditorScreenState, String> {
     let opened_with_invalid_utf8 = std::str::from_utf8(&bytes).is_err();
     let content = String::from_utf8_lossy(&bytes).into_owned();
     let lang = get_lang_from_path(&file_path);
     let theme = vesper();
-    let editor = Editor::new(lang, &content, theme);
+    let editor = Editor::new(lang, &content, theme).map_err(|e| e.to_string())?;
     let (edit_location, edit_name) = match spec {
         EditorOpenSpec::Fs { .. } => (None, None),
         EditorOpenSpec::Archive { loc, name } => (Some(loc), Some(name)),
     };
-    EditorScreenState {
+    Ok(EditorScreenState {
         file_path,
         initial_content: content,
         editor,
@@ -199,7 +206,7 @@ fn editor_ready_from_bytes(
         edit_location,
         edit_name,
         opened_with_invalid_utf8,
-    }
+    })
 }
 
 fn start_editor_loading(
@@ -241,7 +248,7 @@ fn cancel_editor_background(app: &mut AppState) {
     }
 }
 
-/// Poll background editor file read (bytes only — does **not** call [`Editor::new`], so the UI stays responsive).
+/// Poll background editor file read (bytes only — does **not** build the editor widget, so the UI stays responsive).
 /// Call **before** [`EventHandler::handle_events`] so Esc can clear [`EditorViewState::BytesLoaded`] before
 /// [`finish_editor_pending_decode`] runs. See [`finish_editor_pending_decode`].
 pub fn poll_editor_loading(app: &mut AppState) -> bool {
@@ -306,10 +313,20 @@ pub fn finish_editor_pending_decode(app: &mut AppState) -> bool {
         }
         return true;
     }
-    let ready = editor_ready_from_bytes(file_path, bytes, spec);
-    app.editor_screen = Some(EditorViewState::Ready(ready));
-    app.editor_confirm_pending = false;
-    app.clear_timed_toast();
+    match editor_ready_from_bytes(file_path, bytes, spec) {
+        Ok(ready) => {
+            app.editor_screen = Some(EditorViewState::Ready(ready));
+            app.editor_confirm_pending = false;
+            app.clear_timed_toast();
+        }
+        Err(err) => {
+            editor_build_failed_toast(app, err);
+            app.editor_screen = None;
+            if app.find_dialog.is_some() {
+                app.focus = Focus::FindDialog;
+            }
+        }
+    }
     true
 }
 
@@ -394,7 +411,13 @@ pub fn open_editor(app: &mut AppState) -> bool {
             };
             let lang = get_lang_from_path(&file_path_str);
             let theme = vesper();
-            let editor = Editor::new(lang, &content, theme);
+            let editor = match Editor::new(lang, &content, theme) {
+                Ok(e) => e,
+                Err(e) => {
+                    editor_build_failed_toast(app, e);
+                    return false;
+                }
+            };
             let (edit_location, edit_name) = match &loc {
                 PanelLocation::Archive { .. } => (Some(loc.clone()), Some(file.name.clone())),
                 PanelLocation::Fs(_) => (None, None),
@@ -457,7 +480,13 @@ pub fn open_editor_path(
     };
     let lang = get_lang_from_path(&file_path_str);
     let theme = vesper();
-    let editor = Editor::new(lang, &content, theme);
+    let editor = match Editor::new(lang, &content, theme) {
+        Ok(e) => e,
+        Err(e) => {
+            editor_build_failed_toast(app, e);
+            return false;
+        }
+    };
     app.editor_screen = Some(EditorViewState::Ready(
         EditorScreenState {
             file_path: file_path_str,
