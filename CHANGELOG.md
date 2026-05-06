@@ -33,6 +33,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - **Shortcuts:** save panel state **Ctrl+X C** (was Ctrl+E in prior docs); size info **Ctrl+X S** (was Ctrl+G); editor in-file find **Ctrl+X F** (was Ctrl+F, to free Ctrl+F for global find).
 - **F1** opens Actions instead of the old full-screen help dialog.
 - **Subshell** — Deeper integration with the app loop, suspend/resume, and parent/subshell communication.
+- **Root chrome in subshell** — The red menu/prompt indicator is now driven by **“any UID 0 process attached to the subshell PTY”** (tty-wide `ps -t … -o uid=`), instead of attempting to detect a “root shell session” specifically. This makes `sudo -s`/`sudo -i` reliably flip the chrome red across platforms, at the cost of also turning it red for any other root program on that PTY (by design).
 - **Diff viewer** — Input and cancel behavior during long reads.
 - **Renderer / overlays** — Layout updates for new dialogs and viewers.
 - **Docs** — `doc/FEATURES.md` (and related) updated for shortcuts and editor caret behavior when scrolled off-screen.

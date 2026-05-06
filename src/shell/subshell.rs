@@ -17,6 +17,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
+use nix::sys::stat::Mode;
+#[cfg(unix)]
+use nix::unistd::mkfifo;
+#[cfg(unix)]
 use std::cell::RefCell;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -24,10 +28,6 @@ use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(unix)]
-use nix::sys::stat::Mode;
-#[cfg(unix)]
-use nix::unistd::mkfifo;
 #[cfg(unix)]
 use std::process::Command;
 
@@ -73,8 +73,6 @@ pub enum RelayExit {
 pub struct Subshell {
     master_fd: i32,
     child_pid: i32,
-    /// `st_rdev` of the PTY slave (for matching `proc_bsdinfo.e_tdev` when `tcgetpgrp` is unreliable).
-    slave_st_rdev: u64,
     /// PTY name for `ps -t` (path without `/dev/`, e.g. `ttys012`, `pts/4`).
     ps_tty_arg: String,
     /// When we auto-reopen panels while `eval cmd; printf > fifo` is still running (e.g. `sudo -s`),
@@ -100,11 +98,16 @@ impl OwnedFifo {
     /// real FIFO was already unlinked (shell `>` does not recreate a FIFO).
     fn open_for_subshell(child_pid: i32) -> io::Result<Self> {
         let parent = std::process::id();
-        let path =
-            std::env::temp_dir().join(format!("oxide_cmd_{}_{}.fifo", parent, child_pid));
+        let path = std::env::temp_dir().join(format!(
+            "oxide_cmd_{}_{}.fifo",
+            parent, child_pid
+        ));
         let _ = std::fs::remove_file(&path);
         mkfifo(&path, Mode::S_IRUSR | Mode::S_IWUSR).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("mkfifo: {}", e))
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("mkfifo: {}", e),
+            )
         })?;
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -296,10 +299,7 @@ impl Subshell {
                 return Ok(true);
             }
 
-            let plain_x = carry
-                .iter()
-                .position(|&b| b == CTRL_X)
-                .map(|p| (p, 1usize));
+            let plain_x = carry.iter().position(|&b| b == CTRL_X).map(|p| (p, 1usize));
             let kitty_x =
                 Self::find_subsequence(carry, CTRL_X_KITTY).map(|p| (p, CTRL_X_KITTY.len()));
             let mok_x = Self::find_subsequence(carry, CTRL_X_MODIFY_OTHER_KEYS)
@@ -331,7 +331,8 @@ impl Subshell {
                 continue;
             }
 
-            let keep = Self::trailing_ctrl_o_prefix_len(carry).max(Self::trailing_ctrl_x_prefix_len(carry));
+            let keep = Self::trailing_ctrl_o_prefix_len(carry)
+                .max(Self::trailing_ctrl_x_prefix_len(carry));
             let forward_len = carry.len().saturating_sub(keep);
             if forward_len > 0 {
                 Self::write_all_fd(self.master_fd, &carry[..forward_len])?;
@@ -653,12 +654,12 @@ impl Subshell {
         w.write_all(b"\x1b[?1049l\x1b[?47l")?; // leave alternate (main screen)
         w.write_all(b"\x1b[?25h")?; // show cursor (DECTCEM)
         w.write_all(b"\x1b[?1002l\x1b[?1006l")?; // disable mouse (X10, SGR)
-        // Crossterm/Ratatui stacks: clear modes that can defer or alter host painting of PTY output.
+                                                 // Crossterm/Ratatui stacks: clear modes that can defer or alter host painting of PTY output.
         w.write_all(b"\x1b[?1003l\x1b[?1004l\x1b[?2004l\x1b[?2026l")?;
         w.write_all(b"\x18")?; // CAN: parser to ground
         #[cfg(not(target_os = "macos"))]
         w.write_all(b"\x1b[!p")?; // DECSTR (skip on macOS Terminal.app)
-        // Without DECSTR (macOS) or partial DECSTR: drop origin / LR margin so `999;999H` is viewport-relative.
+                                  // Without DECSTR (macOS) or partial DECSTR: drop origin / LR margin so `999;999H` is viewport-relative.
         w.write_all(b"\x1b[?6l\x1b[?69l")?; // DECOM off, DECLRMM off
         w.write_all(b"\x1b[?7h\x1b(B\x1b)B\x1b[0m")?; // wrap, G0/G1 ASCII, SGR
         w.write_all(b"\x1b>")?; // numeric keypad
@@ -704,7 +705,7 @@ impl Subshell {
         let pty = openpty(None, None).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let slave_fd = pty.slave.as_raw_fd();
         let master_fd = pty.master.as_raw_fd();
-        let (slave_st_rdev, ps_tty_arg) = pty_slave_rdev_and_ps_tty_arg(master_fd);
+        let ps_tty_arg = pty_ps_tty_arg(master_fd);
 
         // Set PTY size before fork so the shell never sees wrong dimensions (MC does this in child on slave).
         Self::resize_pty_to_terminal(master_fd);
@@ -746,7 +747,6 @@ impl Subshell {
                 Ok(Self {
                     master_fd,
                     child_pid,
-                    slave_st_rdev,
                     ps_tty_arg,
                     pending_command_done: RefCell::new(None),
                     pending_done_delay: RefCell::new(None),
@@ -781,7 +781,10 @@ impl Subshell {
             Some(p) => p.0,
             None => {
                 let saved = Self::set_real_tty_relay_raw();
-                let _ = Self::write_all_fd(1, b"\x1b[?1003l\x1b[?1004l\x1b[?2004l\x1b[?2026l");
+                let _ = Self::write_all_fd(
+                    1,
+                    b"\x1b[?1003l\x1b[?1004l\x1b[?2004l\x1b[?2026l",
+                );
                 let _ = Self::write_all_fd(1, b"\x18");
                 #[cfg(not(target_os = "macos"))]
                 let _ = Self::write_all_fd(1, b"\x1b[!p");
@@ -837,12 +840,18 @@ impl Subshell {
                     if let Some(ref c) = auto_exit {
                         if let AutoExitCompletion::Fifo(f) = &c.completion {
                             if let Some(ref cd) = f.command_done {
-                                slots.push((RelayFifoRole::ActiveCommandDone, cd.as_raw_fd()));
+                                slots.push((
+                                    RelayFifoRole::ActiveCommandDone,
+                                    cd.as_raw_fd(),
+                                ));
                             }
                         }
                     }
                     if let Some(ref p) = *self.pending_command_done.borrow() {
-                        slots.push((RelayFifoRole::PendingCommandDone, p.as_raw_fd()));
+                        slots.push((
+                            RelayFifoRole::PendingCommandDone,
+                            p.as_raw_fd(),
+                        ));
                     }
                     slots
                 };
@@ -887,7 +896,8 @@ impl Subshell {
                             if let Some(cfg) = auto_exit.as_mut() {
                                 if let AutoExitCompletion::Fifo(f) = &mut cfg.completion {
                                     if let Some(ref mut se) = f.sudo_early_panels {
-                                        if se.password_prompt_seen && se.password_submit_at.is_none()
+                                        if se.password_prompt_seen
+                                            && se.password_submit_at.is_none()
                                         {
                                             if stdin_buf[..n]
                                                 .iter()
@@ -915,13 +925,9 @@ impl Subshell {
 
                 for (i, &(role, fd)) in fifo_slots.iter().enumerate() {
                     let idx = 2 + i;
-                    if fds
-                        .get(idx)
-                        .and_then(|p| p.revents())
-                        .map_or(false, |r| {
-                            r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP)
-                        })
-                    {
+                    if fds.get(idx).and_then(|p| p.revents()).map_or(false, |r| {
+                        r.intersects(PollFlags::POLLIN | PollFlags::POLLHUP)
+                    }) {
                         if Self::consume_fifo_signal(fd, &mut fifo_scratch)? {
                             let _ = Self::drain_pty_output(self.master_fd);
                             let delay = match role {
@@ -1061,7 +1067,9 @@ impl Subshell {
                 *self.pending_done_delay.borrow_mut() = Some(reopen_delay);
                 *self.pending_command_done.borrow_mut() = Some(fifo);
             }
-            return Ok(Some(RelayExit::AutoReopenDelay(reopen_delay)));
+            return Ok(Some(RelayExit::AutoReopenDelay(
+                reopen_delay,
+            )));
         }
         Ok(None)
     }
@@ -1100,7 +1108,10 @@ impl Subshell {
         }
     }
 
-    fn bytes_contains_ascii_ci(haystack: &[u8], needle_lower: &[u8]) -> bool {
+    fn bytes_contains_ascii_ci(
+        haystack: &[u8],
+        needle_lower: &[u8],
+    ) -> bool {
         if needle_lower.is_empty() {
             return true;
         }
@@ -1132,7 +1143,7 @@ impl Subshell {
 
     /// Current working directory of the subshell process (after user may have run `cd`).
     /// Used when returning from relay to sync the active panel to the shell's cwd.
-    /// Linux: readlink /proc/pid/cwd. macOS: libproc proc_pidinfo (PROC_PIDVNODEPATHINFO). Other Unix: None.
+    /// Linux: readlink /proc/pid/cwd. macOS: `proc_pidinfo(PROC_PIDVNODEPATHINFO)`. Other Unix: None.
     pub fn get_cwd(&self) -> Option<PathBuf> {
         #[cfg(target_os = "linux")]
         {
@@ -1150,20 +1161,12 @@ impl Subshell {
         }
     }
 
-    /// True if the PTY’s foreground process group has effective UID 0 (e.g. interactive root after `sudo -s`).
-    /// Oxide’s own [`libc::geteuid`] may still be non-zero; use this for “danger” chrome after subshell relay.
+    /// True if **any** process attached to the subshell PTY has effective UID 0.
     ///
-    /// Uses a `ps -t` fallback when the precise foreground probe is inconclusive on some terminals.
+    /// This defines “danger chrome” consistently across OSes: if the subshell session is running
+    /// anything as root (foreground or background), the menu strip and prompt switch to red.
     pub fn pty_foreground_has_root_euid(&self) -> bool {
-        if pty_foreground_euid_is_root(
-            self.master_fd,
-            self.child_pid,
-            self.slave_st_rdev,
-            self.ps_tty_arg.as_str(),
-        ) {
-            return true;
-        }
-        ps_tty_has_any_euid_zero(&self.ps_tty_arg)
+        ps_tty_has_any_uid_zero(&self.ps_tty_arg)
     }
 
     /// Change shell cwd to match the active panel then relay until Ctrl+O or Ctrl+X then O (for Suspend so ls matches panel).
@@ -1342,24 +1345,27 @@ fn get_cwd_macos(pid: u32) -> Option<PathBuf> {
     best
 }
 
-/// Slave device id and a short tty name suitable for `ps -t` (no `/dev/` prefix).
+/// PTY name suitable for `ps -t` (path without `/dev/`, e.g. `ttys012`, `pts/4`).
 #[cfg(unix)]
-fn pty_slave_rdev_and_ps_tty_arg(master_fd: i32) -> (u64, String) {
+fn pty_ps_tty_arg(master_fd: i32) -> String {
     use std::ffi::CStr;
-    use std::os::unix::fs::MetadataExt;
 
     let path_str: Option<String> = {
         #[cfg(target_os = "linux")]
         {
             let mut buf = [0u8; 512];
-            let r = unsafe { libc::ptsname_r(master_fd, buf.as_mut_ptr().cast(), buf.len()) };
+            let r = unsafe {
+                libc::ptsname_r(
+                    master_fd,
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                )
+            };
             if r != 0 {
                 None
             } else {
                 let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
-                std::str::from_utf8(&buf[..len])
-                    .ok()
-                    .map(str::to_string)
+                std::str::from_utf8(&buf[..len]).ok().map(str::to_string)
             }
         }
         #[cfg(not(target_os = "linux"))]
@@ -1376,21 +1382,16 @@ fn pty_slave_rdev_and_ps_tty_arg(master_fd: i32) -> (u64, String) {
         }
     };
     let Some(ref path) = path_str else {
-        return (0, String::new());
+        return String::new();
     };
-    let rdev = std::fs::metadata(path)
-        .map(|m| m.rdev())
-        .unwrap_or(0);
-    let tty_arg = path
-        .strip_prefix("/dev/")
+    path.strip_prefix("/dev/")
         .unwrap_or(path.as_str())
-        .to_string();
-    (rdev, tty_arg)
+        .to_string()
 }
 
-/// Any process attached to this tty reports effective uid 0 (used only as a fallback for [`pty_foreground_has_root_euid`]).
+/// Any process attached to this tty reports effective uid 0.
 #[cfg(unix)]
-fn ps_tty_has_any_euid_zero(tty: &str) -> bool {
+fn ps_tty_has_any_uid_zero(tty: &str) -> bool {
     if tty.is_empty() {
         return false;
     }
@@ -1416,219 +1417,14 @@ fn ps_tty_has_any_euid_zero(tty: &str) -> bool {
             })
             .any(|u| u == 0)
     };
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "linux")]
+    {
+        try_ps(&["--no-headers", "-t", tty, "-o", "uid="]) || try_ps(&["-t", tty, "-o", "uid="])
+    }
+    #[cfg(not(target_os = "linux"))]
     {
         try_ps(&["-t", tty, "-o", "uid="])
     }
-    #[cfg(target_os = "linux")]
-    {
-        try_ps(&["--no-headers", "-t", tty, "-o", "uid="])
-            || try_ps(&["-t", tty, "-o", "uid="])
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = tty;
-        false
-    }
-}
-
-/// Whether the PTY foreground process group has any member with EUID 0; falls back to the session leader’s EUID.
-#[cfg(unix)]
-fn pty_foreground_euid_is_root(
-    master_fd: i32,
-    child_pid: i32,
-    #[allow(unused_variables)] slave_st_rdev: u64,
-    #[allow(unused_variables)] ps_tty_arg: &str,
-) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = ps_tty_arg;
-        return pty_foreground_euid_is_root_macos(master_fd, child_pid, slave_st_rdev);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let mut pgrp = unsafe { libc::tcgetpgrp(master_fd) };
-        if pgrp <= 0 {
-            pgrp = linux_foreground_pgrp_from_proc(child_pid).unwrap_or(-1);
-        }
-        if pgrp > 0 && foreground_pgrp_has_euid_zero(pgrp) {
-            return true;
-        }
-        linux_process_euid(child_pid) == Some(0)
-    }
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-    {
-        let _ = (master_fd, child_pid, slave_st_rdev, ps_tty_arg);
-        false
-    }
-}
-
-#[cfg(all(unix, target_os = "linux"))]
-fn linux_foreground_pgrp_from_proc(pid: i32) -> Option<i32> {
-    let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let rest = s.rsplit_once(") ")?;
-    let mut fields = rest.1.split_whitespace();
-    let _state = fields.next()?;
-    let _ppid = fields.next()?;
-    let _pgrp = fields.next()?;
-    let _session = fields.next()?;
-    let _tty_nr = fields.next()?;
-    let tpgid: i32 = fields.next()?.parse().ok()?;
-    if tpgid <= 0 {
-        None
-    } else {
-        Some(tpgid)
-    }
-}
-
-#[cfg(all(unix, target_os = "linux"))]
-fn foreground_pgrp_has_euid_zero(pgrp: i32) -> bool {
-    use nix::unistd::{getpgid, Pid};
-    let pg = Pid::from_raw(pgrp);
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Ok(pid) = name.to_string_lossy().parse::<i32>() else {
-            continue;
-        };
-        if pid <= 0 {
-            continue;
-        }
-        let p = Pid::from_raw(pid);
-        if getpgid(Some(p)) != Ok(pg) {
-            continue;
-        }
-        if linux_process_euid(pid) == Some(0) {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(all(unix, target_os = "linux"))]
-fn linux_process_euid(pid: i32) -> Option<u32> {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    for line in status.lines() {
-        if let Some(rest) = line.strip_prefix("Uid:") {
-            let parts: Vec<&str> = rest.split_whitespace().collect();
-            return parts.get(1).and_then(|s| s.parse().ok());
-        }
-    }
-    None
-}
-
-#[cfg(all(unix, target_os = "macos"))]
-fn macos_proc_taskall(pid: i32) -> Option<libc::proc_taskallinfo> {
-    let mut info: libc::proc_taskallinfo = unsafe { std::mem::zeroed() };
-    let sz = std::mem::size_of::<libc::proc_taskallinfo>() as libc::c_int;
-    let n = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTASKALLINFO,
-            0,
-            std::ptr::addr_of_mut!(info).cast::<libc::c_void>(),
-            sz,
-        )
-    };
-    if (n as usize) < std::mem::size_of::<libc::proc_taskallinfo>() {
-        return None;
-    }
-    Some(info)
-}
-
-#[cfg(all(unix, target_os = "macos"))]
-fn macos_pgrp_pids(pgrp: i32) -> Vec<i32> {
-    if pgrp <= 0 {
-        return Vec::new();
-    }
-    const MAX: usize = 512;
-    let mut buf = [0i32; MAX];
-    let n = unsafe {
-        libc::proc_listpgrppids(
-            pgrp,
-            buf.as_mut_ptr() as *mut libc::c_void,
-            (MAX * std::mem::size_of::<libc::pid_t>()) as libc::c_int,
-        )
-    };
-    if n <= 0 {
-        return Vec::new();
-    }
-    let count = (n as usize) / std::mem::size_of::<libc::pid_t>();
-    buf[..count.min(MAX)]
-        .iter()
-        .copied()
-        .filter(|&p| p > 0)
-        .collect()
-}
-
-#[cfg(all(unix, target_os = "macos"))]
-fn macos_pgrp_has_uid0(pgrp: i32) -> bool {
-    macos_pgrp_pids(pgrp)
-        .into_iter()
-        .any(|pid| macos_proc_taskall(pid).is_some_and(|i| i.pbsd.pbi_uid == 0))
-}
-
-#[cfg(all(unix, target_os = "macos"))]
-fn macos_slave_rdev_has_uid0(slave_st_rdev: u64) -> bool {
-    if slave_st_rdev == 0 {
-        return false;
-    }
-    const MAX_PIDS: usize = 8192;
-    let mut buf = [0i32; MAX_PIDS];
-    let size_bytes = (MAX_PIDS * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
-    let n_bytes = unsafe {
-        libc::proc_listallpids(
-            buf.as_mut_ptr() as *mut libc::c_void,
-            size_bytes,
-        )
-    };
-    if n_bytes <= 0 {
-        return false;
-    }
-    let n_pids = (n_bytes as usize / std::mem::size_of::<libc::pid_t>()).min(MAX_PIDS);
-    for &pid in buf[..n_pids].iter().filter(|&&p| p > 0) {
-        if let Some(info) = macos_proc_taskall(pid) {
-            let edev = info.pbsd.e_tdev as u64;
-            if edev == 0 {
-                continue;
-            }
-            let r = slave_st_rdev;
-            if (edev == r || edev == (r & 0xffff_ffff)) && info.pbsd.pbi_uid == 0 {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// macOS: `tcgetpgrp` on the PTY master can fail; use `e_tpgid` from the session shell, `proc_listpgrppids`,
-/// and `proc_taskallinfo.pbi_uid` (effective). Fall back to matching `e_tdev` to the slave `st_rdev`.
-#[cfg(all(unix, target_os = "macos"))]
-fn pty_foreground_euid_is_root_macos(
-    master_fd: i32,
-    child_pid: i32,
-    slave_st_rdev: u64,
-) -> bool {
-    let mut pgrp = unsafe { libc::tcgetpgrp(master_fd) };
-    if pgrp <= 0 {
-        pgrp = macos_proc_taskall(child_pid)
-            .map(|i| i.pbsd.e_tpgid as i32)
-            .unwrap_or(-1);
-    }
-    if pgrp > 0 && macos_pgrp_has_uid0(pgrp) {
-        return true;
-    }
-    if macos_slave_rdev_has_uid0(slave_st_rdev) {
-        return true;
-    }
-    macos_proc_taskall(child_pid).is_some_and(|i| i.pbsd.pbi_uid == 0)
-}
-
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-fn foreground_pgrp_has_euid_zero(_pgrp: i32) -> bool {
-    false
 }
 
 /// Kill the entire subshell session so no process (e.g. nohup) outlives the app.

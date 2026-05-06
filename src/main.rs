@@ -583,11 +583,9 @@ fn main() -> Result<(), io::Error> {
             }
             AppAction::RefreshActivePanel => {
                 let ph = util::compute_panel_height();
-                let _ = app.active_panel_mut().refresh_files_restore_selection(
-                    None,
-                    None,
-                    Some(ph),
-                );
+                let _ =
+                    app.active_panel_mut()
+                        .refresh_files_restore_selection(None, None, Some(ph));
             }
             AppAction::CommandLineCopy => {
                 app.focus_command_line();
@@ -639,11 +637,12 @@ fn main() -> Result<(), io::Error> {
                                         Ok(()) => {
                                             log_if_err(
                                                 "Refresh panel",
-                                                app.active_panel_mut().refresh_files_restore_selection(
-                                                    Some(name.as_str()),
-                                                    None,
-                                                    Some(panel_height),
-                                                ),
+                                                app.active_panel_mut()
+                                                    .refresh_files_restore_selection(
+                                                        Some(name.as_str()),
+                                                        None,
+                                                        Some(panel_height),
+                                                    ),
                                             );
                                         }
                                         Err(e) => {
