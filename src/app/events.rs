@@ -231,21 +231,32 @@ impl EventHandler {
         Self::drain_events_nonblocking(app)
     }
 
-    /// During post-command countdown: advance time without dispatching keys/mouse (panels not visible yet).
-    fn handle_events_post_command_countdown() -> io::Result<AppAction> {
+    /// During post-command countdown: panels aren't visible yet, so ignore all input **except Esc**
+    /// (Esc abandons the countdown and restores panels immediately).
+    fn handle_events_post_command_countdown(app: &mut AppState) -> io::Result<AppAction> {
         while event::poll(std::time::Duration::ZERO)? {
-            let _ = event::read()?;
+            let ev = event::read()?;
+            if matches!(ev, Event::Key(k) if k.code == KeyCode::Esc) {
+                if let Some(cd) = app.post_command_countdown.as_mut() {
+                    cd.reveal_at = std::time::Instant::now();
+                }
+            }
         }
         if !event::poll(std::time::Duration::from_millis(100))? {
             return Ok(AppAction::Continue);
         }
-        let _ = event::read()?;
+        let ev = event::read()?;
+        if matches!(ev, Event::Key(k) if k.code == KeyCode::Esc) {
+            if let Some(cd) = app.post_command_countdown.as_mut() {
+                cd.reveal_at = std::time::Instant::now();
+            }
+        }
         Ok(AppAction::Continue)
     }
 
     pub fn handle_events(app: &mut AppState) -> io::Result<AppAction> {
         if app.post_command_countdown_active() {
-            return Self::handle_events_post_command_countdown();
+            return Self::handle_events_post_command_countdown(app);
         }
         // Process all queued events first (no block). Handle every Key/Mouse; drain non-keys.
         // This ensures rapid keypresses when switching panels (e.g. Tab then Down) are all applied.
