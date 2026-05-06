@@ -33,6 +33,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - **Shortcuts:** save panel state **Ctrl+X C** (was Ctrl+E in prior docs); size info **Ctrl+X S** (was Ctrl+G); editor in-file find **Ctrl+X F** (was Ctrl+F, to free Ctrl+F for global find).
 - **F1** opens Actions instead of the old full-screen help dialog.
 - **Subshell** — Deeper integration with the app loop, suspend/resume, and parent/subshell communication.
+- **Post-command countdown** — When the main-buffer countdown runs before panels return (after a subshell command with auto-reopen), **Esc** abandons the wait and restores the panel TUI immediately.
 - **Root chrome in subshell** — The red menu/prompt indicator is now driven by **“any UID 0 process attached to the subshell PTY”** (tty-wide `ps -t … -o uid=`), instead of attempting to detect a “root shell session” specifically. This makes `sudo -s`/`sudo -i` reliably flip the chrome red across platforms, at the cost of also turning it red for any other root program on that PTY (by design).
 - **Diff viewer** — Input and cancel behavior during long reads.
 - **Renderer / overlays** — Layout updates for new dialogs and viewers.
@@ -49,20 +50,3 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - Dialog text inputs across settings, rename, pattern select, mkdir, new file, archive, and panel overlays.
 - Settings/autosave aligned with new Ctrl+X chords.
 - Cross-shell relay reliability.
-
-### Commit index (0.2.0 development line)
-
-Newest first; useful for archaeology, not a substitute for the sections above.
-
-| Commit     | Message |
-|------------|---------|
-| `542972d` | fix(image view): iTerm2 compatibility |
-| `67134e8` | feat(global): image viwer and save config fix |
-| `16ffe92` | chore: minor |
-| `294d4a7` | feature(global): actions menu and fixes |
-| `c50a266` | fix(global): cross shell communication |
-| `1c3c704` | fix(global): major fixes - panels refreshing and botton menu under root after sudo |
-| `54be8a3` | fix(diff): abandon via esc on heavy operations |
-| `4e5cf24` | fix(ui): dialogs inputs |
-| `3faf18c` | fix(global): critical fixes |
-| `d19c078` | fix(global): critical fixes |
