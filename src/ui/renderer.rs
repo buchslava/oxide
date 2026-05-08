@@ -1620,15 +1620,14 @@ impl Renderer {
         is_left_panel: bool,
         folder_compare: Option<&FolderCompareState>,
     ) {
-        // One-column view: no header row; data rows have name + size + mtime (like two-column: no redundant left padding).
+        // One-column view: no header row; name block + mtime (no size column).
         // Mark: only "> " when marked (no leading spaces when unmarked, to match two-column).
-        const SIZE_W: u16 = 12;
         const MTIME_W: u16 = 17; // "Feb 13 2024 20:05"
         const GAP: u16 = 1;
-        const SPACE_BETWEEN_SIZE_MTIME: u16 = 1;
+        const GAP_BEFORE_MTIME: u16 = 1;
         let name_w = area
             .width
-            .saturating_sub(SIZE_W + GAP + MTIME_W + SPACE_BETWEEN_SIZE_MTIME)
+            .saturating_sub(MTIME_W + GAP + GAP_BEFORE_MTIME)
             .max(10) as usize;
 
         let panel_height = (area.height as usize).max(1);
@@ -1659,13 +1658,11 @@ impl Renderer {
                 }
             };
             let name_display = truncate_for_width(file, name_w);
-            let size_str = size_display(file);
             let mtime_str = file
                 .mtime
                 .as_ref()
                 .map(format_mtime)
                 .unwrap_or_else(String::new);
-            let size_pad = format!("{:>1$}", size_str, SIZE_W as usize);
             let mtime_pad = format!("{:>17}", mtime_str); // "Feb 13 2024 20:05" = 17 chars
 
             let (name_style, mark_style) = if is_selected {
@@ -1718,16 +1715,6 @@ impl Renderer {
                 Span::styled(
                     pad_after_name,
                     if is_selected { mark_style } else { base },
-                ),
-                Span::styled(
-                    size_pad.as_str(),
-                    if is_selected {
-                        mark_style
-                    } else if file.is_hidden_dotfile() {
-                        base.fg(list.hidden_fg)
-                    } else {
-                        base.fg(list.file_fg)
-                    },
                 ),
                 Span::raw(" "),
                 Span::styled(

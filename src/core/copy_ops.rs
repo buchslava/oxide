@@ -29,6 +29,11 @@ pub fn copy_dir_recursive<P: AsRef<Path>>(
     let src = src.as_ref();
     let dst = dst.as_ref();
     fs::create_dir_all(dst)?;
+    #[cfg(unix)]
+    {
+        let perm = fs::metadata(src)?.permissions();
+        fs::set_permissions(dst, perm)?;
+    }
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;

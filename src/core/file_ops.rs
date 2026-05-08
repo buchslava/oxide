@@ -82,6 +82,70 @@ fn format_permissions(_mode: u32) -> String {
     "----------".to_string()
 }
 
+/// Combine permission bits with a file kind when archives store only `0o777` (common in tar).
+#[cfg(unix)]
+fn mode_bits_for_permission_string(raw: u32, is_dir: bool, is_symlink: bool) -> u32 {
+    if (raw & 0o170000) != 0 {
+        raw
+    } else {
+        let perm = raw & 0o7777;
+        let kind = if is_symlink {
+            0o120000
+        } else if is_dir {
+            0o040000
+        } else {
+            0o100000
+        };
+        kind | perm
+    }
+}
+
+/// Maps stored Unix mode from a zip/tar entry to list columns (`permissions`, `is_executable`).
+pub fn archive_entry_listing_fields(
+    unix_mode: Option<u32>,
+    is_dir: bool,
+    is_symlink: bool,
+) -> (String, bool) {
+    #[cfg(unix)]
+    {
+        match unix_mode {
+            Some(raw) => {
+                let mode = mode_bits_for_permission_string(raw, is_dir, is_symlink);
+                let permissions = format_permissions(mode);
+                let is_executable =
+                    !is_dir && !is_symlink && (mode & 0o111) != 0;
+                (permissions, is_executable)
+            }
+            None => ("----------".to_string(), false),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (unix_mode, is_dir, is_symlink);
+        ("----------".to_string(), false)
+    }
+}
+
+/// Apply permission bits from an archive entry to a newly created path (`chmod`, Unix only).
+pub fn apply_archive_unix_mode(path: &Path, unix_mode: Option<u32>) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let Some(raw) = unix_mode else {
+            return Ok(());
+        };
+        let bits = raw & 0o7777;
+        if bits == 0 {
+            return Ok(());
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(bits))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, unix_mode);
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub name: String,

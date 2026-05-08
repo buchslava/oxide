@@ -30,6 +30,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 
 ### Changed
 
+- **Panel file list** — Dropped the left permission column and the size column next to each name (single-column rows are mark + name + mtime; double-column rows are mark + MC-style name only, e.g. `*file` / `/dir`).
 - **Shortcuts:** save panel state **Ctrl+X C** (was Ctrl+E in prior docs); size info **Ctrl+X S** (was Ctrl+G); editor in-file find **Ctrl+X F** (was Ctrl+F, to free Ctrl+F for global find).
 - **F1** opens Actions instead of the old full-screen help dialog.
 - **Subshell** — Deeper integration with the app loop, suspend/resume, and parent/subshell communication.
@@ -45,6 +46,10 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 
 ### Fixed
 
+- **Archives (ZIP / tar.gz)** — Virtual listings use stored Unix modes (and symlinks for tar) so executable styling matches metadata when the archive records it. Extract (F5 / copy-out) applies stored permission bits on Unix (`chmod`) after writing files and directories.
+- **Create archive (Ctrl+X A)** — New `.zip` members get `.unix_permissions()` from each source path on Unix (no longer everything 0644). `.tar.gz` creation uses each directory’s real mode for GNU headers instead of a fixed `0755`. Adding to an existing ZIP, delete/move rewrite, mkdir-in-zip, and single-file write preserve each kept entry’s previous Unix mode when rebuilding the central directory.
+- **tar.gz rewrite** — In-memory `TarEntry` now carries the header mode from the archive (or from disk when adding from a filesystem panel) so round-trips do not force `755`/`644` on every member.
+- **Recursive copy (F5)** — On Unix, destination directories created during tree copy get the same permission bits as the matching source directories (`fs::copy` already preserved file modes).
 - Panel refresh when paths vanish or change; bottom bar under `/` after `sudo` and related state issues.
 - Diff viewer: **Esc** can abandon or close during heavy operations.
 - Dialog text inputs across settings, rename, pattern select, mkdir, new file, archive, and panel overlays.

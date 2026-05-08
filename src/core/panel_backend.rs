@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use super::copy_ops;
-use super::file_ops::{apply_sort_mode, FileInfo, FileOperations};
+use super::file_ops::{
+    apply_archive_unix_mode, apply_sort_mode, archive_entry_listing_fields, FileInfo,
+    FileOperations,
+};
 use super::location::{archive_format_for_path, ArchiveFormat, PanelLocation};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -15,6 +18,69 @@ use flate2::Compression;
 use tar::{Archive, Builder, EntryType, Header};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+#[cfg(unix)]
+fn zip_unix_perm_bits_from_path(path: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path)
+        .ok()
+        .map(|m| m.permissions().mode() & 0o777)
+}
+
+/// Zip writer options with Unix permission bits from `path` (files and directories).
+fn zip_options_for_path(path: &Path, method: CompressionMethod) -> SimpleFileOptions {
+    let base = SimpleFileOptions::default().compression_method(method);
+    #[cfg(unix)]
+    if let Some(bits) = zip_unix_perm_bits_from_path(path) {
+        return base.unix_permissions(bits);
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    base
+}
+
+/// Zip writer options preserving mode from an existing central-directory entry.
+fn zip_options_from_unix_mode(unix_mode: Option<u32>, method: CompressionMethod) -> SimpleFileOptions {
+    let base = SimpleFileOptions::default().compression_method(method);
+    #[cfg(unix)]
+    if let Some(m) = unix_mode {
+        return base.unix_permissions(m & 0o777);
+    }
+    #[cfg(not(unix))]
+    let _ = unix_mode;
+    base
+}
+
+fn zip_options_for_fs_under(
+    source: &PanelLocation,
+    path_under_panel: &str,
+    method: CompressionMethod,
+) -> SimpleFileOptions {
+    match source {
+        PanelLocation::Fs(p) => {
+            let path = FileOperations::join_path(p, path_under_panel.trim_start_matches('/'));
+            zip_options_for_path(&path, method)
+        }
+        PanelLocation::Archive { .. } => {
+            SimpleFileOptions::default().compression_method(method)
+        }
+    }
+}
+
+fn tar_mode_from_path(path: &Path) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .ok()
+            .map(|m| m.permissions().mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
 
 /// List contents of a location (directory or zip virtual directory).
 /// sort_mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
@@ -193,7 +259,7 @@ pub fn create_archive_with_progress(
     let archive_path = FileOperations::join_path(base_dir, archive_name);
     let file = fs::File::create(&archive_path)?;
     let mut writer = ZipWriter::new(file);
-    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let zip_method = CompressionMethod::Deflated;
 
     let total = items.len();
     for (idx, (name, is_dir)) in items.iter().enumerate() {
@@ -238,14 +304,23 @@ pub fn create_archive_with_progress(
                     relative.to_string_lossy().replace('\\', "/")
                 );
                 if path.is_dir() {
-                    writer.add_directory(&name_in_zip, opts)?;
+                    writer.add_directory(
+                        &name_in_zip,
+                        zip_options_for_path(path, zip_method),
+                    )?;
                 } else {
-                    writer.start_file(&name_in_zip, opts)?;
+                    writer.start_file(
+                        &name_in_zip,
+                        zip_options_for_path(path, zip_method),
+                    )?;
                     io::copy(&mut fs::File::open(path)?, &mut writer)?;
                 }
             }
         } else {
-            writer.start_file(name_clean, opts)?;
+            writer.start_file(
+                name_clean,
+                zip_options_for_path(&full_path, zip_method),
+            )?;
             io::copy(
                 &mut fs::File::open(&full_path)?,
                 &mut writer,
@@ -333,7 +408,11 @@ fn create_tar_gz_archive_with_progress(
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                     header.set_entry_type(EntryType::Directory);
                     header.set_size(0);
-                    header.set_mode(0o755);
+                    #[cfg(unix)]
+                    let dir_mode = tar_mode_from_path(path).unwrap_or(0o755);
+                    #[cfg(not(unix))]
+                    let dir_mode = 0o755_u32;
+                    header.set_mode(dir_mode);
                     header.set_cksum();
                     builder
                         .append(&header, &[][..])
@@ -593,16 +672,24 @@ fn zip_list(
         let size = entry.size();
         // ZIP DateTime conversion APIs differ across versions/features; keep mtime empty for now.
         let mtime = None;
+        let is_symlink = entry.is_symlink();
+        let listing_mode = if is_dir && !entry.is_dir() && !name.ends_with('/') {
+            None
+        } else {
+            entry.unix_mode()
+        };
+        let (permissions, is_executable) =
+            archive_entry_listing_fields(listing_mode, is_dir, is_symlink);
         map.insert(
             key,
             FileInfo::with_metadata(
                 display,
                 is_dir,
-                false,
-                false,
+                is_executable,
+                is_symlink,
                 size,
                 mtime,
-                "----------".to_string(),
+                permissions,
                 String::new(),
                 String::new(),
             ),
@@ -611,11 +698,12 @@ fn zip_list(
 
     let mut files: Vec<FileInfo> = map.into_values().collect();
     if !prefix.is_empty() || archive_path.parent().is_some() {
-        files.push(FileInfo::new(
-            "..".to_string(),
-            true,
-            false,
-        ));
+        let mut parent = FileInfo::new("..".to_string(), true, false);
+        #[cfg(unix)]
+        {
+            parent.permissions = "drwxr-xr-x".to_string();
+        }
+        files.push(parent);
     }
     apply_sort_mode(&mut files, sort_mode, dirs_first);
     Ok(files)
@@ -706,15 +794,19 @@ fn zip_extract_items(
                     let rel = ename[entry_path.len().min(ename.len())..].trim_start_matches('/');
                     let is_entry_dir = ename.ends_with('/');
                     let dest = target_dir.join(dest_root).join(rel.trim_end_matches('/'));
+                    let mode = entry.unix_mode();
                     if is_entry_dir {
                         fs::create_dir_all(&dest).ok();
+                        let _ = apply_archive_unix_mode(&dest, mode);
                     } else {
                         if let Some(parent) = dest.parent() {
                             let _ = fs::create_dir_all(parent);
                         }
                         let mut data = Vec::new();
                         if io::copy(&mut entry, &mut data).is_ok() {
-                            let _ = fs::write(&dest, data);
+                            if fs::write(&dest, data).is_ok() {
+                                let _ = apply_archive_unix_mode(&dest, mode);
+                            }
                         }
                     }
                 }
@@ -727,9 +819,12 @@ fn zip_extract_items(
                 format!("{}/{}", prefix, name_clean)
             };
             if let Ok(mut entry) = archive.by_name(&full_name) {
+                let mode = entry.unix_mode();
                 let dest = target_dir.join(dest_root);
                 let mut out = fs::File::create(&dest)?;
                 io::copy(&mut entry, &mut out)?;
+                drop(out);
+                let _ = apply_archive_unix_mode(&dest, mode);
             }
         }
     }
@@ -867,7 +962,7 @@ fn zip_add_items(
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
     let mut writer = ZipWriter::new(out_file);
-    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let zip_method = CompressionMethod::Deflated;
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -880,10 +975,11 @@ fn zip_add_items(
         if entry.is_dir() {
             continue;
         }
+        let unix_mode = entry.unix_mode();
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let copy_opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let copy_opts = zip_options_from_unix_mode(unix_mode, CompressionMethod::Stored);
         writer.start_file(name, copy_opts)?;
         writer.write_all(&data)?;
     }
@@ -912,10 +1008,18 @@ fn zip_add_items(
                 };
                 if rel_is_dir {
                     let dir_entry = format!("{}/", zip_name.trim_end_matches('/'));
-                    writer.add_directory(&dir_entry, opts)?;
+                    let fs_under = format!("{}/{}", name_clean, rel.trim_end_matches('/'));
+                    writer.add_directory(
+                        &dir_entry,
+                        zip_options_for_fs_under(source, &fs_under, zip_method),
+                    )?;
                 } else {
-                    let data = read_file(source, &format!("{}/{}", name_clean, rel))?;
-                    writer.start_file(&zip_name, opts)?;
+                    let rel_path = format!("{}/{}", name_clean, rel);
+                    let data = read_file(source, &rel_path)?;
+                    writer.start_file(
+                        &zip_name,
+                        zip_options_for_fs_under(source, &rel_path, zip_method),
+                    )?;
                     writer.write_all(&data)?;
                 }
             }
@@ -926,7 +1030,10 @@ fn zip_add_items(
             } else {
                 format!("{}{}", target_prefix_slash, dst_root)
             };
-            writer.start_file(&zip_name, opts)?;
+            writer.start_file(
+                &zip_name,
+                zip_options_for_fs_under(source, name_clean, zip_method),
+            )?;
             writer.write_all(&data)?;
         }
     }
@@ -993,7 +1100,6 @@ fn zip_remove_items(
     let out_path = archive_path.with_extension("zip.tmp");
     let out_file = fs::File::create(&out_path)?;
     let mut writer = ZipWriter::new(out_file);
-    let options = SimpleFileOptions::default();
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -1006,10 +1112,11 @@ fn zip_remove_items(
         if entry.is_dir() {
             continue; // directory entries are optional; we'll create dirs from file paths
         }
+        let unix_mode = entry.unix_mode();
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let opts = options.compression_method(CompressionMethod::Stored);
+        let opts = zip_options_from_unix_mode(unix_mode, CompressionMethod::Stored);
         writer.start_file(name, opts)?;
         writer.write_all(&data)?;
     }
@@ -1049,10 +1156,11 @@ fn zip_mkdir(
         if entry.is_dir() {
             continue;
         }
+        let unix_mode = entry.unix_mode();
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
-        let copy_opts = opts.compression_method(CompressionMethod::Stored);
+        let copy_opts = zip_options_from_unix_mode(unix_mode, CompressionMethod::Stored);
         writer.start_file(name, copy_opts)?;
         writer.write_all(&data)?;
     }
@@ -1085,7 +1193,6 @@ fn zip_write_file(
     let out_file = fs::File::create(&out_path)?;
     let mut writer = ZipWriter::new(out_file);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    let copy_opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -1098,9 +1205,11 @@ fn zip_write_file(
         if entry.is_dir() {
             continue;
         }
+        let unix_mode = entry.unix_mode();
         let mut data = Vec::new();
         io::copy(&mut entry, &mut data)?;
         drop(entry);
+        let copy_opts = zip_options_from_unix_mode(unix_mode, CompressionMethod::Stored);
         writer.start_file(name, copy_opts)?;
         writer.write_all(&data)?;
     }
@@ -1131,6 +1240,8 @@ struct TarEntry {
     path: String,
     data: Vec<u8>,
     is_dir: bool,
+    /// GNU/ustar mode bits (as stored in the tar header).
+    mode: u32,
 }
 
 fn tar_gz_read_all_entries(archive_path: &Path) -> io::Result<Vec<TarEntry>> {
@@ -1152,11 +1263,16 @@ fn tar_gz_read_all_entries(archive_path: &Path) -> io::Result<Vec<TarEntry>> {
         if name_clean.is_empty() {
             continue;
         }
+        let mode = entry
+            .header()
+            .mode()
+            .unwrap_or(if is_dir { 0o755 } else { 0o644 });
         if is_dir {
             out.push(TarEntry {
                 path: format!("{}/", name_clean),
                 data: Vec::new(),
                 is_dir: true,
+                mode,
             });
         } else {
             let mut data = Vec::new();
@@ -1165,6 +1281,7 @@ fn tar_gz_read_all_entries(archive_path: &Path) -> io::Result<Vec<TarEntry>> {
                 path: name_clean,
                 data,
                 is_dir: false,
+                mode,
             });
         }
     }
@@ -1187,14 +1304,14 @@ fn write_tar_gz_entries(
         if e.is_dir {
             header.set_entry_type(EntryType::Directory);
             header.set_size(0);
-            header.set_mode(0o755);
+            header.set_mode(e.mode);
             header.set_cksum();
             builder
                 .append(&header, &[][..])
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         } else {
             header.set_size(e.data.len() as u64);
-            header.set_mode(0o644);
+            header.set_mode(e.mode);
             header.set_cksum();
             builder
                 .append(&header, e.data.as_slice())
@@ -1276,16 +1393,24 @@ fn tar_gz_list(
         }
         let size = entry.size();
         let mtime = None;
+        let is_symlink = entry.header().entry_type() == EntryType::Symlink;
+        let listing_mode = if is_dir && !is_entry_dir && name_clean.contains('/') {
+            None
+        } else {
+            entry.header().mode().ok()
+        };
+        let (permissions, is_executable) =
+            archive_entry_listing_fields(listing_mode, is_dir, is_symlink);
         map.insert(
             key,
             FileInfo::with_metadata(
                 display_name,
                 is_dir,
-                false,
-                false,
+                is_executable,
+                is_symlink,
                 size,
                 mtime,
-                "----------".to_string(),
+                permissions,
                 String::new(),
                 String::new(),
             ),
@@ -1294,11 +1419,12 @@ fn tar_gz_list(
 
     let mut files: Vec<FileInfo> = map.into_values().collect();
     if !prefix.is_empty() || archive_path.parent().is_some() {
-        files.push(FileInfo::new(
-            "..".to_string(),
-            true,
-            false,
-        ));
+        let mut parent = FileInfo::new("..".to_string(), true, false);
+        #[cfg(unix)]
+        {
+            parent.permissions = "drwxr-xr-x".to_string();
+        }
+        files.push(parent);
     }
     apply_sort_mode(&mut files, sort_mode, dirs_first);
     Ok(files)
@@ -1399,15 +1525,19 @@ fn tar_gz_extract_items(
                     };
                     let is_entry_dir = entry.header().entry_type().is_dir() || ename.ends_with('/');
                     let dest = target_dir.join(dest_root).join(rel.trim_end_matches('/'));
+                    let mode = entry.header().mode().ok();
                     if is_entry_dir {
                         fs::create_dir_all(&dest).ok();
+                        let _ = apply_archive_unix_mode(&dest, mode);
                     } else {
                         if let Some(parent) = dest.parent() {
                             let _ = fs::create_dir_all(parent);
                         }
                         let mut data = Vec::new();
                         if io::copy(&mut entry, &mut data).is_ok() {
-                            let _ = fs::write(&dest, data);
+                            if fs::write(&dest, data).is_ok() {
+                                let _ = apply_archive_unix_mode(&dest, mode);
+                            }
                         }
                     }
                 }
@@ -1433,9 +1563,12 @@ fn tar_gz_extract_items(
                 let ename = normalize_tar_path(&path.to_string_lossy());
                 let ename_clean = ename.trim_end_matches('/').to_string();
                 if ename_clean == full_name && !entry.header().entry_type().is_dir() {
+                    let mode = entry.header().mode().ok();
                     let dest = target_dir.join(dest_root);
                     let mut out = fs::File::create(&dest)?;
                     io::copy(&mut entry, &mut out)?;
+                    drop(out);
+                    let _ = apply_archive_unix_mode(&dest, mode);
                     break;
                 }
             }
@@ -1548,6 +1681,22 @@ fn tar_gz_add_items(
         !(to_add.contains(name) || to_add.contains(name.trim_end_matches('/')))
     });
 
+    let tar_mode_for_fs_under = |rel: &str, is_dir: bool| -> u32 {
+        match source {
+            PanelLocation::Fs(p) => {
+                let joined = FileOperations::join_path(p, rel.trim_start_matches('/'));
+                tar_mode_from_path(&joined).unwrap_or(if is_dir { 0o755 } else { 0o644 })
+            }
+            PanelLocation::Archive { .. } => {
+                if is_dir {
+                    0o755
+                } else {
+                    0o644
+                }
+            }
+        }
+    };
+
     for (i, (name, is_dir)) in items.iter().enumerate() {
         let name_clean = name.trim_end_matches('/');
         let dst_root = dest_roots
@@ -1571,17 +1720,21 @@ fn tar_gz_add_items(
                     )
                 };
                 if rel_is_dir {
+                    let fs_rel = format!("{}/{}", name_clean, rel.trim_end_matches('/'));
                     entries.push(TarEntry {
                         path: format!("{}/", path.trim_end_matches('/')),
                         data: Vec::new(),
                         is_dir: true,
+                        mode: tar_mode_for_fs_under(&fs_rel, true),
                     });
                 } else {
-                    let data = read_file(source, &format!("{}/{}", name_clean, rel))?;
+                    let rel_path = format!("{}/{}", name_clean, rel);
+                    let data = read_file(source, &rel_path)?;
                     entries.push(TarEntry {
                         path,
                         data,
                         is_dir: false,
+                        mode: tar_mode_for_fs_under(&rel_path, false),
                     });
                 }
             }
@@ -1596,6 +1749,7 @@ fn tar_gz_add_items(
                 path,
                 data,
                 is_dir: false,
+                mode: tar_mode_for_fs_under(name_clean, false),
             });
         }
     }
@@ -1681,6 +1835,7 @@ fn tar_gz_mkdir(
         path: dir_path,
         data: Vec::new(),
         is_dir: true,
+        mode: 0o755,
     });
     write_tar_gz_entries(archive_path, &entries)
 }
@@ -1708,6 +1863,7 @@ fn tar_gz_write_file(
         path: entry_name,
         data: content.to_vec(),
         is_dir: false,
+        mode: 0o644,
     });
     write_tar_gz_entries(archive_path, &entries)
 }
