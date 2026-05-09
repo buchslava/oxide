@@ -326,18 +326,16 @@ fn main() -> Result<(), io::Error> {
         if let Some(rx) = app.size_info_pending_rx.take() {
             match rx.try_recv() {
                 Ok(SizeInfoProgress::Progress {
-                    current,
-                    total,
+                    current_path,
                     total_bytes,
-                    file_count,
-                    dir_count,
+                    directories_scanned,
+                    files_counted,
                 }) => {
                     app.size_info_dialog = Some(SizeInfoDialogState::Calculating {
-                        current,
-                        total,
+                        current_path,
                         total_bytes,
-                        file_count,
-                        dir_count,
+                        directories_scanned,
+                        files_counted,
                     });
                     app.size_info_pending_rx = Some(rx);
                     redraw_ui(&mut terminal, &mut app)?;
@@ -347,6 +345,7 @@ fn main() -> Result<(), io::Error> {
                     file_count,
                     dir_count,
                 }) => {
+                    app.size_info_cancel = None;
                     app.size_info_dialog = Some(SizeInfoDialogState::Done {
                         total_bytes,
                         file_count,
@@ -358,6 +357,7 @@ fn main() -> Result<(), io::Error> {
                     app.size_info_pending_rx = Some(rx);
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
+                    app.size_info_cancel = None;
                     app.size_info_dialog = None;
                 }
             }

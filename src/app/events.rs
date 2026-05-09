@@ -2,6 +2,7 @@ use crate::app::ctrl_x_chord::{self, SuspendChordResult};
 use crate::app::panel_refresh;
 use crate::app::state::{
     AppState, CopyParams, Focus, Operation, RenameAttrDialogState, RenameAttrField,
+    SizeInfoDialogState,
 };
 use crate::browser::clipboard;
 use crate::browser::diff_viewer::{cancel_folder_compare_pending, handle_diff_key, handle_diff_mouse};
@@ -531,14 +532,34 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // Size info banner: Ctrl+O or Ctrl+X then O opens subshell; any other key dismisses the banner
-                // and is handled as usual (do not consume the first key after Ctrl+X then S).
+                // Size info: while scanning — modal (Esc / A = abort; mouse on [ Abort ]). Done: subshell chord, else close; Esc does not fall through (would focus command line).
                 if app.size_info_dialog.is_some() {
                     let code_sz = match key.code {
                         KeyCode::Char('\t') => KeyCode::Tab,
                         KeyCode::Char('\u{7f}') => KeyCode::Backspace,
                         other => other,
                     };
+                    let calculating = matches!(
+                        app.size_info_dialog,
+                        Some(SizeInfoDialogState::Calculating { .. })
+                    );
+                    if calculating {
+                        match ctrl_x_chord::poll_suspend_chord(app, code_sz, key.modifiers) {
+                            SuspendChordResult::Consumed => {
+                                return Ok(Some(AppAction::Continue));
+                            }
+                            SuspendChordResult::SuspendToShell => {
+                                return Ok(Some(AppAction::Suspend));
+                            }
+                            SuspendChordResult::NotHandled => {}
+                        }
+                        if matches!(code_sz, KeyCode::Esc)
+                            || matches!(code_sz, KeyCode::Char('a' | 'A'))
+                        {
+                            return Ok(Some(AppAction::SizeInfoClose));
+                        }
+                        return Ok(Some(AppAction::Continue));
+                    }
                     match ctrl_x_chord::poll_suspend_chord(app, code_sz, key.modifiers) {
                         SuspendChordResult::Consumed => {
                             return Ok(Some(AppAction::Continue));
@@ -548,7 +569,12 @@ impl EventHandler {
                         }
                         SuspendChordResult::NotHandled => {}
                     }
+                    // Esc closes the dialog only; do not fall through to panel (Esc would move focus to command line).
+                    let esc_close_only = matches!(code_sz, KeyCode::Esc | KeyCode::Char('\x1b'));
                     size_info_dialog::close(app);
+                    if esc_close_only {
+                        return Ok(Some(AppAction::Continue));
+                    }
                 }
                 // F2 "Rename / Attributes" dialog
                 if app.rename_attr_dialog.is_some() {

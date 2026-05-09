@@ -104,3 +104,57 @@ pub fn format_byte_size(bytes: u64) -> String {
         format!("{:>w$} GB", num, w = W)
     }
 }
+
+/// Integer with ASCII thousands separators (e.g. `36700395` → `"36,700,395"`).
+pub fn format_u64_with_commas(n: u64) -> String {
+    let s = n.to_string();
+    let len = s.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Capacity for disk/volume labels: decimal SI (KB–PB), one fractional digit when non-zero.
+/// Example: `1_234_000_000_000` → `"1.2 TB"`; small values use `B` with thousands separators.
+pub fn format_disk_bytes(bytes: u64) -> String {
+    const KB: u64 = 1_000;
+    const MB: u64 = KB * 1_000;
+    const GB: u64 = MB * 1_000;
+    const TB: u64 = GB * 1_000;
+    const PB: u64 = TB * 1_000;
+
+    fn scaled(
+        bytes: u64,
+        unit: u64,
+        suffix: &str,
+    ) -> String {
+        let whole = bytes / unit;
+        let rem = bytes % unit;
+        let frac = ((rem * 10) / unit) as u32;
+        let whole_s = format_u64_with_commas(whole);
+        if frac == 0 {
+            format!("{} {}", whole_s, suffix)
+        } else {
+            format!("{}.{} {}", whole_s, frac, suffix)
+        }
+    }
+
+    if bytes < KB {
+        format!("{} B", format_u64_with_commas(bytes))
+    } else if bytes < MB {
+        scaled(bytes, KB, "KB")
+    } else if bytes < GB {
+        scaled(bytes, MB, "MB")
+    } else if bytes < TB {
+        scaled(bytes, GB, "GB")
+    } else if bytes < PB {
+        scaled(bytes, TB, "TB")
+    } else {
+        scaled(bytes, PB, "PB")
+    }
+}

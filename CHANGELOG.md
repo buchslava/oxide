@@ -16,7 +16,7 @@ Package version for this crate is defined in `Cargo.toml` (`[package].version`).
 
 ... start
 
-## [0.2.0] - 2026-05-05
+## [0.2.0] - 2026-05-09
 
 First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x).
 
@@ -25,6 +25,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - **Raster image viewer (F3)** — Background load; terminal rendering via `ratatui-image` (Kitty, iTerm2, Sixel, half-blocks). Overrides: `OXIDE_IMAGE_SKIP_CAP_QUERY`, `OXIDE_IMAGE_PROTOCOL` (`halfblocks`, `iterm2`, `sixel`, `kitty`). iTerm2 uses a reliable OSC 1337 path when probing would pick a broken protocol.
 - **F1 Actions dialog** — Scrollable, mouse-friendly shortcut/action list.
 - **Ctrl+X chord handling** (`ctrl_x_chord.rs`) — Suspend and global chords coordinated with overlays.
+- **Size info (Ctrl+X S)** — MC-style **Directory scanning** dialog while totals are computed: live path (compact), directory and file counts, cumulative size in KiB with thousands separators, dimmed backdrop, and **[ Abort ]** / **Esc** / **A** to cancel (`AtomicBool` + cooperative walk in `FileOperations::size_of_path_recursive_cancellable`). **Done** state uses a centered **Size** dialog with selection summary, **Disk:** line from `statvfs`, and a dismiss hint; `format_disk_bytes` / `format_u64_with_commas` in `text_format.rs` render capacities in decimal SI (KB–PB) instead of raw integer “gigabytes”.
 - **`doc/PKGBUILD`** — Example Arch-style packaging metadata.
 - Dependencies: `image`, `ratatui-image` for the above viewer.
 
@@ -32,6 +33,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 
 - **Panel file list** — Dropped the left permission column and the size column next to each name (single-column rows are mark + name + mtime; double-column rows are mark + MC-style name only, e.g. `*file` / `/dir`).
 - **Shortcuts:** save panel state **Ctrl+X C** (was Ctrl+E in prior docs); size info **Ctrl+X S** (was Ctrl+G); editor in-file find **Ctrl+X F** (was Ctrl+F, to free Ctrl+F for global find).
+- **Size info** — Filesystem free/total for the active path is shown only in the **Size** result dialog, not in the panel bottom bar (the bar no longer reserves a disk column while size info is open).
 - **F1** opens Actions instead of the old full-screen help dialog.
 - **Subshell** — Deeper integration with the app loop, suspend/resume, and parent/subshell communication.
 - **Post-command countdown** — When the main-buffer countdown runs before panels return (after a subshell command with auto-reopen), **Esc** abandons the wait and restores the panel TUI immediately.
@@ -46,6 +48,8 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 
 ### Fixed
 
+- **Disk space line (`statvfs`)** — Byte totals use **`f_frsize`** (fragment size) with `f_blocks` / `f_bfree`, not **`f_bsize`**, fixing POSIX-correct math and wildly inflated volumes on macOS APFS (previously ~256× too large).
+- **Size dialog (Done)** — **Esc** closes the dialog only and is not passed through to the panel handler that moves focus to the command line.
 - **Archives (ZIP / tar.gz)** — Virtual listings use stored Unix modes (and symlinks for tar) so executable styling matches metadata when the archive records it. Extract (F5 / copy-out) applies stored permission bits on Unix (`chmod`) after writing files and directories.
 - **Create archive (Ctrl+X A)** — New `.zip` members get `.unix_permissions()` from each source path on Unix (no longer everything 0644). `.tar.gz` creation uses each directory’s real mode for GNU headers instead of a fixed `0755`. Adding to an existing ZIP, delete/move rewrite, mkdir-in-zip, and single-file write preserve each kept entry’s previous Unix mode when rebuilding the central directory.
 - **tar.gz rewrite** — In-memory `TarEntry` now carries the header mode from the archive (or from disk when adding from a filesystem panel) so round-trips do not force `755`/`644` on every member.

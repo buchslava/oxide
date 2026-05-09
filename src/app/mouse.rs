@@ -2,14 +2,14 @@
 //! Keyboard paths for the same dialogs live in `events.rs` — behavior is mirrored, not shared, to avoid coupling.
 
 use crate::app::events::{AppAction, CopyErrorChoice, DeleteConfirmChoice, EditorConfirmChoice};
-use crate::app::state::{AppState, CopyParams, Focus, Operation};
+use crate::app::state::{AppState, CopyParams, Focus, Operation, SizeInfoDialogState};
 use crate::browser::editor::{editor_confirm_option_rects, save_changes_confirm_rect};
 use crate::browser::panel::{PanelOperations, ViewMode};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir};
 use crate::dialogs::{
     actions_dialog, error_detail_dialog, find_dialog, panel_overlay, pattern_select_dialog,
-    rename_attr, settings_dialog,
+    rename_attr, settings_dialog, size_info_dialog,
 };
 use crate::ui::dialog_layout;
 use crate::ui::menu_bar_key;
@@ -48,6 +48,7 @@ fn panels_mouse_enabled(app: &AppState) -> bool {
         && app.copy_in_progress.is_none()
         && app.archive_progress.is_none()
         && app.folder_compare_pending.is_none()
+        && !size_info_dialog::is_calculating(app)
 }
 
 /// Which of two primary/secondary dialog buttons was hit (Create/Cancel, Apply/Cancel, Yes/No).
@@ -236,6 +237,20 @@ pub(crate) fn handle_mouse_event(
     }
     if let Some(out) = try_mouse_settings(app, area, &mouse_event) {
         return Ok(Some(out));
+    }
+    if size_info_dialog::is_calculating(app) {
+        let (term_w, term_h) = size().unwrap_or((80, 24));
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: term_w,
+            height: term_h,
+        };
+        return Ok(Some(handle_size_info_calculating_mouse(
+            app,
+            area,
+            &mouse_event,
+        )));
     }
     if let Some(out) = try_mouse_size_info(app, &mouse_event) {
         return Ok(Some(out));
@@ -569,11 +584,32 @@ fn try_mouse_settings(
     )
 }
 
+fn handle_size_info_calculating_mouse(
+    _app: &AppState,
+    area: Rect,
+    mouse_event: &MouseEvent,
+) -> AppAction {
+    if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+        let b = size_info_dialog::abort_button_rect(area);
+        if mouse_event.column >= b.x
+            && mouse_event.column < b.x.saturating_add(b.width)
+            && mouse_event.row >= b.y
+            && mouse_event.row < b.y.saturating_add(b.height)
+        {
+            return AppAction::SizeInfoClose;
+        }
+    }
+    AppAction::Continue
+}
+
 fn try_mouse_size_info(
     app: &AppState,
     mouse_event: &MouseEvent,
 ) -> Option<AppAction> {
-    if app.size_info_dialog.is_none() {
+    if !matches!(
+        app.size_info_dialog.as_ref(),
+        Some(SizeInfoDialogState::Done { .. })
+    ) {
         return None;
     }
     if matches!(mouse_event.kind, MouseEventKind::Down(_)) {

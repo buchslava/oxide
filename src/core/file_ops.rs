@@ -1,6 +1,8 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -546,26 +548,94 @@ impl FileOperations {
 
     /// Compute total size of a path: file size for files; recursively sum for directories.
     /// Symlinks are followed (metadata() resolves to target). Errors (e.g. permission denied) are
-    /// skipped and contribute 0 to the total.
-    pub fn size_of_path_recursive<P: AsRef<Path>>(path: P) -> u64 {
-        let path = path.as_ref();
-        let Ok(metadata) = fs::metadata(path) else {
-            return 0;
-        };
-        if metadata.is_file() {
-            return metadata.len();
+    /// skipped and contribute 0 to the total. Returns `None` if `cancel` becomes true while walking.
+    /// On success returns `(total_bytes, files_counted, directories_visited)` for the subtree rooted at `path`.
+    /// `on_tick` receives the same triple plus `path_being_visited`; throttled to about every 50ms or every 128 directory entries.
+    pub fn size_of_path_recursive_cancellable(
+        path: &Path,
+        cancel: &AtomicBool,
+        on_tick: &mut impl FnMut(&Path, u64, usize, usize),
+    ) -> Option<(u64, usize, usize)> {
+        struct TickGate {
+            last: Instant,
+            n: u64,
         }
-        if !metadata.is_dir() {
-            return 0;
+        impl TickGate {
+            fn new() -> Self {
+                Self {
+                    last: Instant::now(),
+                    n: 0,
+                }
+            }
+            fn maybe_emit(
+                &mut self,
+                on_tick: &mut impl FnMut(&Path, u64, usize, usize),
+                path: &Path,
+                bytes: u64,
+                files: usize,
+                dirs: usize,
+            ) {
+                self.n = self.n.wrapping_add(1);
+                if self.last.elapsed() >= Duration::from_millis(50) || self.n % 128 == 0 {
+                    on_tick(path, bytes, files, dirs);
+                    self.last = Instant::now();
+                }
+            }
         }
-        let Ok(entries) = fs::read_dir(path) else {
-            return 0;
-        };
-        let mut total = 0u64;
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            total = total.saturating_add(Self::size_of_path_recursive(entry_path));
+
+        fn walk(
+            path: &Path,
+            cancel: &AtomicBool,
+            bytes: &mut u64,
+            files: &mut usize,
+            dirs: &mut usize,
+            gate: &mut TickGate,
+            on_tick: &mut impl FnMut(&Path, u64, usize, usize),
+        ) -> bool {
+            if cancel.load(Ordering::Relaxed) {
+                return false;
+            }
+            let Ok(metadata) = fs::metadata(path) else {
+                return true;
+            };
+            if metadata.is_file() {
+                *bytes = bytes.saturating_add(metadata.len());
+                *files = *files + 1;
+                gate.maybe_emit(on_tick, path, *bytes, *files, *dirs);
+                return true;
+            }
+            if !metadata.is_dir() {
+                return true;
+            }
+            *dirs = *dirs + 1;
+            gate.maybe_emit(on_tick, path, *bytes, *files, *dirs);
+            let Ok(entries) = fs::read_dir(path) else {
+                return true;
+            };
+            for entry in entries.flatten() {
+                if !walk(&entry.path(), cancel, bytes, files, dirs, gate, on_tick) {
+                    return false;
+                }
+            }
+            true
         }
-        total
+
+        let mut bytes = 0u64;
+        let mut files = 0usize;
+        let mut dirs = 0usize;
+        let mut gate = TickGate::new();
+        if !walk(
+            path,
+            cancel,
+            &mut bytes,
+            &mut files,
+            &mut dirs,
+            &mut gate,
+            on_tick,
+        ) {
+            return None;
+        }
+        on_tick(path, bytes, files, dirs);
+        Some((bytes, files, dirs))
     }
 }

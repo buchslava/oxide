@@ -143,6 +143,8 @@ pub struct AppState {
     pub right_panel_rect: Option<Rect>,
     /// Receiver for background size calculation; polled in main loop.
     pub size_info_pending_rx: Option<mpsc::Receiver<SizeInfoProgress>>,
+    /// While size scan runs: set to stop the worker (Esc / Abort / close).
+    pub size_info_cancel: Option<Arc<AtomicBool>>,
     /// Receiver for find file search thread; polled when find_dialog is open.
     pub find_search_rx: Option<mpsc::Receiver<FindMessage>>,
     /// When Some, the find search thread should stop; set on Esc/close during search.
@@ -258,6 +260,7 @@ impl AppState {
             left_panel_rect: None,
             right_panel_rect: None,
             size_info_pending_rx: None,
+            size_info_cancel: None,
             find_search_rx: None,
             find_search_cancel: None,
             last_mouse_click: None,

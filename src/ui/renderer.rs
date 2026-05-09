@@ -1,5 +1,5 @@
 use crate::app::state::{
-    AppState, ArchiveProgress, CopyErrorState, CopyProgress, Focus, Operation,
+    AppState, ArchiveProgress, CopyErrorState, CopyProgress, Focus, Operation, SizeInfoDialogState,
 };
 use crate::browser::diff_viewer::{
     self, clear_folder_compare_if_stale, FolderCompareState, FolderDiffTag,
@@ -11,7 +11,7 @@ use crate::core::disk_space::disk_space_summary;
 use crate::core::file_ops::FileInfo;
 use crate::core::location::archive_format_for_filename;
 use crate::core::panel_backend;
-use crate::core::text_format::{format_byte_size, truncate_str, TruncateMode};
+use crate::core::text_format::{format_byte_size, format_u64_with_commas, truncate_str, TruncateMode};
 use crate::dialogs::{
     actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
     panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
@@ -285,6 +285,7 @@ impl Renderer {
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
             || app.right_panel_settings_overlay.is_some()
+            || app.size_info_dialog.is_some()
     }
 
     /// MC-style: panels + status + command line; or viewer (F3) or editor (F4) with optional confirm dialog.
@@ -313,6 +314,9 @@ impl Renderer {
         }
         if let Some(ref progress) = app.archive_progress {
             Self::draw_archive_progress(f, progress, &app.ui_palette);
+        }
+        if app.size_info_dialog.is_some() {
+            Self::draw_size_info_dialog(f, app);
         }
         if app.folder_compare_pending.is_some() {
             Self::draw_folder_compare_pending(f, &app.ui_palette);
@@ -1060,6 +1064,207 @@ impl Renderer {
         );
     }
 
+    /// Ctrl+X then S: MC-style directory scanning / final totals (progress palette).
+    fn draw_size_info_dialog(
+        f: &mut Frame,
+        app: &AppState,
+    ) {
+        let Some(ref state) = app.size_info_dialog else {
+            return;
+        };
+        let pr = &app.ui_palette.progress;
+        let area = f.area();
+        let rect = size_info_dialog::dialog_rect(area);
+        let fill_style = Style::default().bg(pr.background);
+
+        f.render_widget(Clear, rect);
+        let title = match state {
+            SizeInfoDialogState::Calculating { .. } => " Directory scanning ",
+            SizeInfoDialogState::Done { .. } => " Size ",
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .style(fill_style.fg(pr.border));
+        f.render_widget(block, rect);
+        let inner = rect.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let content = Rect {
+            x: inner.x + DEFAULT_PAD_H,
+            y: inner.y,
+            width: inner.width.saturating_sub(DEFAULT_PAD_H * 2),
+            height: inner.height,
+        };
+        let space_line = " ".repeat(content.width as usize);
+        for r in 0..content.height {
+            f.render_widget(
+                Paragraph::new(space_line.as_str()).style(Style::default().bg(pr.background)),
+                Rect {
+                    x: content.x,
+                    y: content.y + r,
+                    width: content.width,
+                    height: 1,
+                },
+            );
+        }
+
+        match state {
+            SizeInfoDialogState::Calculating {
+                current_path,
+                total_bytes,
+                directories_scanned,
+                files_counted,
+            } => {
+                let max_w = (rect.width.saturating_sub(2 + DEFAULT_PAD_H * 2)) as usize;
+                let path_disp = if current_path.is_empty() {
+                    "…".to_string()
+                } else {
+                    compact_path(current_path, max_w.max(10))
+                };
+                f.render_widget(
+                    Paragraph::new(path_disp)
+                        .style(fill_style.fg(pr.path_text))
+                        .alignment(Alignment::Center),
+                    Rect {
+                        x: content.x,
+                        y: content.y,
+                        width: content.width,
+                        height: 1,
+                    },
+                );
+                let stats = format!(
+                    "Directories: {}, total size: {} KiB",
+                    format_u64_with_commas(*directories_scanned as u64),
+                    format_u64_with_commas(total_bytes / 1024),
+                );
+                f.render_widget(
+                    Paragraph::new(stats)
+                        .style(fill_style.fg(pr.section_label))
+                        .alignment(Alignment::Center),
+                    Rect {
+                        x: content.x,
+                        y: content.y + 1,
+                        width: content.width,
+                        height: 1,
+                    },
+                );
+                if *files_counted > 0 {
+                    let fl = format!(
+                        "Files: {}",
+                        format_u64_with_commas(*files_counted as u64)
+                    );
+                    f.render_widget(
+                        Paragraph::new(fl)
+                            .style(fill_style.fg(pr.section_label))
+                            .alignment(Alignment::Center),
+                        Rect {
+                            x: content.x,
+                            y: content.y + 2,
+                            width: content.width,
+                            height: 1,
+                        },
+                    );
+                }
+                if content.height > 4 {
+                    let esc_hint = Paragraph::new("Esc or A to cancel")
+                        .style(fill_style.fg(pr.hint))
+                        .alignment(Alignment::Center);
+                    f.render_widget(
+                        esc_hint,
+                        Rect {
+                            x: content.x,
+                            y: content.y + content.height - 2,
+                            width: content.width,
+                            height: 1,
+                        },
+                    );
+                }
+                let btn = Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled("[ ", fill_style.fg(pr.path_text)),
+                    Span::styled(
+                        "A",
+                        fill_style.fg(pr.gauge).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("bort ]", fill_style.fg(pr.path_text)),
+                ]);
+                let last_row = content.y + content.height.saturating_sub(1);
+                f.render_widget(
+                    Paragraph::new(btn)
+                        .style(fill_style)
+                        .alignment(Alignment::Center),
+                    Rect {
+                        x: content.x,
+                        y: last_row,
+                        width: content.width,
+                        height: 1,
+                    },
+                );
+            }
+            SizeInfoDialogState::Done {
+                total_bytes,
+                file_count,
+                dir_count,
+            } => {
+                let size_str = format_byte_size(*total_bytes);
+                let count_parts: Vec<String> =
+                    [(*file_count, "file", "files"), (*dir_count, "dir", "dirs")]
+                        .into_iter()
+                        .filter(|(n, ..)| *n > 0)
+                        .map(|(n, sing, pl)| format!("{} {}", n, if n == 1 { sing } else { pl }))
+                        .collect();
+                let summary = if count_parts.is_empty() {
+                    format!("Total: {}", size_str)
+                } else {
+                    format!("Total: {} ({})", size_str, count_parts.join(", "))
+                };
+                f.render_widget(
+                    Paragraph::new(summary)
+                        .style(fill_style.fg(pr.path_text))
+                        .alignment(Alignment::Center),
+                    Rect {
+                        x: content.x,
+                        y: content.y,
+                        width: content.width,
+                        height: 1,
+                    },
+                );
+                let disk = disk_space_summary(app.get_current_dir());
+                let disk_line = format!("Disk: {}", disk);
+                let disk_disp = truncate_str(
+                    &disk_line,
+                    content.width as usize,
+                    TruncateMode::PrefixEllipsis,
+                );
+                f.render_widget(
+                    Paragraph::new(disk_disp)
+                        .style(fill_style.fg(pr.section_label))
+                        .alignment(Alignment::Center),
+                    Rect {
+                        x: content.x,
+                        y: content.y + 1,
+                        width: content.width,
+                        height: 1,
+                    },
+                );
+                let hint = Paragraph::new("Any key closes (Ctrl+X O: subshell)")
+                    .style(fill_style.fg(pr.hint))
+                    .alignment(Alignment::Center);
+                f.render_widget(
+                    hint,
+                    Rect {
+                        x: content.x,
+                        y: content.y + 2,
+                        width: content.width,
+                        height: 1,
+                    },
+                );
+            }
+        }
+    }
+
     /// Ctrl+X D with no marks: panel listings are being compared in the background (Esc cancels).
     fn draw_folder_compare_pending(
         f: &mut Frame,
@@ -1397,7 +1602,7 @@ impl Renderer {
         Self::draw_menu_bar(f, menu_rect, app);
     }
 
-    /// Bottom bar: filename left, file size right (second color) per panel; size info (Ctrl+X then S) replaces active side with green size summary; disk space only while that banner is open.
+    /// Bottom bar: filename left, file size right (second color) per panel; size info (Ctrl+X then S) replaces active side with green size summary on the Done phase. Filesystem disk usage is shown in the Size result dialog instead.
     fn draw_bottom_file_bar(
         f: &mut Frame,
         app: &AppState,
@@ -1409,13 +1614,7 @@ impl Renderer {
         let left_half_w = (sep_x.saturating_sub(area.x)) as usize;
         let right_total_w = area.width.saturating_sub((sep_x - area.x) + 1) as usize;
 
-        let show_disk = app.size_info_dialog.is_some();
-        const DISK_W: usize = 20; // "12G / 466G (2%)"
-        let right_content_w = if show_disk && right_total_w > DISK_W {
-            right_total_w.saturating_sub(DISK_W)
-        } else {
-            right_total_w
-        };
+        let right_content_w = right_total_w;
 
         let size_info_line = size_info_dialog::format_bottom_bar_line(app);
         let active = app.active_panel();
@@ -1497,22 +1696,6 @@ impl Renderer {
                     width: right_content_w as u16,
                     height: 1,
                 },
-            );
-        }
-
-        if show_disk && right_total_w > right_content_w {
-            let disk = disk_space_summary(app.get_current_dir());
-            let disk_str: String = disk.chars().take(DISK_W).collect();
-            let disk_x = sep_x + 1 + right_content_w as u16;
-            let disk_rect = Rect {
-                x: disk_x,
-                y: area.y,
-                width: (right_total_w - right_content_w) as u16,
-                height: 1,
-            };
-            f.render_widget(
-                Paragraph::new(disk_str).style(bar_style),
-                disk_rect,
             );
         }
     }
