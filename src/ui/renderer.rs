@@ -127,18 +127,25 @@ fn format_mtime(t: &std::time::SystemTime) -> String {
     format!("{} {}", date, time)
 }
 
-/// Name and optional size label for bottom bar (no path).
+/// Permissions + size (or either alone) for the bottom bar right side.
+fn bottom_bar_right_label(f: &FileInfo) -> Option<String> {
+    let perms = f.permissions.trim();
+    let sz = size_display(f);
+    match (perms.is_empty(), sz.is_empty()) {
+        (true, true) => None,
+        (true, false) => Some(sz),
+        (false, true) => Some(perms.to_string()),
+        (false, false) => Some(format!("{}  {}", perms, sz)),
+    }
+}
+
+/// Name and optional permissions/size label for bottom bar (no path).
 fn bottom_bar_filename_parts(file: Option<&FileInfo>) -> (String, Option<String>) {
     match file {
         None => (String::new(), None),
         Some(f) => {
             let name = f.name.trim_end_matches('/').to_string();
-            let sz = size_display(f);
-            if sz.is_empty() {
-                (name, None)
-            } else {
-                (name, Some(sz))
-            }
+            (name, bottom_bar_right_label(f))
         }
     }
 }
@@ -165,7 +172,7 @@ fn truncate_bottom_bar_name(
     )
 }
 
-/// Bottom label: filename left, file size flush right in `size_style` (within `max_width` chars per panel).
+/// Bottom label: filename left, permissions + file size flush right in `size_style` (within `max_width` chars per panel).
 fn bottom_bar_file_line_padded(
     file: Option<&FileInfo>,
     max_width: usize,
@@ -173,8 +180,8 @@ fn bottom_bar_file_line_padded(
     size_style: Style,
 ) -> Line<'static> {
     const GAP_MIN: usize = 2;
-    let (name, sz_opt) = bottom_bar_filename_parts(file);
-    let spans: Vec<Span<'static>> = match sz_opt {
+    let (name, right_opt) = bottom_bar_filename_parts(file);
+    let spans: Vec<Span<'static>> = match right_opt {
         None => {
             let display = if name.is_empty() {
                 String::new()
@@ -189,30 +196,30 @@ fn bottom_bar_file_line_padded(
             }
             v
         }
-        Some(sz) => {
-            let max_sz = if name.is_empty() {
+        Some(right) => {
+            let max_right = if name.is_empty() {
                 max_width
             } else {
                 max_width.saturating_sub(GAP_MIN + 1)
             };
-            let sz_display = if sz.chars().count() <= max_sz {
-                sz
+            let right_display = if right.chars().count() <= max_right {
+                right
             } else {
-                truncate_bottom_bar_name(&sz, 0, max_sz.max(1))
+                truncate_str(&right, max_right.max(1), TruncateMode::SuffixEllipsis)
             };
-            let sz_len = sz_display.chars().count();
-            let name_budget = max_width.saturating_sub(sz_len + GAP_MIN);
+            let right_len = right_display.chars().count();
+            let name_budget = max_width.saturating_sub(right_len + GAP_MIN);
             let name_display = if name.is_empty() || name_budget == 0 {
                 String::new()
             } else {
                 truncate_bottom_bar_name(&name, 0, name_budget)
             };
             let name_len = name_display.chars().count();
-            let pad_len = max_width.saturating_sub(name_len + sz_len);
+            let pad_len = max_width.saturating_sub(name_len + right_len);
             vec![
                 Span::styled(name_display, name_style),
                 Span::styled(" ".repeat(pad_len), name_style),
-                Span::styled(sz_display, size_style),
+                Span::styled(right_display, size_style),
             ]
         }
     };

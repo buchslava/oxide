@@ -34,6 +34,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - **Panel file list** — Dropped the left permission column and the size column next to each name (single-column rows are mark + name + mtime; double-column rows are mark + MC-style name only, e.g. `*file` / `/dir`).
 - **Shortcuts:** save panel state **Ctrl+X C** (was Ctrl+E in prior docs); size info **Ctrl+X S** (was Ctrl+G); editor in-file find **Ctrl+X F** (was Ctrl+F, to free Ctrl+F for global find).
 - **Size info** — Filesystem free/total for the active path is shown only in the **Size** result dialog, not in the panel bottom bar (the bar no longer reserves a disk column while size info is open).
+- **Panel bottom bar** — The selected file’s Unix permission string (same `rwxr-xr-x` style as listings) appears to the left of the size on the right side; directories show the mode when there is no size. If the bar is too narrow, the meta text is truncated with a suffix ellipsis so the size tail stays visible when possible.
 - **F1** opens Actions instead of the old full-screen help dialog.
 - **Subshell** — Deeper integration with the app loop, suspend/resume, and parent/subshell communication.
 - **Post-command countdown** — When the main-buffer countdown runs before panels return (after a subshell command with auto-reopen), **Esc** abandons the wait and restores the panel TUI immediately.
