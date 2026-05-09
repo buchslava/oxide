@@ -518,10 +518,22 @@ impl EventHandler {
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
-                // F1 Actions dialog: Esc/q close; all other keys are absorbed (modal).
+                // F1 Actions dialog: palette chords (Ctrl+X …, Ctrl+O, Ctrl+R, Ctrl+C/V) match the panel;
+                // Tab / arrows / Enter are handled in `actions_dialog::handle_key`.
                 if app.actions_dialog.is_some() {
+                    let code = match key.code {
+                        KeyCode::Char('\t') => KeyCode::Tab,
+                        KeyCode::Char('\u{7f}') => KeyCode::Backspace,
+                        other => other,
+                    };
+                    let panel_height = compute_panel_height();
+                    if let Some(action) =
+                        Self::handle_actions_palette_chords(app, code, key.modifiers, panel_height)
+                    {
+                        return Ok(Some(action));
+                    }
                     return Ok(Some(
-                        actions_dialog::handle_key(app, key.code, key.modifiers)
+                        actions_dialog::handle_key(app, code, key.modifiers)
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
@@ -1058,6 +1070,55 @@ impl EventHandler {
             }
             _ => None,
         }
+    }
+
+    /// While the Actions (F1) palette is open: same **Ctrl+X** second keys as the panel, plus **Ctrl+O**
+    /// / **Ctrl+R**, and **Ctrl+C** / **Ctrl+V** bound to the command line (same as the palette rows).
+    fn handle_actions_palette_chords(
+        app: &mut AppState,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        panel_height: usize,
+    ) -> Option<AppAction> {
+        if let Some(a) = Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers) {
+            return Some(a);
+        }
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            match code {
+                KeyCode::Char('\x03' | 'c' | 'C') => {
+                    app.ctrl_x_chord_pending = false;
+                    return Some(AppAction::CommandLineCopy);
+                }
+                KeyCode::Char('\x16' | 'v' | 'V') => {
+                    app.ctrl_x_chord_pending = false;
+                    return Some(AppAction::CommandLinePaste);
+                }
+                _ => {}
+            }
+        }
+        if app.ctrl_x_chord_pending {
+            app.ctrl_x_chord_pending = false;
+            if code == KeyCode::Esc {
+                return Some(AppAction::Continue);
+            }
+            if ctrl_x_chord::is_ctrl_x_prefix(code, modifiers) {
+                return Some(AppAction::Continue);
+            }
+            if let KeyCode::Char(c) = code {
+                let c = if c == '\x04' {
+                    '\x04'
+                } else {
+                    c.to_ascii_lowercase()
+                };
+                return Some(Self::handle_ctrl_key(app, c, panel_height));
+            }
+            return Some(AppAction::Continue);
+        }
+        if ctrl_x_chord::is_ctrl_x_prefix(code, modifiers) {
+            app.ctrl_x_chord_pending = true;
+            return Some(AppAction::Continue);
+        }
+        None
     }
 
     /// **Ctrl+O** / **Ctrl+R** / **Ctrl+C** / **Ctrl+V** without a Ctrl+X prefix (panel focus).

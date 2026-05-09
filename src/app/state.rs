@@ -129,7 +129,7 @@ pub struct AppState {
     pub pattern_select_dialog: Option<PatternSelectDialogState>,
     /// When Some, F9 Settings dialog is open (two-column: sections list + content).
     pub settings_dialog: Option<SettingsDialogState>,
-    /// When Some, F1 Actions dialog is open (scroll position in state).
+    /// When Some, F1 Actions dialog is open (scroll + keyboard-focused action row).
     pub actions_dialog: Option<ActionsDialogState>,
     /// When Some, scrollable error details (invalid zip, navigation I/O, etc.).
     pub error_detail: Option<ErrorDetailState>,

@@ -1,4 +1,8 @@
 //! F1 Actions: scrollable list of shortcuts as clickable rows (same layout as legacy Help).
+//! Tab / ↑↓ / j k move the focused row; Enter runs it. Ctrl+X chords and other palette shortcuts
+//! still work (handled in [`crate::app::events::EventHandler`] before keys reach this module).
+
+use std::sync::OnceLock;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crossterm::terminal::size;
@@ -57,9 +61,20 @@ impl ActionsChoice {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ActionsDialogState {
     pub scroll: usize,
+    /// Index among rows that run an action (grey chord rows), not counting section headers.
+    pub selected_action: usize,
+}
+
+impl Default for ActionsDialogState {
+    fn default() -> Self {
+        Self {
+            scroll: 0,
+            selected_action: 0,
+        }
+    }
 }
 
 pub fn open(app: &mut AppState) {
@@ -76,7 +91,7 @@ const ACTION_ROW_BG: Color = Color::DarkGray;
 /// Visual indent before the chord button (spaces).
 const CHORD_BTN_INDENT_COLS: u16 = 4;
 
-/// Chord strings for width alignment — keep in sync with every `action_line(..., chord, ...)` call.
+/// Chord strings for width alignment — indices must match [`LayoutRow::Action`] `chord_i`.
 const ACTION_CHORDS: &[&str] = &[
     "Ctrl+O  or  Ctrl+X O",
     "Ctrl+R",
@@ -94,6 +109,122 @@ const ACTION_CHORDS: &[&str] = &[
     "Ctrl+C",
     "Ctrl+V",
 ];
+
+const INTRO: &str = "    Grey shortcut or Enter runs the action (panel focus). Tab / ↑↓ / j k move focus. Esc, q, or outside click closes.";
+
+/// Single source of truth for row order, hit targets, and chord indices into [`ACTION_CHORDS`].
+#[derive(Clone, Copy)]
+enum LayoutRow {
+    Muted(&'static str),
+    Blank,
+    Section(&'static str),
+    Action {
+        chord_i: usize,
+        desc: &'static str,
+        choice: ActionsChoice,
+    },
+}
+
+static ACTIONS_LAYOUT: &[LayoutRow] = &[
+    LayoutRow::Muted(INTRO),
+    LayoutRow::Blank,
+    LayoutRow::Section("Shell & refresh"),
+    LayoutRow::Action {
+        chord_i: 0,
+        desc: "Subshell (return with Ctrl+O or Ctrl+X then O)",
+        choice: ActionsChoice::Suspend,
+    },
+    LayoutRow::Action {
+        chord_i: 1,
+        desc: "Refresh both panels",
+        choice: ActionsChoice::RefreshBothPanels,
+    },
+    LayoutRow::Action {
+        chord_i: 2,
+        desc: "Refresh active panel only",
+        choice: ActionsChoice::RefreshActivePanel,
+    },
+    LayoutRow::Blank,
+    LayoutRow::Section("Panels & layout"),
+    LayoutRow::Action {
+        chord_i: 3,
+        desc: "Toggle hidden files (dot names)",
+        choice: ActionsChoice::ToggleShowHidden,
+    },
+    LayoutRow::Action {
+        chord_i: 4,
+        desc: "Toggle column layout (one / two columns)",
+        choice: ActionsChoice::ViewModeToggled,
+    },
+    LayoutRow::Action {
+        chord_i: 5,
+        desc: "Left panel settings overlay",
+        choice: ActionsChoice::OpenLeftPanelSettings,
+    },
+    LayoutRow::Action {
+        chord_i: 6,
+        desc: "Right panel settings overlay",
+        choice: ActionsChoice::OpenRightPanelSettings,
+    },
+    LayoutRow::Action {
+        chord_i: 7,
+        desc: "Save paths and active panel to settings",
+        choice: ActionsChoice::PersistPanelState,
+    },
+    LayoutRow::Blank,
+    LayoutRow::Section("Files & tools"),
+    LayoutRow::Action {
+        chord_i: 8,
+        desc: "Find file",
+        choice: ActionsChoice::OpenFindDialog,
+    },
+    LayoutRow::Action {
+        chord_i: 9,
+        desc: "Diff (two marked files, or compare panel dirs if none marked)",
+        choice: ActionsChoice::OpenDiffViewer,
+    },
+    LayoutRow::Action {
+        chord_i: 10,
+        desc: "Total size of selected items",
+        choice: ActionsChoice::OpenSizeInfoDialog,
+    },
+    LayoutRow::Action {
+        chord_i: 11,
+        desc: "Create archive from selection",
+        choice: ActionsChoice::OpenArchiveDialog,
+    },
+    LayoutRow::Action {
+        chord_i: 12,
+        desc: "New empty file",
+        choice: ActionsChoice::OpenNewFileDialog,
+    },
+    LayoutRow::Blank,
+    LayoutRow::Section("Command line"),
+    LayoutRow::Action {
+        chord_i: 13,
+        desc: "Copy command line (or clear if empty)",
+        choice: ActionsChoice::CommandLineCopy,
+    },
+    LayoutRow::Action {
+        chord_i: 14,
+        desc: "Paste into command line",
+        choice: ActionsChoice::CommandLinePaste,
+    },
+];
+
+static ACTION_HITS: OnceLock<Vec<Option<ActionsChoice>>> = OnceLock::new();
+
+fn action_hits() -> &'static [Option<ActionsChoice>] {
+    ACTION_HITS.get_or_init(|| {
+        ACTIONS_LAYOUT
+            .iter()
+            .map(|row| match row {
+                LayoutRow::Action { choice, .. } => Some(*choice),
+                _ => None,
+            })
+            .collect()
+    })
+}
 
 fn chord_button_inner_cols() -> usize {
     ACTION_CHORDS
@@ -127,6 +258,56 @@ fn clamp_scroll(
     total_lines: usize,
 ) -> usize {
     scroll.min(max_scroll(area, total_lines))
+}
+
+fn action_choice_count(hits: &[Option<ActionsChoice>]) -> usize {
+    hits.iter().filter(|h| h.is_some()).count()
+}
+
+/// Line index of the `selected_action`‑th grey row (0‑based among action rows only).
+fn line_index_for_selected_action(
+    hits: &[Option<ActionsChoice>],
+    selected_action: usize,
+) -> Option<usize> {
+    let mut remaining = selected_action;
+    for (i, h) in hits.iter().enumerate() {
+        if h.is_some() {
+            if remaining == 0 {
+                return Some(i);
+            }
+            remaining -= 1;
+        }
+    }
+    None
+}
+
+fn sync_scroll_to_line(
+    state: &mut ActionsDialogState,
+    area: Rect,
+    total_lines: usize,
+    line: usize,
+) {
+    let vis = viewport_rows(area).max(1);
+    if line < state.scroll {
+        state.scroll = line;
+    } else if line >= state.scroll + vis {
+        state.scroll = line.saturating_sub(vis.saturating_sub(1));
+    }
+    state.scroll = clamp_scroll(state.scroll, area, total_lines);
+}
+
+fn apply_action_selection(
+    state: &mut ActionsDialogState,
+    new_sel: usize,
+    hits: &[Option<ActionsChoice>],
+    area: Rect,
+    total_lines: usize,
+    n_actions: usize,
+) {
+    state.selected_action = new_sel.min(n_actions - 1);
+    if let Some(line) = line_index_for_selected_action(hits, state.selected_action) {
+        sync_scroll_to_line(state, area, total_lines, line);
+    }
 }
 
 fn term_area() -> Rect {
@@ -168,13 +349,25 @@ fn muted_line(
 }
 
 /// One action row: grey background only on the chord; description uses normal dialog background.
+/// When `focused`, the whole row uses the dialog focus style (keyboard selection).
 fn action_line(
     d: &DialogPalette,
     chord: &'static str,
     description: &'static str,
     inner_w: usize,
+    focused: bool,
 ) -> Line<'static> {
     let pad = inner_w.saturating_sub(chord.chars().count());
+    if focused {
+        let st = d.focus_row_style().add_modifier(Modifier::BOLD);
+        return Line::from(vec![
+            Span::raw("    "),
+            Span::styled(chord, st),
+            Span::styled(spaces_upto(pad), st),
+            Span::raw("  "),
+            Span::styled(description, st),
+        ]);
+    }
     Line::from(vec![
         Span::raw("    "),
         Span::styled(
@@ -193,177 +386,134 @@ fn action_line(
     ])
 }
 
-/// (display lines, parallel hit map: `Some` = chord button on this line — click only on grey columns).
-fn build_lines_and_hits(d: &DialogPalette) -> (Vec<Line<'static>>, Vec<Option<ActionsChoice>>) {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut hits: Vec<Option<ActionsChoice>> = Vec::new();
-
-    let push_blank = |lines: &mut Vec<_>, hits: &mut Vec<_>| {
-        lines.push(Line::from(""));
-        hits.push(None);
-    };
-
+fn build_lines(
+    d: &DialogPalette,
+    focus_line: Option<usize>,
+) -> Vec<Line<'static>> {
     let inner_w = chord_button_inner_cols();
-
-    lines.push(muted_line(
-        d,
-        "    Click a grey shortcut to run it (panel focus). Esc, q, or outside click closes.",
-    ));
-    hits.push(None);
-    push_blank(&mut lines, &mut hits);
-
-    lines.push(section_title(d, "Shell & refresh"));
-    hits.push(None);
-    lines.push(action_line(
-        d,
-        "Ctrl+O  or  Ctrl+X O",
-        "Subshell (return with Ctrl+O or Ctrl+X then O)",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::Suspend));
-    lines.push(action_line(
-        d,
-        "Ctrl+R",
-        "Refresh both panels",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::RefreshBothPanels));
-    lines.push(action_line(
-        d,
-        "Ctrl+X R",
-        "Refresh active panel only",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::RefreshActivePanel));
-    push_blank(&mut lines, &mut hits);
-
-    lines.push(section_title(d, "Panels & layout"));
-    hits.push(None);
-    lines.push(action_line(
-        d,
-        "Ctrl+X H",
-        "Toggle hidden files (dot names)",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::ToggleShowHidden));
-    lines.push(action_line(
-        d,
-        "Ctrl+X T",
-        "Toggle column layout (one / two columns)",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::ViewModeToggled));
-    lines.push(action_line(
-        d,
-        "Ctrl+X 1",
-        "Left panel settings overlay",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::OpenLeftPanelSettings));
-    lines.push(action_line(
-        d,
-        "Ctrl+X 2",
-        "Right panel settings overlay",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::OpenRightPanelSettings));
-    lines.push(action_line(
-        d,
-        "Ctrl+X C",
-        "Save paths and active panel to settings",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::PersistPanelState));
-    push_blank(&mut lines, &mut hits);
-
-    lines.push(section_title(d, "Files & tools"));
-    hits.push(None);
-    lines.push(action_line(d, "Ctrl+X F", "Find file", inner_w));
-    hits.push(Some(ActionsChoice::OpenFindDialog));
-    lines.push(action_line(
-        d,
-        "Ctrl+X D",
-        "Diff (two marked files, or compare panel dirs if none marked)",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::OpenDiffViewer));
-    lines.push(action_line(
-        d,
-        "Ctrl+X S",
-        "Total size of selected items",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::OpenSizeInfoDialog));
-    lines.push(action_line(
-        d,
-        "Ctrl+X A",
-        "Create archive from selection",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::OpenArchiveDialog));
-    lines.push(action_line(d, "Ctrl+X N", "New empty file", inner_w));
-    hits.push(Some(ActionsChoice::OpenNewFileDialog));
-    push_blank(&mut lines, &mut hits);
-
-    lines.push(section_title(d, "Command line"));
-    hits.push(None);
-    lines.push(action_line(
-        d,
-        "Ctrl+C",
-        "Copy command line (or clear if empty)",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::CommandLineCopy));
-    lines.push(action_line(
-        d,
-        "Ctrl+V",
-        "Paste into command line",
-        inner_w,
-    ));
-    hits.push(Some(ActionsChoice::CommandLinePaste));
-
-    (lines, hits)
+    let mut lines = Vec::with_capacity(ACTIONS_LAYOUT.len());
+    let mut line_ix = 0usize;
+    for row in ACTIONS_LAYOUT {
+        let line = match *row {
+            LayoutRow::Muted(text) => muted_line(d, text),
+            LayoutRow::Blank => Line::from(""),
+            LayoutRow::Section(title) => section_title(d, title),
+            LayoutRow::Action {
+                chord_i,
+                desc,
+                choice: _,
+            } => {
+                let chord = ACTION_CHORDS[chord_i];
+                let focused = focus_line == Some(line_ix);
+                action_line(d, chord, desc, inner_w, focused)
+            }
+        };
+        lines.push(line);
+        line_ix += 1;
+    }
+    lines
 }
 
 pub fn handle_key(
     app: &mut AppState,
     code: KeyCode,
-    _modifiers: KeyModifiers,
+    modifiers: KeyModifiers,
 ) -> Option<AppAction> {
-    let state = app.actions_dialog.as_mut()?;
+    let code = match code {
+        KeyCode::Char('\t') => KeyCode::Tab,
+        other => other,
+    };
+    if app.actions_dialog.is_none() {
+        return None;
+    }
     let area = term_area();
-    let (lines, _) = build_lines_and_hits(&app.ui_palette.dialog);
-    let total = lines.len();
+    let hits = action_hits();
+    let total = hits.len();
+    let n_actions = action_choice_count(hits);
+    if n_actions == 0 {
+        return match code {
+            KeyCode::Esc => Some(AppAction::ActionsClose),
+            KeyCode::Char(c) if c == 'q' => Some(AppAction::ActionsClose),
+            _ => Some(AppAction::Continue),
+        };
+    }
 
     match code {
+        KeyCode::Enter => {
+            let selected = app
+                .actions_dialog
+                .as_ref()
+                .map(|s| s.selected_action)?
+                .min(n_actions - 1);
+            let line = line_index_for_selected_action(hits, selected)?;
+            let Some(choice) = hits.get(line).copied().flatten() else {
+                return Some(AppAction::Continue);
+            };
+            app.actions_dialog = None;
+            Some(choice.to_app_action())
+        }
         KeyCode::Esc => Some(AppAction::ActionsClose),
-        KeyCode::Char(c) if c == 'q' => Some(AppAction::ActionsClose),
-        KeyCode::Up | KeyCode::Char('k') => {
-            state.scroll = state.scroll.saturating_sub(1);
-            state.scroll = clamp_scroll(state.scroll, area, total);
+        KeyCode::Char(c) if c == 'q' && !modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(AppAction::ActionsClose)
+        }
+        KeyCode::Tab => {
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
+            let next = (state.selected_action + 1) % n_actions;
+            apply_action_selection(state, next, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            state.scroll = (state.scroll + 1).min(max_scroll(area, total));
+        KeyCode::BackTab => {
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
+            let prev = (state.selected_action + n_actions - 1) % n_actions;
+            apply_action_selection(state, prev, hits, area, total, n_actions);
+            Some(AppAction::Continue)
+        }
+        KeyCode::Up | KeyCode::Char('k')
+            if !modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
+            let prev = state.selected_action.saturating_sub(1);
+            apply_action_selection(state, prev, hits, area, total, n_actions);
+            Some(AppAction::Continue)
+        }
+        KeyCode::Down | KeyCode::Char('j')
+            if !modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
+            let next = (state.selected_action + 1).min(n_actions - 1);
+            apply_action_selection(state, next, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
         KeyCode::PageUp => {
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
             let step = viewport_rows(area).max(1);
-            state.scroll = state.scroll.saturating_sub(step);
-            state.scroll = clamp_scroll(state.scroll, area, total);
+            let prev = state.selected_action.saturating_sub(step);
+            apply_action_selection(state, prev, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
         KeyCode::PageDown => {
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
             let step = viewport_rows(area).max(1);
-            state.scroll = (state.scroll + step).min(max_scroll(area, total));
+            let next = (state.selected_action + step).min(n_actions - 1);
+            apply_action_selection(state, next, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
         KeyCode::Home => {
-            state.scroll = 0;
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
+            apply_action_selection(state, 0, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
         KeyCode::End => {
-            state.scroll = max_scroll(area, total);
+            let state = app.actions_dialog.as_mut()?;
+            state.selected_action = state.selected_action.min(n_actions - 1);
+            apply_action_selection(state, n_actions - 1, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
         _ => None,
@@ -376,11 +526,10 @@ pub fn handle_mouse(
     mouse_event: &MouseEvent,
 ) -> Option<AppAction> {
     let state = app.actions_dialog.as_mut()?;
-    let d = &app.ui_palette.dialog;
     let (dialog_rect, text_rect, sb_rect) = dialog_layout::scroll_reference_modal_layout(area);
     let (col, row) = (mouse_event.column, mouse_event.row);
-    let (lines, hits) = build_lines_and_hits(d);
-    let total = lines.len();
+    let hits = action_hits();
+    let total = hits.len();
     let vis = viewport_rows(area).max(1);
     let max_s = max_scroll(area, total);
 
@@ -509,7 +658,9 @@ pub fn draw(
         vertical: 1,
     });
     let (_dialog_rect, text_rect, sb_rect) = dialog_layout::scroll_reference_modal_layout(area);
-    let (lines, _) = build_lines_and_hits(d);
+    let hits = action_hits();
+    let focus_line = line_index_for_selected_action(hits, state.selected_action);
+    let lines = build_lines(d, focus_line);
     let total = lines.len();
     state.scroll = clamp_scroll(state.scroll, area, total);
 
@@ -535,7 +686,7 @@ pub fn draw(
     };
     f.render_widget(
         Paragraph::new(Span::styled(
-            " ↑↓ j/k  PgUp/Dn  Home/End  wheel  scroll  ·  click grey shortcut  run  ·  Esc  q  close  ·  outside click closes ",
+            " Tab  ↑↓ j/k  PgUp/Dn  Home/End  wheel  scroll  ·  Enter  run focused  ·  click grey shortcut  run  ·  Esc  q  close  ·  outside click closes ",
             Style::default().bg(dialog_bg).fg(d.text_muted),
         ))
         .alignment(Alignment::Center),
