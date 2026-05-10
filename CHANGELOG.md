@@ -28,6 +28,7 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - **Size info (Ctrl+X S)** — MC-style **Directory scanning** dialog while totals are computed: live path (compact), directory and file counts, cumulative size in KiB with thousands separators, dimmed backdrop, and **[ Abort ]** / **Esc** / **A** to cancel (`AtomicBool` + cooperative walk in `FileOperations::size_of_path_recursive_cancellable`). **Done** state uses a centered **Size** dialog with selection summary, **Disk:** line from `statvfs`, and a dismiss hint; `format_disk_bytes` / `format_u64_with_commas` in `text_format.rs` render capacities in decimal SI (KB–PB) instead of raw integer “gigabytes”.
 - **`doc/PKGBUILD`** — Example Arch-style packaging metadata.
 - Dependencies: `image`, `ratatui-image` for the above viewer.
+- **Terminal color depth (`OXIDE_COLOR_DEPTH`)** — Themes use 24-bit RGB by default; on older terminals that mishandle truecolor escapes, the UI can look wrong or glitchy. **Auto** mode uses `COLORTERM=truecolor` for full RGB, `TERM` names containing `256color` (and a few modern terminal hints) for xterm 256-color (`Color::Indexed`), otherwise maps RGB to the nearest 16 ANSI colors. Override anytime: `truecolor`, `256`, or `16` (also accepts `24bit`, `8bit`, `ansi`, etc.). The resolved palette is applied at startup and when the theme changes; the root-session menu strip and Crossterm main-buffer overlays use the same mapping so they stay consistent with Ratatui.
 
 ### Changed
 

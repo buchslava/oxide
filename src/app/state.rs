@@ -6,6 +6,7 @@ use crate::core::trash_delete::trash_available;
 use crate::dialogs::error_detail_dialog::ErrorDetailState;
 use crate::dialogs::actions_dialog::ActionsDialogState;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
+use crate::ui::color_depth::ColorDepth;
 use crate::ui::theme::{ThemeId, UiPalette};
 use crate::ui::toast::{TimedToast, ToastKind};
 use ratatui::layout::Rect;
@@ -165,6 +166,8 @@ pub struct AppState {
     pub theme_id: ThemeId,
     /// Resolved colors for this frame; update when `theme_id` changes via [`ThemeId::palette`].
     pub ui_palette: UiPalette,
+    /// Downgrade RGB theme colors for terminals without truecolor (`OXIDE_COLOR_DEPTH`, `TERM`).
+    pub color_depth: ColorDepth,
     /// After **Ctrl+X**, the next key completes an Oxide shortcut (e.g. `F` for find, `O` for shell).
     pub ctrl_x_chord_pending: bool,
     /// True when the PTY subshell’s foreground process group is effectively UID 0 (e.g. after `sudo -s`), while Oxide may still run as a normal user.
@@ -271,6 +274,7 @@ impl AppState {
             trash_available: trash_available(),
             theme_id: ThemeId::default(),
             ui_palette: ThemeId::default().palette(),
+            color_depth: ColorDepth::from_env(),
             ctrl_x_chord_pending: false,
             subshell_pty_foreground_is_root: false,
         };
@@ -282,7 +286,10 @@ impl AppState {
     /// Call after startup and whenever persisted_settings change so UI always matches the source of truth.
     pub fn sync_from_persisted_settings(&mut self) {
         self.theme_id = ThemeId::from_slug(&self.persisted_settings.theme);
-        self.ui_palette = self.theme_id.palette();
+        self.ui_palette = crate::ui::color_depth::adapt_ui_palette(
+            self.theme_id.palette(),
+            self.color_depth,
+        );
         let view_left = view_mode_from_settings_flag(&self.persisted_settings.left_view);
         let view_right = view_mode_from_settings_flag(&self.persisted_settings.right_view);
         let left_show = self.persisted_settings.left_show_hidden;

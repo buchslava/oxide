@@ -1,3 +1,4 @@
+pub mod color_depth;
 pub mod dialog_layout;
 pub mod menu_bar_key;
 pub mod post_command_overlay;

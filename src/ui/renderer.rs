@@ -1401,14 +1401,15 @@ impl Renderer {
         app: &AppState,
     ) {
         let c = &app.ui_palette.chrome;
+        let d = app.color_depth;
         let (menu_bg, menu_hotkey, menu_label, menu_unavailable) =
             if app.chrome_shows_root_session() {
                 // High-contrast “danger” strip so root sessions are obvious regardless of theme.
                 (
-                    Color::Rgb(110, 0, 0),
-                    Color::Rgb(255, 235, 160),
-                    Color::Rgb(255, 220, 220),
-                    Color::Rgb(130, 70, 70),
+                    d.adapt_color(Color::Rgb(110, 0, 0)),
+                    d.adapt_color(Color::Rgb(255, 235, 160)),
+                    d.adapt_color(Color::Rgb(255, 220, 220)),
+                    d.adapt_color(Color::Rgb(130, 70, 70)),
                 )
             } else {
                 (

@@ -1,7 +1,8 @@
 //! Toasts (ratatui widget + crossterm main-buffer overlay).
 
-use crossterm::style::Color as CrosstermColor;
 use ratatui::style::{Color, Style};
+
+use crate::ui::color_depth;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToastPalette {
@@ -26,20 +27,12 @@ impl ToastPalette {
     }
 
     #[inline]
-    pub fn crossterm_bg(self) -> CrosstermColor {
-        rgb_to_crossterm(self.background)
+    pub fn crossterm_bg(self) -> crossterm::style::Color {
+        color_depth::ratatui_to_crossterm(self.background)
     }
 
     #[inline]
-    pub fn crossterm_fg(self) -> CrosstermColor {
-        rgb_to_crossterm(self.foreground)
-    }
-}
-
-fn rgb_to_crossterm(c: Color) -> CrosstermColor {
-    match c {
-        Color::Rgb(r, g, b) => CrosstermColor::Rgb { r, g, b },
-        Color::Reset => CrosstermColor::Reset,
-        _ => CrosstermColor::Reset,
+    pub fn crossterm_fg(self) -> crossterm::style::Color {
+        color_depth::ratatui_to_crossterm(self.foreground)
     }
 }
