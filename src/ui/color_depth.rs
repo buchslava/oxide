@@ -312,6 +312,14 @@ fn rgb_to_ansi16_index(
     best
 }
 
+/// Best-effort sRGB for any [`Color`] (indexed and named colors use the xterm cube / table).
+///
+/// Used when deriving related colors (for example a line-number gutter stripe) so they stay
+/// coherent after [`ColorDepth::adapt_color`] turns palette RGB into indexed ANSI colors.
+pub fn theme_color_approx_rgb(c: Color) -> (u8, u8, u8) {
+    ratatui_named_to_rgb(c)
+}
+
 fn ratatui_named_to_rgb(c: Color) -> (u8, u8, u8) {
     match c {
         Color::Rgb(r, g, b) => (r, g, b),
@@ -353,5 +361,26 @@ mod tests {
             d.adapt_color(Color::Rgb(10, 20, 80)),
             Color::Indexed(_)
         ));
+    }
+
+    /// Gutter stripe math (F4 editor) must not assume `Color::Rgb`: adapted palettes use indexed ANSI.
+    #[test]
+    fn derived_gutter_respects_color_depth() {
+        let d = ColorDepth::Extended256;
+        let main = d.adapt_color(Color::Rgb(30, 30, 35));
+        assert!(
+            matches!(main, Color::Indexed(_)),
+            "sanity: non-truecolor main background is indexed"
+        );
+        let (r, g, b) = theme_color_approx_rgb(main);
+        let gutter = d.adapt_color(Color::Rgb(
+            r.saturating_add(10),
+            g.saturating_add(10),
+            b.saturating_add(12),
+        ));
+        assert!(
+            matches!(gutter, Color::Indexed(_)),
+            "gutter should remap through the same depth, not stay as mismatched truecolor"
+        );
     }
 }

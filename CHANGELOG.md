@@ -63,3 +63,4 @@ First changelog entry for the **0.2.0** release (crate version bumped from 0.1.x
 - Dialog text inputs across settings, rename, pattern select, mkdir, new file, archive, and panel overlays.
 - Settings/autosave aligned with new Ctrl+X chords.
 - Cross-shell relay reliability.
+- **F4 embedded editor** — Line-number gutter background followed a hardcoded gray whenever `chrome.main_background` was not `Color::Rgb` (for example after palette adaptation for 256-color or 16-color terminals, common on Linux without truecolor). The gutter is now derived from the same approximate RGB as the chrome background, then remapped with the active color depth so it matches the theme.

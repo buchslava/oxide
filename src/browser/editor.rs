@@ -30,6 +30,7 @@ use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{join_path_display, read_file, write_file};
 use crate::core::text_format::format_byte_size;
+use crate::ui::color_depth::{theme_color_approx_rgb, ColorDepth};
 use crate::ui::text_input;
 use crate::ui::theme::{DialogPalette, ViewerPalette};
 use crate::ui::toast::{self, TimedToast};
@@ -48,15 +49,16 @@ fn editor_gutter_width(
 }
 
 /// Slightly lighter than the main editor canvas so the gutter reads as a separate strip.
-fn editor_gutter_background(main_bg: Color) -> Color {
-    match main_bg {
-        Color::Rgb(r, g, b) => Color::Rgb(
-            r.saturating_add(10),
-            g.saturating_add(10),
-            b.saturating_add(12),
-        ),
-        _ => Color::Rgb(42, 42, 48),
-    }
+///
+/// Must work for [`Color::Indexed`] / named colors too: [`UiPalette`] is adapted for
+/// [`ColorDepth`](crate::ui::color_depth::ColorDepth) (common on Linux without truecolor).
+fn editor_gutter_background(main_bg: Color, depth: ColorDepth) -> Color {
+    let (r, g, b) = theme_color_approx_rgb(main_bg);
+    depth.adapt_color(Color::Rgb(
+        r.saturating_add(10),
+        g.saturating_add(10),
+        b.saturating_add(12),
+    ))
 }
 
 /// State when the embedded code editor is open (F4).
@@ -1357,7 +1359,7 @@ pub fn draw(
         f.render_widget(&ed.editor, ed.area);
         let gutter_w = editor_gutter_width(&ed.editor, ed.area.width);
         if gutter_w > 0 {
-            let gutter_bg = editor_gutter_background(main_bg);
+            let gutter_bg = editor_gutter_background(main_bg, app.color_depth);
             let buf = f.buffer_mut();
             for row in 0..ed.area.height {
                 let py = ed.area.y + row;
