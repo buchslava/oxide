@@ -122,9 +122,9 @@ The usual route is `F9 → Options → Panel options`, then find and flip `Show 
 
 ### How Oxide handles it
 
-The intuitive shortcut `Ctrl+H` toggles **hidden files** for the **active panel** immediately; the listing refreshes in place.
+The intuitive shortcut `Ctrl+X H` toggles **hidden files** for the **active panel** immediately; the listing refreshes in place.
 
-![Toggling hidden files with Ctrl+H in Oxide](images/hidden-files.gif)
+![Toggling hidden files with Ctrl+X H in Oxide](images/hidden-files.gif)
 
 ## Creating a new empty file
 
@@ -138,9 +138,9 @@ Stock MC doesn’t give you a single shortcut for “create empty file here.” 
 
 ### How Oxide handles it
 
-`Ctrl+N` opens a short dialog: type the file name, `Enter` to create an **empty** file in the **active panel**’s current directory. `Esc` (or `Cancel`) backs out without touching the disk. If the name already exists, you get a clear error instead of a silent overwrite.
+`Ctrl+X N` opens a short dialog: type the file name, `Enter` to create an **empty** file in the **active panel**’s current directory. `Esc` (or `Cancel`) backs out without touching the disk. If the name already exists, you get a clear error instead of a silent overwrite.
 
-![Creating a new file with Ctrl+N in Oxide](images/new-file.gif)
+![Creating a new file with Ctrl+X N in Oxide](images/new-file.gif)
 
 The same flow works when the **active panel** is **inside a ZIP** archive, not only on a normal filesystem folder.
 
@@ -156,11 +156,11 @@ There’s no standard shortcut in stock **MC** that means “zip exactly what I�
 
 ### How Oxide handles it
 
-`Ctrl+A` (with the **active panel** on a **filesystem** folder, not **inside** an open zip) opens the **archive** dialog: enter the `.zip` file name, `Enter` to start. Oxide packs the current selection (marked set, or the single highlighted row) into that archive and shows progress; the original files stay on disk, and you’re creating a **copy** into the zip, not moving them away.
+`Ctrl+X A` (with the **active panel** on a **filesystem** folder, not **inside** an open zip) opens the **archive** dialog: enter the `.zip` file name, `Enter` to start. Oxide packs the current selection (marked set, or the single highlighted row) into that archive and shows progress; the original files stay on disk, and you’re creating a **copy** into the zip, not moving them away.
 
-![Creating a ZIP archive with Ctrl+A in Oxide](images/archive-1.gif)
+![Creating a ZIP archive with Ctrl+N A in Oxide](images/archive-1.gif)
 
-The clip below goes further: open the new archive in a panel like a folder, copy more files into it with `F5`, and use `Ctrl+N` to add a new empty file inside the archive, using the same patterns as on a normal directory.
+The clip below goes further: open the new archive in a panel like a folder, copy more files into it with `F5`, and use `Ctrl+X N` to add a new empty file inside the archive, using the same patterns as on a normal directory.
 
 ![ZIP panel: copy in and new file](images/archive-2.gif)
 
