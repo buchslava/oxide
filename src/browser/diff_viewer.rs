@@ -26,6 +26,7 @@ use crate::browser::panel::PanelOperations;
 use crate::core::file_ops::{FileInfo, FileOperations};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
+use crate::core::text_format::{truncate_str, TruncateMode};
 use crate::ui::theme::DiffViewerPalette;
 use crate::util;
 
@@ -1548,23 +1549,5 @@ fn truncate_middle(
     s: &str,
     max_chars: usize,
 ) -> String {
-    let n = s.chars().count();
-    if n <= max_chars {
-        return s.to_string();
-    }
-    if max_chars <= 3 {
-        return "…".to_string();
-    }
-    let keep = max_chars - 1;
-    let half = keep / 2;
-    let start: String = s.chars().take(half).collect();
-    let end: String = s
-        .chars()
-        .rev()
-        .take(keep - half)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    format!("{}…{}", start, end)
+    truncate_str(s, max_chars, TruncateMode::MiddleEllipsis)
 }

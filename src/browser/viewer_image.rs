@@ -29,6 +29,7 @@ use crate::app::state::AppState;
 use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
+use crate::core::text_format::{truncate_str, TruncateMode};
 use crate::ui::dialog_layout;
 use crate::ui::theme::{DialogPalette, ViewerPalette};
 use crate::util;
@@ -51,8 +52,7 @@ pub enum ImageReadSource {
 #[derive(Clone)]
 pub struct ImageViewEntry {
     pub tab_label: String,
-    /// Full path for display in errors / future UI (not shown in the image viewer chrome today).
-    #[allow(dead_code)]
+    /// Full display path for the title row above the footer.
     pub path_banner: String,
     pub read: ImageReadSource,
 }
@@ -389,10 +389,7 @@ pub fn finish_image_loading(
         }
     }
 
-    let tab_labels: Vec<String> = entries
-        .iter()
-        .map(|e| truncate_tab_label(&e.tab_label))
-        .collect();
+    let tab_labels: Vec<String> = entries.iter().map(|e| e.tab_label.clone()).collect();
 
     let n = sources.len();
     let current_clamped = current.min(n.saturating_sub(1));
@@ -429,30 +426,6 @@ fn render_spinner_frame() -> &'static str {
     FRAMES[i]
 }
 
-fn truncate_tab_label(s: &str) -> String {
-    const MAX: usize = 24;
-    let n = s.chars().count();
-    if n <= MAX {
-        return s.to_string();
-    }
-    s.chars()
-        .take(MAX.saturating_sub(1))
-        .chain(std::iter::once('…'))
-        .collect()
-}
-
-fn truncate_display_width(s: &str, max_cols: usize) -> String {
-    if max_cols == 0 {
-        return String::new();
-    }
-    let n = s.chars().count();
-    if n <= max_cols {
-        return s.to_string();
-    }
-    let take = max_cols.saturating_sub(1);
-    s.chars().take(take).chain(std::iter::once('…')).collect()
-}
-
 /// Truncate to `cols`, then pad with spaces to exactly `cols` character cells.
 ///
 /// Ratatui only paints cells covered by the `Paragraph`; shorter strings leave the rest of the
@@ -461,7 +434,7 @@ fn row_cells_fixed(s: &str, cols: usize) -> String {
     if cols == 0 {
         return String::new();
     }
-    let mut t = truncate_display_width(s, cols);
+    let mut t = truncate_str(s, cols, TruncateMode::MiddleEllipsis);
     let mut n = t.chars().count();
     while n < cols {
         t.push(' ');
@@ -543,21 +516,24 @@ pub fn tab_index_at_column(
 
 /// Width in terminal columns for the left tab strip (multi-file viewer).
 ///
-/// Width does **not** depend on which tab is selected, so highlighting with `[` `]` does not
-/// resize the column or shift the image area.
+/// Image area is primary: the tab column is capped at **one fifth** of the terminal width (and
+/// never below [`MIN_IMG`] for the image). Within that cap, width grows only as much as labels
+/// need (middle-truncated). Width does **not** depend on which tab is selected.
 fn vertical_tab_column_width(tab_labels: &[String], area_width: u16) -> u16 {
     const MIN_IMG: u16 = 20;
-    const MIN_TAB_W: u16 = 12;
-    const MAX_TAB_W: u16 = 48;
-    let max_allowed = area_width.saturating_sub(MIN_IMG).max(MIN_TAB_W);
+    const MIN_TAB_W: u16 = 14;
+    let max_tab_w = (area_width / 5)
+        .max(MIN_TAB_W)
+        .min(area_width.saturating_sub(MIN_IMG));
     let mut need = MIN_TAB_W;
+    let max_cols = max_tab_w as usize;
     for label in tab_labels.iter() {
-        let w = label.chars().count() as u16;
+        let w = truncate_str(label, max_cols, TruncateMode::MiddleEllipsis).chars().count() as u16;
         // Reserve bracket columns so any row can become active without changing strip width.
         let row = w.saturating_add(2);
         need = need.max(row.saturating_add(1));
     }
-    need.clamp(MIN_TAB_W, MAX_TAB_W).min(max_allowed)
+    need.clamp(MIN_TAB_W, max_tab_w)
 }
 
 fn vertical_tab_lines(
@@ -625,6 +601,18 @@ pub fn draw_image_ready(
         height: footer_h,
     };
 
+    let title_rect = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(footer_h + chrome_h),
+        width: area.width,
+        height: chrome_h,
+    };
+    let title_text = img
+        .entries
+        .get(img.current)
+        .map(|e| e.path_banner.as_str())
+        .unwrap_or("");
+
     let n = img.entries.len();
     if n <= 1 {
         img.tabs_area = Rect {
@@ -642,21 +630,8 @@ pub fn draw_image_ready(
         f.render_widget(Block::default().style(content_style), img_rect);
         let image_widget = StatefulImage::default().resize(image_resize_fit());
         f.render_stateful_widget(image_widget, img_rect, &mut img.image_protocol);
-
-        let title_rect = Rect {
-            x: area.x,
-            y: area.y + area.height.saturating_sub(footer_h + chrome_h),
-            width: area.width,
-            height: chrome_h,
-        };
-        let title_text = img
-            .entries
-            .get(img.current)
-            .map(|e| e.tab_label.as_str())
-            .unwrap_or("");
-        paint_full_width_status_line(f, title_rect, title_text, vp.background, vp.header_path);
     } else {
-        let content_h = area.height.saturating_sub(footer_h);
+        let content_h = area.height.saturating_sub(footer_h + chrome_h);
         let tabs_w = vertical_tab_column_width(&img.tab_labels, area.width);
         let tabs_rect = Rect {
             x: area.x,
@@ -683,6 +658,8 @@ pub fn draw_image_ready(
         let image_widget = StatefulImage::default().resize(image_resize_fit());
         f.render_stateful_widget(image_widget, img_rect, &mut img.image_protocol);
     }
+
+    paint_full_width_status_line(f, title_rect, title_text, vp.background, vp.header_path);
 
     if let Some(res) = img.image_protocol.last_encoding_result() {
         if let Err(e) = res {

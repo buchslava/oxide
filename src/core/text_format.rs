@@ -9,6 +9,8 @@ pub enum TruncateMode {
     SuffixEllipsis,
     /// Keep start and end with ~ in the middle (MC-style path): "first~last"
     CompactMiddle,
+    /// Keep start and end with … in the middle: "first…last"
+    MiddleEllipsis,
 }
 
 /// Truncate string to max_width chars according to mode. Returns the full string if it fits.
@@ -63,6 +65,51 @@ pub fn truncate_str(
                 .collect();
             format!("{}~{}", start, end)
         }
+        TruncateMode::MiddleEllipsis => {
+            if max_width <= 3 {
+                return "…".to_string();
+            }
+            let keep = max_width - 1;
+            let half = keep / 2;
+            let start: String = chars.iter().take(half).collect();
+            let end: String = chars
+                .iter()
+                .rev()
+                .take(keep - half)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            format!("{}…{}", start, end)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{truncate_str, TruncateMode};
+
+    #[test]
+    fn middle_ellipsis_fits_unchanged() {
+        assert_eq!(
+            truncate_str("short.png", 20, TruncateMode::MiddleEllipsis),
+            "short.png"
+        );
+    }
+
+    #[test]
+    fn middle_ellipsis_long_name() {
+        let s = "vacation_beach_sunset_final_v2.png";
+        let t = truncate_str(s, 24, TruncateMode::MiddleEllipsis);
+        assert!(t.chars().count() <= 24);
+        assert!(t.contains('…'));
+        assert!(t.starts_with("vacation"));
+        assert!(t.ends_with(".png"));
+    }
+
+    #[test]
+    fn middle_ellipsis_tiny_width() {
+        assert_eq!(truncate_str("abcdef", 3, TruncateMode::MiddleEllipsis), "…");
     }
 }
 
