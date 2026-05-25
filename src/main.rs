@@ -696,6 +696,7 @@ fn main() -> Result<(), io::Error> {
                 }
             }
             AppAction::ViewModeToggled => {
+                app.toggle_view_mode();
                 let view = if app.active_panel_ref().get_view_mode() == ViewMode::SingleColumn {
                     "one".to_string()
                 } else {

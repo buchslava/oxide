@@ -1197,10 +1197,7 @@ impl EventHandler {
                     AppAction::Continue
                 }
             }
-            't' => {
-                app.toggle_view_mode();
-                AppAction::ViewModeToggled
-            }
+            't' => AppAction::ViewModeToggled,
             'f' => {
                 if app.find_dialog.is_none() {
                     AppAction::OpenFindDialog
