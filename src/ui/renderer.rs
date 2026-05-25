@@ -1857,7 +1857,7 @@ impl Renderer {
             let mtime_pad = format!("{:>17}", mtime_str); // "Feb 13 2024 20:05" = 17 chars
 
             let (name_style, mark_style) = if is_selected {
-                let sel = Style::default().fg(list.selected_fg).bg(list.selected_bg);
+                let sel = list.selected_row_style();
                 (sel, sel)
             } else if file.is_hidden_dotfile() {
                 if file.is_dir {

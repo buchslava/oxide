@@ -59,7 +59,7 @@ pub const PALETTE: UiPalette = UiPalette {
         column_separator: Color::White,
     },
     panel_list: PanelListPalette {
-        selected_fg: Color::Black,
+        selected_fg: rgb(0, 0, 0),
         selected_bg: Color::Cyan,
         directory_fg: Color::Cyan,
         executable_fg: Color::Green,

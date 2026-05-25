@@ -15,20 +15,7 @@ fn panel_file_name_style_flags(
     is_hidden_dotfile: bool,
 ) -> Style {
     if is_selected {
-        if is_dir {
-            Style::default()
-                .fg(list.selected_fg)
-                .bg(list.selected_bg)
-                .add_modifier(Modifier::BOLD)
-        } else if is_archive {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        } else if is_symlink {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        } else if is_executable {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        } else {
-            Style::default().fg(list.selected_fg).bg(list.selected_bg)
-        }
+        list.selected_row_style()
     } else if is_hidden_dotfile {
         if is_dir {
             Style::default()

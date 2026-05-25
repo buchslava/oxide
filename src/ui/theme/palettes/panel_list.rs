@@ -1,6 +1,6 @@
 //! File list (both panels).
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PanelListPalette {
@@ -15,4 +15,15 @@ pub struct PanelListPalette {
     pub hidden_fg: Color,
     /// `> ` and folder-diff `C ` / `S ` / `X ` in panel file lists.
     pub marked_prefix: Color,
+}
+
+impl PanelListPalette {
+    /// Cursor row in the active panel: dark text on `selected_bg` (keeps the highlight fill).
+    #[inline]
+    pub fn selected_row_style(self) -> Style {
+        Style::default()
+            .fg(self.selected_fg)
+            .bg(self.selected_bg)
+            .add_modifier(Modifier::BOLD)
+    }
 }
