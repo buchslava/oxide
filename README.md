@@ -30,14 +30,16 @@ For theory on the subshell, PTY, terminals, and file descriptors, see [SHELL_PTY
 Prebuilt **xd** binaries live under [install/](install/):
 
 - **Generic Linux** (x86_64): [`install/linux-x86_64/xd`](install/linux-x86_64/xd)
+- **Linux aarch64** (e.g. Raspberry Pi 5): [`install/aarch64/xd`](install/aarch64/xd)
 - **Intel macOS** (x86_64): [`install/darwin-x86_64/xd`](install/darwin-x86_64/xd)
 
 Install with [install/install.sh](install/install.sh) (run from the `install` directory and pass the path to the binary that matches your machine):
 
 ```bash
 cd install
-./install.sh -p "$HOME/.local/bin" linux-x86_64/xd    # Linux
-./install.sh -p "$HOME/.local/bin" darwin-x86_64/xd # Intel Mac
+./install.sh -p "$HOME/.local/bin" linux-x86_64/xd    # Linux x86_64
+./install.sh -p "$HOME/.local/bin" aarch64/xd         # Linux aarch64 (e.g. Raspberry Pi 5)
+./install.sh -p "$HOME/.local/bin" darwin-x86_64/xd   # Intel Mac
 ```
 
 ### Build commands
