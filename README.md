@@ -30,7 +30,7 @@ For theory on the subshell, PTY, terminals, and file descriptors, see [SHELL_PTY
 Prebuilt **xd** binaries live under [install/](install/):
 
 - **Generic Linux** (x86_64): [`install/linux-x86_64/xd`](install/linux-x86_64/xd)
-- **Linux aarch64** (e.g. Raspberry Pi 5): [`install/aarch64/xd`](install/aarch64/xd)
+- **Linux aarch64** (Raspberry Pi 3/4/5 and other 64-bit ARM Linux): [`install/aarch64/xd`](install/aarch64/xd)
 - **Intel macOS** (x86_64): [`install/darwin-x86_64/xd`](install/darwin-x86_64/xd)
 
 Install with [install/install.sh](install/install.sh) (run from the `install` directory and pass the path to the binary that matches your machine):
@@ -38,7 +38,7 @@ Install with [install/install.sh](install/install.sh) (run from the `install` di
 ```bash
 cd install
 ./install.sh -p "$HOME/.local/bin" linux-x86_64/xd    # Linux x86_64
-./install.sh -p "$HOME/.local/bin" aarch64/xd         # Linux aarch64 (e.g. Raspberry Pi 5)
+./install.sh -p "$HOME/.local/bin" aarch64/xd         # Linux aarch64 (e.g. Raspberry Pi)
 ./install.sh -p "$HOME/.local/bin" darwin-x86_64/xd   # Intel Mac
 ```
 
@@ -55,6 +55,50 @@ cargo build --release
 cargo run
 cargo run --release
 ```
+
+### Raspberry Pi / Linux aarch64
+
+On **64-bit** Raspberry Pi OS (or other aarch64 Linux), a normal release build is enough:
+
+```bash
+cargo build --release
+# binary: target/release/xd
+```
+
+The resulting binary is dynamically linked. Inspecting it with `readelf` or a hex editor may show the standard ARM64 dynamic linker:
+
+```
+/lib/ld-linux-aarch64.so.1
+```
+
+That is **normal** and **not Raspberry Pi 5–specific** — every dynamically linked aarch64 Linux program uses this interpreter. It does not tie the binary to a particular Pi model.
+
+**Compatibility across Raspberry Pi models:**
+
+| Target | Runs an aarch64 `xd` build? |
+|--------|-----------------------------|
+| Pi 5, Pi 4, Pi 3 — **64-bit OS** | Yes (if glibc and libraries match) |
+| Pi 1 / Pi 2 / Pi Zero — **32-bit OS** | No — needs an `armhf` build, not aarch64 |
+
+Because the default build links against **glibc** and system libraries (see [BUILD_LINUX.md](doc/BUILD_LINUX.md)), the target machine needs:
+
+- **aarch64** (64-bit ARM Linux)
+- **glibc** at least as new as on the machine where you compiled
+- Runtime libraries such as **libxcb** (for clipboard support in the editor)
+
+**Tip:** Build on the **oldest** Pi / OS you intend to support; that binary will also run on newer 64-bit Pis.
+
+**Verify before shipping to another Pi:**
+
+```bash
+file ./xd
+readelf -l ./xd | grep interpreter   # expect: /lib/ld-linux-aarch64.so.1
+ldd ./xd
+```
+
+If `readelf` shows a **relative** interpreter path (e.g. `../lib/ld-linux-aarch64.so`), rebuild natively on the target or fix the cross-toolchain — the kernel requires an absolute path.
+
+For maximum portability (no glibc version coupling), use a **musl** static build; see [Build static binary](#build-static-binary-most-portable) below.
 
 ### Build static binary (most portable)
 
@@ -73,14 +117,18 @@ cargo build --release --target x86_64-unknown-linux-musl
 
 The `musl-tools` package provides `x86_64-linux-musl-gcc` on typical PC images. More Linux detail: [BUILD_LINUX.md](doc/BUILD_LINUX.md#static-linux-binary-musl).
 
-**Cross-compiling from macOS** — Rust’s Apple toolchain does not supply a Linux musl C compiler, so plain `cargo build --target x86_64-unknown-linux-musl` fails at crates like `zstd-sys`. Practical options:
+**With [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)** (macOS or any host — Zig supplies the musl C toolchain for crates like `tree-sitter-*` and `zstd-sys`):
 
-1. **Zig as linker** — install [Zig](https://ziglang.org/download/) (e.g. `brew install zig`), then [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild): `cargo install cargo-zigbuild`, then  
-   `cargo zigbuild --release --target x86_64-unknown-linux-musl`
-2. **Install a musl cross toolchain** for macOS (Homebrew or similar) and set `CC_x86_64_unknown_linux_musl` / linker in `~/.cargo/config.toml` per that toolchain’s instructions.
-3. **Build inside Linux** (VM, container, CI) using the Debian commands above and copy `target/x86_64-unknown-linux-musl/release/xd` out.
+```bash
+brew install zig
+cargo install cargo-zigbuild
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
-Release binary: `target/x86_64-unknown-linux-musl/release/xd`
+cargo zigbuild --release --target x86_64-unknown-linux-musl      # Linux x86_64
+cargo zigbuild --release --target aarch64-unknown-linux-musl   # Linux aarch64 (e.g. Raspberry Pi)
+```
+
+Release binaries: `target/x86_64-unknown-linux-musl/release/xd`, `target/aarch64-unknown-linux-musl/release/xd`
 
 ### Output
 
