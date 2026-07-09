@@ -343,6 +343,16 @@ fn build_image_picker() -> Picker {
     picker
 }
 
+/// Terminal cell size in pixels from a [`Picker`] (fallback when query returns zero).
+pub(crate) fn picker_cell_font_size(picker: &Picker) -> (u16, u16) {
+    let (fw, fh) = picker.font_size();
+    if fw == 0 || fh == 0 {
+        (8, 16)
+    } else {
+        (fw, fh)
+    }
+}
+
 /// Initialize [`AppState::image_picker`] once (terminal capability / font-size query).
 pub fn ensure_image_picker(app: &mut AppState) {
     if app.image_picker.is_some() {

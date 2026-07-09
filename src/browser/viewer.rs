@@ -1,4 +1,4 @@
-//! File viewer (F3): view file as text or hex dump. ESC to close.
+//! File viewer (F3): view file as text, hex dump, or rendered markdown. ESC to close.
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +20,11 @@ use crate::browser::viewer_image::{
     handle_image_loading_key, handle_image_loading_mouse, handle_image_ready_key,
     handle_image_ready_mouse, single_fs_raster_entry, spawn_image_load_thread, ImageLoadMsg,
     ImageLoadingState, ImageViewerState,
+};
+use crate::browser::viewer_markdown::{
+    clear_markdown_nav, draw_markdown, handle_markdown_key, handle_markdown_mouse,
+    is_markdown_path, on_markdown_ready, text_viewer_to_markdown, try_open_markdown_from_bytes,
+    MarkdownViewerState,
 };
 use crate::app::state::AppState;
 use crate::core::file_ops::FileOperations;
@@ -45,6 +50,8 @@ pub enum ViewerState {
     ImageLoading(ImageLoadingState),
     /// Multi-tab image view.
     ImageReady(ImageViewerState),
+    /// Markdown documents (.md / .markdown / .mdx): rendered preview.
+    MarkdownReady(MarkdownViewerState),
 }
 
 /// State when the file viewer content is ready (F3). Text and hex modes.
@@ -103,6 +110,7 @@ pub fn close_viewer(app: &mut AppState) {
         _ => {}
     }
     app.viewer_screen = None;
+    clear_markdown_nav(app);
 }
 
 /// Open the currently selected file in the viewer. Reads file in a background thread so Esc works immediately for large files.
@@ -110,6 +118,10 @@ pub fn close_viewer(app: &mut AppState) {
 /// Works for both filesystem and files inside ZIP (uses panel_backend::read_file).
 /// Returns true if the viewer was opened (shows "Loading..." until read completes).
 pub fn open_viewer(app: &mut AppState) -> bool {
+    if !app.markdown_viewer_follow_link {
+        clear_markdown_nav(app);
+    }
+    app.markdown_viewer_follow_link = false;
     let loc = app.get_current_location();
     let panel = app.active_panel_ref();
     if let Some((entries, start)) = collect_raster_view_entries(panel, &loc) {
@@ -175,6 +187,10 @@ pub fn open_viewer_path(
     path: std::path::PathBuf,
     line: Option<u64>,
 ) -> bool {
+    if !app.markdown_viewer_follow_link {
+        clear_markdown_nav(app);
+    }
+    app.markdown_viewer_follow_link = false;
     if let Some((entries, start)) = single_fs_raster_entry(path.clone()) {
         if !entries.is_empty() {
             let n = entries.len();
@@ -271,6 +287,11 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
             let scroll = initial_line
                 .map(|l| (l as usize).saturating_sub(1))
                 .unwrap_or(0);
+            if let Some(mut md) = try_open_markdown_from_bytes(file_path.clone(), content.clone()) {
+                on_markdown_ready(&mut md, app);
+                app.viewer_screen = Some(ViewerState::MarkdownReady(md));
+                return true;
+            }
             let view_mode = if content.len() > MAX_TEXT_VIEW_BYTES {
                 ViewerMode::Hex
             } else {
@@ -359,6 +380,7 @@ pub fn handle_viewer_key(
             handle_image_loading_key(key.code).or(Some(AppAction::Continue))
         }
         ViewerState::ImageReady(img) => handle_image_ready_key(img, key),
+        ViewerState::MarkdownReady(..) => handle_markdown_key(app, key),
         ViewerState::Loading { .. } => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
                 return Some(AppAction::ViewerClose);
@@ -368,6 +390,18 @@ pub fn handle_viewer_key(
         ViewerState::Ready(v) => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
                 return Some(AppAction::ViewerClose);
+            }
+            if is_markdown_path(&v.file_path)
+                && v.view_mode == ViewerMode::Text
+                && (key.code == KeyCode::Char('t') || key.code == KeyCode::Char('T'))
+            {
+                let taken = app.viewer_screen.take();
+                if let Some(ViewerState::Ready(v)) = taken {
+                    if let Some(md) = text_viewer_to_markdown(v) {
+                        app.viewer_screen = Some(ViewerState::MarkdownReady(md));
+                    }
+                }
+                return Some(AppAction::Continue);
             }
             let height = visible_lines(v);
             if key.code == KeyCode::Char('h') || key.code == KeyCode::Char('H') {
@@ -489,6 +523,7 @@ pub fn handle_viewer_mouse(
     match state {
         ViewerState::ImageLoading(..) => handle_image_loading_mouse(&mouse_event),
         ViewerState::ImageReady(img) => handle_image_ready_mouse(img, mouse_event),
+        ViewerState::MarkdownReady(_) => handle_markdown_mouse(app, mouse_event),
         ViewerState::Loading { .. } => true,
         ViewerState::Ready(v) => {
             let n = VIEWER_MOUSE_SCROLL_LINES as isize;
@@ -880,6 +915,9 @@ pub fn draw(
             ViewerState::ImageReady(img) => {
                 draw_image_ready(f, img, app, vp);
             }
+            ViewerState::MarkdownReady(md) => {
+                draw_markdown(f, md, app, vp);
+            }
             ViewerState::Loading { file_path, .. } => {
                 let header_rect = Rect {
                     x: area.x,
@@ -1018,14 +1056,27 @@ pub fn draw(
                     header_rect,
                 );
 
-                let bar = Line::from(vec![
-                    Span::styled(" Esc ", content_style.fg(vp.muted)),
-                    Span::raw("close  "),
-                    Span::styled(" H ", content_style.fg(vp.muted)),
-                    Span::raw("hex/text  "),
-                    Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
-                    Span::raw("PgUp/PgDn scroll"),
-                ]);
+                let bar = if is_markdown_path(&v.file_path) && v.view_mode == ViewerMode::Text {
+                    Line::from(vec![
+                        Span::styled(" Esc ", content_style.fg(vp.muted)),
+                        Span::raw("close  "),
+                        Span::styled(" T ", content_style.fg(vp.muted)),
+                        Span::raw("markdown  "),
+                        Span::styled(" H ", content_style.fg(vp.muted)),
+                        Span::raw("hex/text  "),
+                        Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
+                        Span::raw("PgUp/PgDn scroll"),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled(" Esc ", content_style.fg(vp.muted)),
+                        Span::raw("close  "),
+                        Span::styled(" H ", content_style.fg(vp.muted)),
+                        Span::raw("hex/text  "),
+                        Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
+                        Span::raw("PgUp/PgDn scroll"),
+                    ])
+                };
                 f.render_widget(
                     Paragraph::new(bar).style(content_style.fg(vp.muted)),
                     bottom_rect,

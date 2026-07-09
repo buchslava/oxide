@@ -172,6 +172,21 @@ pub struct AppState {
     pub ctrl_x_chord_pending: bool,
     /// True when the PTY subshell’s foreground process group is effectively UID 0 (e.g. after `sudo -s`), while Oxide may still run as a normal user.
     pub subshell_pty_foreground_is_root: bool,
+    /// Markdown viewer back stack (path + scroll) for link navigation.
+    pub markdown_viewer_nav_stack: Vec<MarkdownNavEntry>,
+    /// Restore scroll after Backspace back-nav when the prior doc finishes loading.
+    pub markdown_viewer_restore_scroll: Option<u16>,
+    /// `#fragment` to scroll to after following a link to another markdown file.
+    pub markdown_viewer_pending_fragment: Option<String>,
+    /// When true, the next viewer open is from link/back nav — do not clear the nav stack.
+    pub markdown_viewer_follow_link: bool,
+}
+
+/// One step in markdown viewer link back navigation.
+#[derive(Debug, Clone)]
+pub struct MarkdownNavEntry {
+    pub path: PathBuf,
+    pub scroll: u16,
 }
 
 pub use crate::dialogs::panel_overlay_state::PanelSettingsOverlayState;
@@ -277,6 +292,10 @@ impl AppState {
             color_depth: ColorDepth::from_env(),
             ctrl_x_chord_pending: false,
             subshell_pty_foreground_is_root: false,
+            markdown_viewer_nav_stack: Vec::new(),
+            markdown_viewer_restore_scroll: None,
+            markdown_viewer_pending_fragment: None,
+            markdown_viewer_follow_link: false,
         };
         app.sync_from_persisted_settings();
         Ok(app)

@@ -20,6 +20,9 @@ tar = "0.4"
 similar = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
 ratatui-image = { version = "10.0", default-features = false, features = ["crossterm", "image-defaults"] }
+ratatui-markdown = { version = "0.3.6", default-features = false, features = ["markdown", "image"] }
+ratatui029 = { package = "ratatui", version = "0.29", default-features = false }
+pulldown-cmark = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
