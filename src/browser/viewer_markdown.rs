@@ -281,13 +281,108 @@ fn cols_for_byte_range(
     )
 }
 
+/// True when `c` may continue an alphanumeric token (ASCII labels/URLs).
+fn is_label_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+}
+
+/// Like [`str::find`], but skips matches where `needle` is only a prefix/suffix of a longer token.
+fn find_whole_needle(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut search_from = from;
+    while search_from <= haystack.len().saturating_sub(needle.len()) {
+        let rel = haystack[search_from..].find(needle)?;
+        let abs = search_from + rel;
+        let before_ok = abs == 0
+            || haystack[..abs]
+                .chars()
+                .last()
+                .is_none_or(|c| !is_label_word_char(c));
+        let after_byte = abs + needle.len();
+        let after_ok = after_byte >= haystack.len()
+            || haystack[after_byte..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_label_word_char(c));
+        if before_ok && after_ok {
+            return Some(abs);
+        }
+        search_from = abs + 1;
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UsedHitRange {
+    doc_line: usize,
+    byte_start: usize,
+    byte_end: usize,
+}
+
+fn ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+    a_start < b_end && b_start < a_end
+}
+
+fn hit_range_used(used: &[UsedHitRange], doc_line: usize, byte_start: usize, byte_end: usize) -> bool {
+    used.iter().any(|u| {
+        u.doc_line == doc_line && ranges_overlap(u.byte_start, u.byte_end, byte_start, byte_end)
+    })
+}
+
+fn assign_hitbox(
+    links: &mut Vec<MarkdownLink>,
+    used: &mut Vec<UsedHitRange>,
+    url: &str,
+    label: &str,
+    line: &Line<'static>,
+    doc_line: usize,
+    byte_start: usize,
+    byte_end: usize,
+) {
+    let (col_start, col_end) = cols_for_byte_range(line, byte_start, byte_end);
+    links.push(MarkdownLink {
+        url: url.to_string(),
+        label: label.to_string(),
+        hitboxes: vec![LinkHitbox {
+            doc_line,
+            col_start,
+            col_end,
+        }],
+    });
+    used.push(UsedHitRange {
+        doc_line,
+        byte_start,
+        byte_end,
+    });
+}
+
+fn find_label_hitbox(
+    lines: &[Line<'static>],
+    used: &[UsedHitRange],
+    needle: &str,
+) -> Option<(usize, usize, usize)> {
+    for (doc_line, line) in lines.iter().enumerate() {
+        let flat = line_text(line);
+        let mut search_from = 0usize;
+        while let Some(byte_start) = find_whole_needle(&flat, needle, search_from) {
+            let byte_end = byte_start + needle.len();
+            if !hit_range_used(used, doc_line, byte_start, byte_end) {
+                return Some((doc_line, byte_start, byte_end));
+            }
+            search_from = byte_start + 1;
+        }
+    }
+    None
+}
+
 fn build_link_hitboxes(
     lines: &[Line<'static>],
     extracted: &[ExtractedLink],
 ) -> Vec<MarkdownLink> {
     let mut links = Vec::with_capacity(extracted.len());
-    let mut from_line = 0usize;
-    let mut from_byte = 0usize;
+    let mut used = Vec::new();
 
     for ex in extracted {
         let needle = if ex.label.is_empty() {
@@ -298,65 +393,43 @@ fn build_link_hitboxes(
         if needle.is_empty() {
             continue;
         }
-        let mut found = false;
-        for (doc_line, line) in lines.iter().enumerate().skip(from_line) {
-            let flat = line_text(line);
-            let start_off = if doc_line == from_line { from_byte } else { 0 };
-            if start_off > flat.len() {
-                continue;
-            }
-            let Some(rel) = flat[start_off..].find(needle) else {
-                continue;
-            };
-            let byte_start = start_off + rel;
-            let byte_end = byte_start + needle.len();
-            let (col_start, col_end) = cols_for_byte_range(line, byte_start, byte_end);
-            links.push(MarkdownLink {
-                url: ex.url.clone(),
-                label: if ex.label.is_empty() {
-                    ex.url.clone()
-                } else {
-                    ex.label.clone()
-                },
-                hitboxes: vec![LinkHitbox {
-                    doc_line,
-                    col_start,
-                    col_end,
-                }],
-            });
-            from_line = doc_line;
-            from_byte = byte_end;
-            found = true;
-            break;
+        let label = if ex.label.is_empty() {
+            ex.url.as_str()
+        } else {
+            ex.label.as_str()
+        };
+
+        if let Some((doc_line, byte_start, byte_end)) =
+            find_label_hitbox(lines, &used, needle)
+        {
+            assign_hitbox(
+                &mut links,
+                &mut used,
+                &ex.url,
+                label,
+                &lines[doc_line],
+                doc_line,
+                byte_start,
+                byte_end,
+            );
+            continue;
         }
-        if !found {
-            // Fallback: match URL text when label differs from rendered output.
-            if ex.url != needle {
-                for (doc_line, line) in lines.iter().enumerate().skip(from_line) {
-                    let flat = line_text(line);
-                    let start_off = if doc_line == from_line { from_byte } else { 0 };
-                    if start_off > flat.len() {
-                        continue;
-                    }
-                    let Some(rel) = flat[start_off..].find(&ex.url) else {
-                        continue;
-                    };
-                    let byte_start = start_off + rel;
-                    let byte_end = byte_start + ex.url.len();
-                    let (col_start, col_end) = cols_for_byte_range(line, byte_start, byte_end);
-                    links.push(MarkdownLink {
-                        url: ex.url.clone(),
-                        label: ex.label.clone(),
-                        hitboxes: vec![LinkHitbox {
-                            doc_line,
-                            col_start,
-                            col_end,
-                        }],
-                    });
-                    from_line = doc_line;
-                    from_byte = byte_end;
-                    break;
-                }
+
+        // Fallback: match URL text when label differs from rendered output.
+        if ex.url != needle {
+            if let Some((doc_line, byte_start, byte_end)) =
+                find_label_hitbox(lines, &used, &ex.url)
+            {
+                assign_hitbox(
+                    &mut links,
+                    &mut used,
+                    &ex.url,
+                    label,
+                    &lines[doc_line],
+                    doc_line,
+                    byte_start,
+                    byte_end,
+                );
             }
         }
     }
@@ -1027,6 +1100,38 @@ mod tests {
         let links = build_link_hitboxes(&lines, &extracted);
         assert_eq!(links.len(), 1);
         assert!(links[0].hitboxes[0].col_start > 0);
+    }
+
+    #[test]
+    fn build_hitboxes_chapter_1_not_prefix_of_chapter_11() {
+        let line = Line::from("See Chapter 11 and Chapter 1.");
+        let lines = vec![line];
+        // Source order: Chapter 1 listed before Chapter 11 (common in TOCs).
+        let extracted = vec![
+            ExtractedLink {
+                url: "#chapter-1".into(),
+                label: "Chapter 1".into(),
+            },
+            ExtractedLink {
+                url: "#chapter-11".into(),
+                label: "Chapter 11".into(),
+            },
+        ];
+        let links = build_link_hitboxes(&lines, &extracted);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].url, "#chapter-1");
+        assert_eq!(links[0].label, "Chapter 1");
+        assert_eq!(links[0].hitboxes[0].col_start, 19);
+        assert_eq!(links[1].url, "#chapter-11");
+        assert_eq!(links[1].label, "Chapter 11");
+        assert_eq!(links[1].hitboxes[0].col_start, 4);
+    }
+
+    #[test]
+    fn find_whole_needle_rejects_prefix() {
+        let hay = "Chapter 11";
+        assert_eq!(find_whole_needle(hay, "Chapter 1", 0), None);
+        assert_eq!(find_whole_needle(hay, "Chapter 11", 0), Some(0));
     }
 
     #[test]
