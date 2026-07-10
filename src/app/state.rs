@@ -5,6 +5,7 @@ use crate::core::settings::{self, PersistedSettings};
 use crate::core::trash_delete::trash_available;
 use crate::dialogs::error_detail_dialog::ErrorDetailState;
 use crate::dialogs::actions_dialog::ActionsDialogState;
+use crate::dialogs::panel_context_menu::PanelContextMenuState;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::color_depth::ColorDepth;
 use crate::ui::theme::{ThemeId, UiPalette};
@@ -132,6 +133,8 @@ pub struct AppState {
     pub settings_dialog: Option<SettingsDialogState>,
     /// When Some, F1 Actions dialog is open (scroll + keyboard-focused action row).
     pub actions_dialog: Option<ActionsDialogState>,
+    /// When Some, right-click popup menu is open (same actions as the bottom menu bar).
+    pub panel_context_menu: Option<PanelContextMenuState>,
     /// When Some, scrollable error details (invalid zip, navigation I/O, etc.).
     pub error_detail: Option<ErrorDetailState>,
     /// When Some, Ctrl+X then 1 "Left panel settings" overlay is open over the left panel.
@@ -272,6 +275,7 @@ impl AppState {
             pattern_select_dialog: None,
             settings_dialog: None,
             actions_dialog: None,
+            panel_context_menu: None,
             error_detail: None,
             left_panel_settings_overlay: None,
             right_panel_settings_overlay: None,

@@ -14,7 +14,8 @@ use crate::core::panel_backend;
 use crate::core::text_format::{format_byte_size, format_u64_with_commas, truncate_str, TruncateMode};
 use crate::dialogs::{
     actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
-    panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
+    panel_context_menu, panel_overlay, pattern_select_dialog, rename_attr, settings_dialog,
+    size_info_dialog,
 };
 use crate::ui::dialog_layout::{self, paint_modal_dim_layer, DEFAULT_PAD_H};
 use crate::ui::menu_bar_key;
@@ -287,6 +288,7 @@ impl Renderer {
             || app.new_file_error.is_some()
             || app.rename_attr_dialog.is_some()
             || app.actions_dialog.is_some()
+            || app.panel_context_menu.is_some()
             || app.error_detail.is_some()
             || app.settings_dialog.is_some()
             || app.find_dialog.is_some()
@@ -366,6 +368,9 @@ impl Renderer {
         }
         if app.find_dialog.is_some() {
             find_dialog::draw(f, app);
+        }
+        if app.panel_context_menu.is_some() {
+            panel_context_menu::draw(f, app);
         }
         if app.left_panel_settings_overlay.is_some() || app.right_panel_settings_overlay.is_some() {
             panel_overlay::draw(f, app);

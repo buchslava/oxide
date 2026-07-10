@@ -15,7 +15,8 @@ use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir, supports_new_file};
 use crate::dialogs::{
     actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
-    panel_overlay, pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
+    panel_context_menu, panel_overlay, pattern_select_dialog, rename_attr, settings_dialog,
+    size_info_dialog,
 };
 use crate::ui::text_input;
 use crate::util::compute_panel_height;
@@ -203,6 +204,7 @@ impl EventHandler {
             || app.rename_attr_dialog.is_some()
             || app.settings_dialog.is_some()
             || app.actions_dialog.is_some()
+            || app.panel_context_menu.is_some()
             || app.error_detail.is_some()
             || app.find_dialog.is_some()
             || app.left_panel_settings_overlay.is_some()
@@ -515,6 +517,13 @@ impl EventHandler {
                 if app.error_detail.is_some() {
                     return Ok(Some(
                         error_detail_dialog::handle_key(app, key.code, key.modifiers)
+                            .unwrap_or(AppAction::Continue),
+                    ));
+                }
+                // Right-click popup menu (panel view).
+                if app.panel_context_menu.is_some() {
+                    return Ok(Some(
+                        panel_context_menu::handle_key(app, key.code, key.modifiers)
                             .unwrap_or(AppAction::Continue),
                     ));
                 }
@@ -1122,7 +1131,7 @@ impl EventHandler {
     }
 
     /// **Ctrl+O** / **Ctrl+R** / **Ctrl+C** / **Ctrl+V** without a Ctrl+X prefix (panel focus).
-    /// Clears a stale Ctrl+X chord. C/V are absorbed on the panel like before the chord system.
+    /// Clears a stale Ctrl+X chord. C/V focus the command line (same as F1 Actions).
     fn handle_panel_direct_control_shortcuts(
         app: &mut AppState,
         code: KeyCode,
@@ -1136,9 +1145,13 @@ impl EventHandler {
             return None;
         }
         match code {
-            KeyCode::Char('\x03' | 'c' | 'C' | '\x16' | 'v' | 'V') => {
+            KeyCode::Char('\x03' | 'c' | 'C') => {
                 app.ctrl_x_chord_pending = false;
-                Some(AppAction::Continue)
+                Some(AppAction::CommandLineCopy)
+            }
+            KeyCode::Char('\x16' | 'v' | 'V') => {
+                app.ctrl_x_chord_pending = false;
+                Some(AppAction::CommandLinePaste)
             }
             _ => None,
         }

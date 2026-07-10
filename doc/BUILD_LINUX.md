@@ -22,7 +22,7 @@ sudo apt install -y build-essential pkg-config libxcb1-dev libxcb-render0-dev li
 | **libxcb-shape0-dev** | XCB Shape extension. |
 | **libxcb-xfixes0-dev** | XCB XFixes extension (clipboard functionality). |
 
-The `arboard` crate (clipboard support for Ctrl+C/V in the embedded editor) is pulled in via `ratatui-code-editor`. On Linux/X11, it uses `x11rb`, which links against libxcb.
+The `arboard` crate (clipboard support for Ctrl+C/V in the command line and dialogs) uses `x11rb` on X11/XWayland and, when built with the `wayland-data-control` feature, native Wayland clipboards where the compositor supports them. On Linux/X11, it links against libxcb.
 
 ## Build flow
 

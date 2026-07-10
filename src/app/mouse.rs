@@ -8,8 +8,8 @@ use crate::browser::panel::{PanelOperations, ViewMode};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir};
 use crate::dialogs::{
-    actions_dialog, error_detail_dialog, find_dialog, panel_overlay, pattern_select_dialog,
-    rename_attr, settings_dialog, size_info_dialog,
+    actions_dialog, error_detail_dialog, find_dialog, panel_context_menu, panel_overlay,
+    pattern_select_dialog, rename_attr, settings_dialog, size_info_dialog,
 };
 use crate::ui::dialog_layout;
 use crate::ui::menu_bar_key;
@@ -41,6 +41,7 @@ fn panels_mouse_enabled(app: &AppState) -> bool {
         && app.rename_attr_dialog.is_none()
         && app.settings_dialog.is_none()
         && app.actions_dialog.is_none()
+        && app.panel_context_menu.is_none()
         && app.error_detail.is_none()
         && app.find_dialog.is_none()
         && app.left_panel_settings_overlay.is_none()
@@ -202,6 +203,9 @@ pub(crate) fn handle_mouse_event(
         height: term_h,
     };
 
+    if let Some(out) = try_mouse_panel_context_menu(app, &mouse_event) {
+        return Ok(Some(out));
+    }
     if let Some(out) = try_mouse_editor_confirm(app, area, &mouse_event) {
         return Ok(Some(out));
     }
@@ -366,6 +370,34 @@ pub(crate) fn handle_mouse_event(
                         }
                     }
                 }
+            }
+        }
+        MouseEventKind::Down(MouseButton::Right) => {
+            if panels_mouse {
+                if let Some((panel_index, file_index)) = hit_test_panel(
+                    mouse_event.column,
+                    mouse_event.row,
+                    term_w,
+                    term_h,
+                    app,
+                ) {
+                    app.focus_panel();
+                    app.set_active_panel(panel_index);
+                    let panel = if panel_index == 0 {
+                        app.left_panel_mut()
+                    } else {
+                        app.right_panel_mut()
+                    };
+                    panel.set_selection(file_index, panel_height);
+                    app.sync_process_cwd_to_active_panel_if_no_autosave();
+                }
+                panel_context_menu::open(
+                    app,
+                    mouse_event.column,
+                    mouse_event.row,
+                    term_w,
+                    term_h,
+                );
             }
         }
         _ => {}
@@ -569,6 +601,16 @@ fn try_mouse_actions(
         return None;
     }
     actions_dialog::handle_mouse(app, area, mouse_event)
+}
+
+fn try_mouse_panel_context_menu(
+    app: &mut AppState,
+    mouse_event: &MouseEvent,
+) -> Option<AppAction> {
+    if app.panel_context_menu.is_none() {
+        return None;
+    }
+    panel_context_menu::handle_mouse(app, mouse_event)
 }
 
 fn try_mouse_settings(
@@ -783,24 +825,12 @@ fn menu_bar_delete_confirm(app: &mut AppState) -> Option<AppAction> {
     Some(AppAction::Continue)
 }
 
-/// Map mouse column to menu bar item. Bottom row.
-fn hit_test_menu_bar(
-    col: u16,
-    term_w: u16,
-    app: &mut AppState,
-) -> Option<AppAction> {
-    let items = Renderer::menu_bar_items();
-    let menu_item_count = items.len() as u16;
-    if menu_item_count == 0 {
+/// Map menu bar key to action (bottom bar click or right-click popup menu).
+pub(crate) fn menu_bar_action(app: &mut AppState, key: u16) -> Option<AppAction> {
+    if app.focus == Focus::CommandLine && key != menu_bar_key::QUIT {
         return None;
     }
-    let slot_w = term_w / menu_item_count;
-    let slot_index = (col / slot_w).min(menu_item_count - 1) as usize;
-    let (_, key) = items.get(slot_index)?;
-    if app.focus == Focus::CommandLine && *key != menu_bar_key::QUIT {
-        return None;
-    }
-    match *key {
+    match key {
         menu_bar_key::ACTIONS => Some(AppAction::OpenActionsDialog),
         menu_bar_key::FILE => Renderer::is_menu_action_available(app, menu_bar_key::FILE)
             .then_some(AppAction::OpenRenameAttrDialog),
@@ -828,6 +858,23 @@ fn hit_test_menu_bar(
         menu_bar_key::QUIT => Some(AppAction::Quit),
         _ => None,
     }
+}
+
+/// Map mouse column to menu bar item. Bottom row.
+fn hit_test_menu_bar(
+    col: u16,
+    term_w: u16,
+    app: &mut AppState,
+) -> Option<AppAction> {
+    let items = Renderer::menu_bar_items();
+    let menu_item_count = items.len() as u16;
+    if menu_item_count == 0 {
+        return None;
+    }
+    let slot_w = term_w / menu_item_count;
+    let slot_index = (col / slot_w).min(menu_item_count - 1) as usize;
+    let (_, key) = items.get(slot_index)?;
+    menu_bar_action(app, *key)
 }
 
 /// Map mouse (col, row) to (panel_index, file_index) when clicking in a panel's file list.
