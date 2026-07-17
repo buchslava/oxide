@@ -17,7 +17,7 @@ use ratatui_markdown::markdown::{ImagePlacement, ImageResolver};
 use super::viewer_image::picker_cell_font_size;
 
 /// Delay after the last scroll before embedded images are drawn again.
-pub const IMAGE_SCROLL_DEBOUNCE: Duration = Duration::from_millis(100);
+pub const IMAGE_SCROLL_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Suppresses image draws while the user is scrolling; clears after [`IMAGE_SCROLL_DEBOUNCE`].
 #[derive(Debug, Clone)]

@@ -1,6 +1,7 @@
 //! F3 markdown viewer: rendered preview via [`ratatui_markdown`] with link navigation.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -8,9 +9,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
+use ratatui_image::picker::Picker;
+use ratatui_markdown::highlight::{HighlightHooks, TreeSitterHighlighter};
 use ratatui_markdown::markdown::{MarkdownBlock, MarkdownRenderer};
 use ratatui_markdown::theme::{Generation, RichTextTheme};
-use ratatui_image::picker::Picker;
 
 use crate::app::events::AppAction;
 use crate::app::state::{AppState, MarkdownNavEntry};
@@ -472,7 +474,7 @@ fn fragment_to_doc_scroll(
         return None;
     }
     let theme = OxideMarkdownTheme(vp);
-    let renderer = MarkdownRenderer::new(width as usize);
+    let renderer = markdown_renderer(width as usize, vp);
     let blocks = renderer.parse(markdown);
     let mut doc_line = 0usize;
     for block in &blocks {
@@ -491,6 +493,14 @@ fn visible_lines(area: Rect) -> u16 {
     area.height.saturating_sub(2).max(1)
 }
 
+/// Markdown renderer with tree-sitter code-block highlighting (shared layout for scroll anchors).
+fn markdown_renderer(width: usize, vp: ViewerPalette) -> MarkdownRenderer {
+    let highlighter = Arc::new(TreeSitterHighlighter::new());
+    let hooks = HighlightHooks::new(highlighter, width)
+        .with_border_color(to_md_color(vp.muted));
+    MarkdownRenderer::new(width).with_render_hooks(Box::new(hooks))
+}
+
 fn ensure_rendered(md: &mut MarkdownViewerState, vp: ViewerPalette, picker: &Picker) {
     let width = md.area.width;
     if width == 0 {
@@ -499,7 +509,7 @@ fn ensure_rendered(md: &mut MarkdownViewerState, vp: ViewerPalette, picker: &Pic
     if md.render_width != width || md.lines.is_empty() {
         md.render_width = width;
         let theme = OxideMarkdownTheme(vp);
-        let renderer = MarkdownRenderer::new(width as usize);
+        let renderer = markdown_renderer(width as usize, vp);
         let base_dir = base_dir_for_markdown(&md.file_path);
         let mut resolver = OxideMarkdownImageResolver::new(base_dir, picker);
         let (blocks, resolved) = renderer.parse_with_images(&md.content, &mut resolver);

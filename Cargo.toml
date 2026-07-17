@@ -1,6 +1,6 @@
 [package]
 name = "xd"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -20,7 +20,29 @@ tar = "0.4"
 similar = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
 ratatui-image = { version = "10.0", default-features = false, features = ["crossterm", "image-defaults"] }
-ratatui-markdown = { version = "0.3.6", default-features = false, features = ["markdown", "image"] }
+ratatui-markdown = { version = "0.3.6", default-features = false, features = [
+    "markdown",
+    "image",
+    "highlight-lang-bash",
+    "highlight-lang-c",
+    "highlight-lang-cpp",
+    "highlight-lang-css",
+    "highlight-lang-diff",
+    "highlight-lang-go",
+    "highlight-lang-html",
+    "highlight-lang-java",
+    "highlight-lang-javascript",
+    "highlight-lang-json",
+    "highlight-lang-lua",
+    "highlight-lang-python",
+    "highlight-lang-ruby",
+    "highlight-lang-rust",
+    "highlight-lang-sql",
+    "highlight-lang-toml",
+    "highlight-lang-typescript",
+    "highlight-lang-xml",
+    "highlight-lang-yaml",
+] }
 ratatui029 = { package = "ratatui", version = "0.29", default-features = false }
 pulldown-cmark = "0.13"
 

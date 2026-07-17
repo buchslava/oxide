@@ -12,9 +12,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 Package version for this crate is defined in `Cargo.toml` (`[package].version`).
 
-## [0.1.0]
+## [0.3.0] - 2026-07-17
 
-... start
+### Added
+
+- **Markdown viewer (F3)** — `.md` / `.markdown` / `.mdx` open as a rendered preview via `ratatui-markdown` instead of raw text.
+  - **Link navigation** — **Tab** / **Shift+Tab** cycle links; **Enter** follows; mouse click follows; **Backspace** returns through the nav stack; same-file `#fragment` scrolls to the matching heading.
+  - **Embedded images** — Local `![alt](path)` images resolve relative to the markdown file and draw with the shared `ratatui-image` picker (Kitty / iTerm2 / Sixel / half-blocks). Scroll debounces image redraw (~300ms idle) so scrolling stays responsive.
+  - **Syntax highlighting** — Fenced code blocks use tree-sitter highlighting for common languages (Rust, Python, JS/TS, Go, Java, C/C++, Bash, SQL, JSON/TOML/YAML, HTML/CSS/XML, Lua, Ruby, Diff). Unknown languages keep the plain code-block style.
+  - **T** toggles back to the raw text viewer.
+- **Panel context menu** — Right-click popup on panel entries (wired with the clipboard/mouse work below).
+
+### Fixed
+
+- **Clipboard on ARM / Raspberry Pi (Linux)** — `arboard` is built with `wayland-data-control`; Linux get/set prefer the compositor clipboard path and wait on set so Ctrl+C / Ctrl+V work more reliably on aarch64 Wayland and Pi-style setups (not only X11/`x11rb`).
+- **Markdown link hitboxes** — Labels like **Chapter 1** no longer steal the hitbox from **Chapter 11** (whole-token matching instead of naive substring search).
+
 
 ## [0.2.0] - 2026-05-09
 
