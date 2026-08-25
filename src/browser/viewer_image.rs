@@ -20,12 +20,18 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
+use ratatui_binary_data_widget::BinaryDataWidgetState;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{FilterType, Resize, StatefulImage};
 
 use crate::app::events::AppAction;
 use crate::app::state::AppState;
+use crate::browser::panel::{Panel, PanelOperations};
+use crate::browser::viewer::{
+    apply_byte_content_scroll, draw_byte_content_in_rect, handle_byte_content_key,
+    initial_hex_state, ViewerMode, MAX_TEXT_VIEW_BYTES,
+};
 use crate::core::file_ops::FileOperations;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
@@ -33,8 +39,6 @@ use crate::core::text_format::{truncate_str, TruncateMode};
 use crate::ui::dialog_layout;
 use crate::ui::theme::{DialogPalette, ViewerPalette};
 use crate::util;
-
-use crate::browser::panel::{Panel, PanelOperations};
 
 /// How to read bytes for one image tab.
 #[derive(Clone)]
@@ -69,19 +73,61 @@ pub struct ImageLoadingState {
     pub cancel: Arc<AtomicBool>,
 }
 
+/// Right-pane mode while browsing images (file list stays on the left when multi-file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImagePaneMode {
+    Image,
+    Text,
+    Hex,
+}
+
 /// Ready multi-image viewer: decoded images + tab index; drawn with [`ratatui_image`] in [`draw_image_ready`].
 pub struct ImageViewerState {
     pub sources: Vec<DynamicImage>,
+    /// Raw file bytes per tab (kept so Text/Hex can open without re-reading).
+    pub raw_bytes: Vec<Vec<u8>>,
     pub entries: Vec<ImageViewEntry>,
     pub tab_labels: Vec<String>,
     pub current: usize,
     /// Last full layout (for mouse tab hit-test).
     pub area: Rect,
     pub tabs_area: Rect,
+    /// Content pane (image / text / hex), right of the file list when multi-file.
+    pub content_area: Rect,
     /// [`StatefulProtocol`] for [`sources`][`current`]; rebuilt when `protocol_stale`.
     pub image_protocol: StatefulProtocol,
     /// Set when switching tabs so the next draw rebuilds [`image_protocol`] from [`sources`].
     pub protocol_stale: bool,
+    pub pane_mode: ImagePaneMode,
+    /// Text-mode scroll / hex selection for the current tab.
+    pub scroll: usize,
+    pub hex_state: BinaryDataWidgetState,
+    pub text_line_starts: Option<Vec<usize>>,
+    pub text_display_cumulative: Option<Vec<usize>>,
+    pub text_cache_width: u16,
+}
+
+/// Columns of empty background between the file-list strip and the image/text/hex pane.
+const TAB_CONTENT_GAP: u16 = 1;
+
+fn clear_byte_view_caches(img: &mut ImageViewerState) {
+    img.scroll = 0;
+    img.hex_state = initial_hex_state(img.raw_bytes.get(img.current).map_or(&[], |b| b.as_slice()));
+    img.text_line_starts = None;
+    img.text_display_cumulative = None;
+    img.text_cache_width = 0;
+}
+
+fn set_image_tab(
+    img: &mut ImageViewerState,
+    next: usize,
+) {
+    if next >= img.entries.len() || next == img.current {
+        return;
+    }
+    img.current = next;
+    img.protocol_stale = true;
+    clear_byte_view_caches(img);
 }
 
 pub fn is_raster_image_filename(name: &str) -> bool {
@@ -381,6 +427,7 @@ pub fn finish_image_loading(
     } = loading;
 
     let mut sources = Vec::with_capacity(entries.len());
+    let mut raw_bytes = Vec::with_capacity(entries.len());
     for (i, buf_opt) in buffers.into_iter().enumerate() {
         let Some(bytes) = buf_opt else {
             app.set_timed_toast_alert(
@@ -392,6 +439,7 @@ pub fn finish_image_loading(
         match decode_image(&bytes) {
             Ok(img) => {
                 sources.push(img);
+                raw_bytes.push(bytes);
             }
             Err(e) => {
                 let name = entries.get(i).map(|e| e.tab_label.as_str()).unwrap_or("?");
@@ -418,16 +466,25 @@ pub fn finish_image_loading(
         .expect("current_clamped in range")
         .clone();
     let image_protocol = picker.new_resize_protocol(start_img);
+    let hex_state = initial_hex_state(raw_bytes.get(current_clamped).map_or(&[], |b| b.as_slice()));
 
     Some(ImageViewerState {
         sources,
+        raw_bytes,
         tab_labels,
         entries,
         current: current_clamped,
         area: Rect::default(),
         tabs_area: Rect::default(),
+        content_area: Rect::default(),
         image_protocol,
         protocol_stale: false,
+        pane_mode: ImagePaneMode::Image,
+        scroll: 0,
+        hex_state,
+        text_line_starts: None,
+        text_display_cumulative: None,
+        text_cache_width: 0,
     })
 }
 
@@ -637,38 +694,23 @@ pub fn draw_image_ready(
         width: area.width,
         height: chrome_h,
     };
-    let title_text = img
-        .entries
-        .get(img.current)
-        .map(|e| e.path_banner.as_str())
-        .unwrap_or("");
 
     let n = img.entries.len();
-    if n <= 1 {
+    let content_h = area.height.saturating_sub(footer_h + chrome_h);
+    let content_rect = if n <= 1 {
         img.tabs_area = Rect {
             x: area.x,
             y: area.y,
             width: 0,
             height: 0,
         };
-        let img_rect = Rect {
+        Rect {
             x: area.x,
             y: area.y,
             width: area.width,
-            height: area.height.saturating_sub(footer_h + chrome_h),
-        };
-        f.render_widget(
-            Block::default().style(content_style),
-            img_rect,
-        );
-        let image_widget = StatefulImage::default().resize(image_resize_fit());
-        f.render_stateful_widget(
-            image_widget,
-            img_rect,
-            &mut img.image_protocol,
-        );
+            height: content_h,
+        }
     } else {
-        let content_h = area.height.saturating_sub(footer_h + chrome_h);
         let tabs_w = vertical_tab_column_width(&img.tab_labels, area.width);
         let tabs_rect = Rect {
             x: area.x,
@@ -676,14 +718,25 @@ pub fn draw_image_ready(
             width: tabs_w,
             height: content_h,
         };
-        let img_rect = Rect {
-            x: area.x.saturating_add(tabs_w),
+        let gap = TAB_CONTENT_GAP.min(area.width.saturating_sub(tabs_w));
+        let content_rect = Rect {
+            x: area.x.saturating_add(tabs_w).saturating_add(gap),
             y: area.y,
-            width: area.width.saturating_sub(tabs_w),
+            width: area.width.saturating_sub(tabs_w).saturating_sub(gap),
             height: content_h,
         };
         img.tabs_area = tabs_rect;
-
+        if gap > 0 {
+            f.render_widget(
+                Block::default().style(content_style),
+                Rect {
+                    x: area.x.saturating_add(tabs_w),
+                    y: area.y,
+                    width: gap,
+                    height: content_h,
+                },
+            );
+        }
         f.render_widget(
             Block::default().style(content_style),
             tabs_rect,
@@ -693,25 +746,80 @@ pub fn draw_image_ready(
             Paragraph::new(Text::from(tab_text)).style(content_style),
             tabs_rect,
         );
+        content_rect
+    };
+    img.content_area = content_rect;
 
-        f.render_widget(
-            Block::default().style(content_style),
-            img_rect,
-        );
-        let image_widget = StatefulImage::default().resize(image_resize_fit());
-        f.render_stateful_widget(
-            image_widget,
-            img_rect,
-            &mut img.image_protocol,
-        );
-    }
+    f.render_widget(
+        Block::default().style(content_style),
+        content_rect,
+    );
 
-    paint_full_width_status_line(
-        f,
+    let mode_label = match img.pane_mode {
+        ImagePaneMode::Image => "IMAGE",
+        ImagePaneMode::Text => "TEXT",
+        ImagePaneMode::Hex => "HEX",
+    };
+    let byte_total = match img.pane_mode {
+        ImagePaneMode::Image => {
+            let image_widget = StatefulImage::default().resize(image_resize_fit());
+            f.render_stateful_widget(
+                image_widget,
+                content_rect,
+                &mut img.image_protocol,
+            );
+            img.raw_bytes.get(img.current).map(|b| b.len()).unwrap_or(0)
+        }
+        ImagePaneMode::Text | ImagePaneMode::Hex => {
+            let view_mode = match img.pane_mode {
+                ImagePaneMode::Text => ViewerMode::Text,
+                ImagePaneMode::Hex => ViewerMode::Hex,
+                ImagePaneMode::Image => unreachable!(),
+            };
+            if let Some(bytes) = img.raw_bytes.get_mut(img.current) {
+                draw_byte_content_in_rect(
+                    f,
+                    bytes,
+                    view_mode,
+                    &mut img.scroll,
+                    &mut img.hex_state,
+                    &mut img.text_line_starts,
+                    &mut img.text_display_cumulative,
+                    &mut img.text_cache_width,
+                    content_rect,
+                    content_style,
+                    vp.hex_cursor_highlight_style(),
+                )
+            } else {
+                0
+            }
+        }
+    };
+
+    let title_text = img
+        .entries
+        .get(img.current)
+        .map(|e| e.path_banner.as_str())
+        .unwrap_or("");
+    let right_info = match img.pane_mode {
+        ImagePaneMode::Image => mode_label.to_string(),
+        ImagePaneMode::Text => format!("{mode_label} | {byte_total} lines"),
+        ImagePaneMode::Hex => format!("{mode_label} | {byte_total} bytes"),
+    };
+    let pad_len = (title_rect.width as usize)
+        .saturating_sub(title_text.chars().count() + right_info.chars().count())
+        .max(1);
+    let title_line = Line::from(vec![
+        Span::styled(
+            title_text.to_string(),
+            Style::default().fg(vp.header_path),
+        ),
+        Span::raw(" ".repeat(pad_len)),
+        Span::styled(right_info, Style::default().fg(vp.muted)),
+    ]);
+    f.render_widget(
+        Paragraph::new(title_line).style(content_style),
         title_rect,
-        title_text,
-        vp.background,
-        vp.header_path,
     );
 
     if let Some(res) = img.image_protocol.last_encoding_result() {
@@ -725,10 +833,13 @@ pub fn draw_image_ready(
 
     // ASCII only: Unicode arrows are often double-width in terminals while ratatui counts one
     // column per char, so the row can spill and leave stale styled cells from the panel list.
-    let hint = if img.entries.len() > 1 {
-        "Esc: close  Up/Down or Left/Right: tab  Click tab list on the left"
-    } else {
-        "Esc: close"
+    let hint = match (img.entries.len() > 1, img.pane_mode) {
+        (true, ImagePaneMode::Image) => {
+            "Esc: close  T: text  H: hex  Up/Down or Left/Right: file  Click list"
+        }
+        (true, _) => "Esc: close  I: image  T: text  H: hex  Left/Right: file  Up/Down: scroll",
+        (false, ImagePaneMode::Image) => "Esc: close  T: text  H: hex",
+        (false, _) => "Esc: close  I: image  T: text  H: hex  Up/Down: scroll",
     };
     paint_full_width_status_line(
         f,
@@ -801,30 +912,97 @@ pub fn handle_image_loading_key(key: KeyCode) -> Option<AppAction> {
 }
 
 pub fn handle_image_ready_key(
+    app: &mut AppState,
     img: &mut ImageViewerState,
     key: KeyEvent,
 ) -> Option<AppAction> {
     if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
         return Some(AppAction::ViewerClose);
     }
-    if img.entries.len() > 1 {
-        let max_i = img.entries.len().saturating_sub(1);
-        match key.code {
-            KeyCode::Left | KeyCode::Up => {
-                let old = img.current;
-                img.current = img.current.saturating_sub(1);
-                if old != img.current {
-                    img.protocol_stale = true;
+
+    if key.code == KeyCode::Char('i') || key.code == KeyCode::Char('I') {
+        if img.pane_mode != ImagePaneMode::Image {
+            img.pane_mode = ImagePaneMode::Image;
+        }
+        return Some(AppAction::Continue);
+    }
+    if key.code == KeyCode::Char('t') || key.code == KeyCode::Char('T') {
+        let bytes_len = img.raw_bytes.get(img.current).map(|b| b.len()).unwrap_or(0);
+        if bytes_len > MAX_TEXT_VIEW_BYTES {
+            app.set_timed_toast_alert(
+                Duration::from_secs(4),
+                "Text mode needs a full-file index; use hex for files over 64 MB.",
+            );
+        } else if img.pane_mode != ImagePaneMode::Text {
+            img.pane_mode = ImagePaneMode::Text;
+            img.scroll = 0;
+            img.text_line_starts = None;
+            img.text_display_cumulative = None;
+            img.text_cache_width = 0;
+        }
+        return Some(AppAction::Continue);
+    }
+    if key.code == KeyCode::Char('h') || key.code == KeyCode::Char('H') {
+        if img.pane_mode != ImagePaneMode::Hex {
+            img.pane_mode = ImagePaneMode::Hex;
+            img.hex_state =
+                initial_hex_state(img.raw_bytes.get(img.current).map_or(&[], |b| b.as_slice()));
+        }
+        return Some(AppAction::Continue);
+    }
+
+    let multi = img.entries.len() > 1;
+    match img.pane_mode {
+        ImagePaneMode::Image => {
+            if multi {
+                let max_i = img.entries.len().saturating_sub(1);
+                match key.code {
+                    KeyCode::Left | KeyCode::Up => {
+                        set_image_tab(img, img.current.saturating_sub(1));
+                    }
+                    KeyCode::Right | KeyCode::Down => {
+                        set_image_tab(img, (img.current + 1).min(max_i));
+                    }
+                    _ => {}
                 }
             }
-            KeyCode::Right | KeyCode::Down => {
-                let old = img.current;
-                img.current = (img.current + 1).min(max_i);
-                if old != img.current {
-                    img.protocol_stale = true;
+        }
+        ImagePaneMode::Text | ImagePaneMode::Hex => {
+            if multi {
+                let max_i = img.entries.len().saturating_sub(1);
+                match key.code {
+                    KeyCode::Left => {
+                        set_image_tab(img, img.current.saturating_sub(1));
+                        return Some(AppAction::Continue);
+                    }
+                    KeyCode::Right => {
+                        set_image_tab(img, (img.current + 1).min(max_i));
+                        return Some(AppAction::Continue);
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
+            let view_mode = match img.pane_mode {
+                ImagePaneMode::Text => ViewerMode::Text,
+                ImagePaneMode::Hex => ViewerMode::Hex,
+                ImagePaneMode::Image => unreachable!(),
+            };
+            let height = img.content_area.height.max(1) as usize;
+            let width = img.content_area.width;
+            if let Some(bytes) = img.raw_bytes.get_mut(img.current) {
+                handle_byte_content_key(
+                    key.code,
+                    view_mode,
+                    bytes,
+                    height,
+                    &mut img.scroll,
+                    &mut img.hex_state,
+                    &mut img.text_line_starts,
+                    &mut img.text_display_cumulative,
+                    &mut img.text_cache_width,
+                    width,
+                );
+            }
         }
     }
     Some(AppAction::Continue)
@@ -855,10 +1033,49 @@ pub fn handle_image_ready_mouse(
                 row,
                 img.current,
             ) {
-                if idx < img.entries.len() && idx != img.current {
-                    img.current = idx;
-                    img.protocol_stale = true;
-                }
+                set_image_tab(img, idx);
+            } else if img.pane_mode == ImagePaneMode::Hex
+                && col >= img.content_area.x
+                && col < img.content_area.x.saturating_add(img.content_area.width)
+                && row >= img.content_area.y
+                && row < img.content_area.y.saturating_add(img.content_area.height)
+            {
+                img.hex_state.select_at(col, row);
+            }
+            true
+        }
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            if matches!(
+                img.pane_mode,
+                ImagePaneMode::Text | ImagePaneMode::Hex
+            ) =>
+        {
+            let n = 3isize;
+            let delta = if matches!(mouse_event.kind, MouseEventKind::ScrollUp) {
+                -n
+            } else {
+                n
+            };
+            let view_mode = match img.pane_mode {
+                ImagePaneMode::Text => ViewerMode::Text,
+                ImagePaneMode::Hex => ViewerMode::Hex,
+                ImagePaneMode::Image => unreachable!(),
+            };
+            let height = img.content_area.height.max(1) as usize;
+            let width = img.content_area.width;
+            if let Some(bytes) = img.raw_bytes.get_mut(img.current) {
+                apply_byte_content_scroll(
+                    view_mode,
+                    bytes,
+                    height,
+                    delta,
+                    &mut img.scroll,
+                    &mut img.hex_state,
+                    &mut img.text_line_starts,
+                    &mut img.text_display_cumulative,
+                    &mut img.text_cache_width,
+                    width,
+                );
             }
             true
         }

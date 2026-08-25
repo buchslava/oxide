@@ -25,7 +25,7 @@ use super::viewer_markdown_images::{
     OxideMarkdownImageResolver,
 };
 
-use super::viewer::{ViewerMode, ViewerScreenState, ViewerState};
+use super::viewer::{initial_hex_state, ViewerMode, ViewerScreenState, ViewerState};
 use super::viewer_markdown_links::{
     extract_links, local_markdown_exists, resolve_markdown_link, slugify_heading, ExtractedLink,
     ResolvedLink,
@@ -1116,12 +1116,13 @@ pub fn on_markdown_ready(
 }
 
 pub fn markdown_to_text_viewer(md: MarkdownViewerState) -> ViewerScreenState {
+    let content = md.content.into_bytes();
     ViewerScreenState {
         file_path: md.file_path,
-        content: md.content.into_bytes(),
+        hex_state: initial_hex_state(&content),
+        content,
         view_mode: ViewerMode::Text,
         scroll: 0,
-        hex_cursor: 0,
         area: md.area,
         text_line_starts: None,
         text_display_cumulative: None,

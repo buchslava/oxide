@@ -1,18 +1,18 @@
 //! File viewer (F3): view file as text, hex dump, or rendered markdown. ESC to close.
 
-use std::fmt::Write;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     style::Style,
     text::{Line, Span, Text},
-    widgets::{Block, Paragraph, Wrap},
+    widgets::{Block, Paragraph},
     Frame,
 };
+use ratatui_binary_data_widget::{BinaryDataWidget, BinaryDataWidgetState};
 
 use crate::util;
 
@@ -62,8 +62,8 @@ pub struct ViewerScreenState {
     pub view_mode: ViewerMode,
     /// First visible line index (scroll offset).
     pub scroll: usize,
-    /// Hex mode: byte offset of the current character (highlighted in hex and ASCII columns).
-    pub hex_cursor: usize,
+    /// Selection and viewport owned by the standard Ratatui binary-data widget.
+    pub hex_state: BinaryDataWidgetState,
     /// Last draw area (for consistent layout).
     pub area: Rect,
     /// Text mode: byte offset of start of each logical line (len = num_lines+1). Used for fast paging (MC-style).
@@ -86,20 +86,211 @@ use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
 use crate::ui::theme::ViewerPalette;
 
-/// Default bytes per line when width unknown; also minimum.
-const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;
-const HEX_BYTES_PER_LINE_MAX: usize = 64;
-
-/// Bytes per line to use so the hex dump fills the given width (address + hex + "  |" + ascii + "|").
-/// Rounds to multiple of 8 for neat grouping; clamps to 8..=HEX_BYTES_PER_LINE_MAX.
-fn hex_bytes_per_line_from_width(width: u16) -> usize {
-    let w = width as usize;
-    if w < 45 {
-        return HEX_BYTES_PER_LINE_DEFAULT;
+pub(super) fn initial_hex_state(content: &[u8]) -> BinaryDataWidgetState {
+    let mut state = BinaryDataWidgetState::new();
+    if !content.is_empty() {
+        state.select_address(Some(0));
     }
-    let bpl = (w - 13) / 4;
-    let bpl = (bpl / 8).max(1) * 8;
-    bpl.min(HEX_BYTES_PER_LINE_MAX).max(8)
+    state
+}
+
+/// Borrow image-browser byte buffers as a temporary [`ViewerScreenState`] for text/hex helpers.
+fn with_temp_byte_viewer<R>(
+    content: &mut Vec<u8>,
+    view_mode: ViewerMode,
+    scroll: &mut usize,
+    hex_state: &mut BinaryDataWidgetState,
+    text_line_starts: &mut Option<Vec<usize>>,
+    text_display_cumulative: &mut Option<Vec<usize>>,
+    text_cache_width: &mut u16,
+    area: Rect,
+    f: impl FnOnce(&mut ViewerScreenState) -> R,
+) -> R {
+    let mut v = ViewerScreenState {
+        file_path: String::new(),
+        content: std::mem::take(content),
+        view_mode,
+        scroll: *scroll,
+        hex_state: *hex_state,
+        area,
+        text_line_starts: text_line_starts.take(),
+        text_display_cumulative: text_display_cumulative.take(),
+        text_cache_width: *text_cache_width,
+    };
+    let out = f(&mut v);
+    *content = v.content;
+    *scroll = v.scroll;
+    *hex_state = v.hex_state;
+    *text_line_starts = v.text_line_starts;
+    *text_display_cumulative = v.text_display_cumulative;
+    *text_cache_width = v.text_cache_width;
+    out
+}
+
+/// Draw text or hex for `content` into `content_rect` (used by the image browser right pane).
+/// Returns the header total (display lines for text, byte count for hex).
+pub(super) fn draw_byte_content_in_rect(
+    f: &mut Frame,
+    content: &mut Vec<u8>,
+    view_mode: ViewerMode,
+    scroll: &mut usize,
+    hex_state: &mut BinaryDataWidgetState,
+    text_line_starts: &mut Option<Vec<usize>>,
+    text_display_cumulative: &mut Option<Vec<usize>>,
+    text_cache_width: &mut u16,
+    content_rect: Rect,
+    content_style: Style,
+    hex_highlight: Style,
+) -> usize {
+    let height = content_rect.height.max(1) as usize;
+    with_temp_byte_viewer(
+        content,
+        view_mode,
+        scroll,
+        hex_state,
+        text_line_starts,
+        text_display_cumulative,
+        text_cache_width,
+        content_rect,
+        |v| match view_mode {
+            ViewerMode::Text => {
+                let (lines, total) = text_visible_lines_cached(v, v.scroll, height);
+                let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
+                f.render_widget(
+                    Paragraph::new(Text::from(text_lines)).style(content_style),
+                    content_rect,
+                );
+                total
+            }
+            ViewerMode::Hex => {
+                let widget = BinaryDataWidget::new(&v.content)
+                    .style(content_style)
+                    .highlight_style(hex_highlight);
+                f.render_stateful_widget(widget, content_rect, &mut v.hex_state);
+                v.content.len()
+            }
+        },
+    )
+}
+
+/// Arrow / page keys for text or hex content (image browser right pane).
+pub(super) fn handle_byte_content_key(
+    code: KeyCode,
+    view_mode: ViewerMode,
+    content: &mut Vec<u8>,
+    height: usize,
+    scroll: &mut usize,
+    hex_state: &mut BinaryDataWidgetState,
+    text_line_starts: &mut Option<Vec<usize>>,
+    text_display_cumulative: &mut Option<Vec<usize>>,
+    text_cache_width: &mut u16,
+    content_width: u16,
+) {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: content_width.max(1),
+        height: height.max(1) as u16,
+    };
+    with_temp_byte_viewer(
+        content,
+        view_mode,
+        scroll,
+        hex_state,
+        text_line_starts,
+        text_display_cumulative,
+        text_cache_width,
+        area,
+        |v| {
+            if view_mode == ViewerMode::Hex && !v.content.is_empty() {
+                match code {
+                    KeyCode::Left => {
+                        v.hex_state.key_left();
+                    }
+                    KeyCode::Right => {
+                        v.hex_state.key_right();
+                    }
+                    KeyCode::Up => {
+                        v.hex_state.key_up();
+                    }
+                    KeyCode::Down => {
+                        v.hex_state.key_down();
+                    }
+                    KeyCode::PageUp => {
+                        v.hex_state.scroll_up(height);
+                    }
+                    KeyCode::PageDown => {
+                        v.hex_state.scroll_down(height);
+                    }
+                    KeyCode::Home => {
+                        v.hex_state.select_address(Some(0));
+                    }
+                    KeyCode::End => {
+                        v.hex_state
+                            .select_address(Some(v.content.len().saturating_sub(1)));
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            let total_lines = line_count(v);
+            let max_scroll = total_lines.saturating_sub(height).max(0);
+            match code {
+                KeyCode::Up => v.scroll = v.scroll.saturating_sub(1),
+                KeyCode::Down => v.scroll = (v.scroll + 1).min(max_scroll),
+                KeyCode::PageUp => v.scroll = v.scroll.saturating_sub(height),
+                KeyCode::PageDown => v.scroll = (v.scroll + height).min(max_scroll),
+                KeyCode::Home => v.scroll = 0,
+                KeyCode::End => v.scroll = max_scroll,
+                _ => {}
+            }
+        },
+    );
+}
+
+/// Mouse-wheel scroll for text/hex in the image browser right pane.
+pub(super) fn apply_byte_content_scroll(
+    view_mode: ViewerMode,
+    content: &mut Vec<u8>,
+    height: usize,
+    delta_display_lines: isize,
+    scroll: &mut usize,
+    hex_state: &mut BinaryDataWidgetState,
+    text_line_starts: &mut Option<Vec<usize>>,
+    text_display_cumulative: &mut Option<Vec<usize>>,
+    text_cache_width: &mut u16,
+    content_width: u16,
+) {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: content_width.max(1),
+        height: height.max(1) as u16,
+    };
+    with_temp_byte_viewer(
+        content,
+        view_mode,
+        scroll,
+        hex_state,
+        text_line_starts,
+        text_display_cumulative,
+        text_cache_width,
+        area,
+        |v| {
+            if view_mode == ViewerMode::Hex {
+                if delta_display_lines < 0 {
+                    v.hex_state.scroll_up(delta_display_lines.unsigned_abs());
+                } else {
+                    v.hex_state.scroll_down(delta_display_lines as usize);
+                }
+                return;
+            }
+            let total_lines = line_count(v);
+            let max_scroll = total_lines.saturating_sub(height).max(0);
+            let s = v.scroll as isize + delta_display_lines;
+            v.scroll = s.clamp(0, max_scroll as isize) as usize;
+        },
+    );
 }
 
 /// Close the viewer and return to panels.
@@ -305,10 +496,10 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
             };
             app.viewer_screen = Some(ViewerState::Ready(ViewerScreenState {
                 file_path,
+                hex_state: initial_hex_state(&content),
                 content,
                 view_mode,
                 scroll,
-                hex_cursor: 0,
                 area: Rect::default(),
                 text_line_starts: None,
                 text_display_cumulative: None,
@@ -354,7 +545,18 @@ pub fn handle_viewer_key(
         ViewerState::ImageLoading(..) => {
             handle_image_loading_key(key.code).or(Some(AppAction::Continue))
         }
-        ViewerState::ImageReady(img) => handle_image_ready_key(img, key),
+        ViewerState::ImageReady(_) => {
+            let mut img = match app.viewer_screen.take() {
+                Some(ViewerState::ImageReady(img)) => img,
+                other => {
+                    app.viewer_screen = other;
+                    return None;
+                }
+            };
+            let action = handle_image_ready_key(app, &mut img, key);
+            app.viewer_screen = Some(ViewerState::ImageReady(img));
+            action
+        }
         ViewerState::MarkdownReady(..) => handle_markdown_key(app, key),
         ViewerState::Loading { .. } => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x1b') {
@@ -384,7 +586,7 @@ pub fn handle_viewer_key(
                     ViewerMode::Text => {
                         v.view_mode = ViewerMode::Hex;
                         v.scroll = 0;
-                        v.hex_cursor = 0;
+                        v.hex_state = initial_hex_state(&v.content);
                     }
                     ViewerMode::Hex => {
                         if v.content.len() > MAX_TEXT_VIEW_BYTES {
@@ -395,49 +597,39 @@ pub fn handle_viewer_key(
                         } else {
                             v.view_mode = ViewerMode::Text;
                             v.scroll = 0;
-                            v.hex_cursor = 0;
                         }
                     }
                 }
                 return Some(AppAction::Continue);
             }
             if v.view_mode == ViewerMode::Hex && !v.content.is_empty() {
-                let content_rect = Rect {
-                    x: 0,
-                    y: 0,
-                    width: v.area.width,
-                    height: v.area.height.saturating_sub(2).max(1),
-                };
-                let chunks = Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
-                    .split(content_rect);
-                let bpl = hex_bpl_two_columns(chunks[0].width, chunks[1].width).max(1);
-                let len = v.content.len();
-                let total_lines = (len + bpl - 1) / bpl;
-                let _max_scroll = total_lines.saturating_sub(height as usize).max(0);
                 match key.code {
-                    KeyCode::Left => v.hex_cursor = v.hex_cursor.saturating_sub(1),
-                    KeyCode::Right => v.hex_cursor = (v.hex_cursor + 1).min(len.saturating_sub(1)),
-                    KeyCode::Up => v.hex_cursor = v.hex_cursor.saturating_sub(bpl),
-                    KeyCode::Down => v.hex_cursor = (v.hex_cursor + bpl).min(len.saturating_sub(1)),
+                    KeyCode::Left => {
+                        v.hex_state.key_left();
+                    }
+                    KeyCode::Right => {
+                        v.hex_state.key_right();
+                    }
+                    KeyCode::Up => {
+                        v.hex_state.key_up();
+                    }
+                    KeyCode::Down => {
+                        v.hex_state.key_down();
+                    }
                     KeyCode::PageUp => {
-                        v.hex_cursor = v.hex_cursor.saturating_sub(bpl * height as usize)
+                        v.hex_state.scroll_up(height);
                     }
                     KeyCode::PageDown => {
-                        v.hex_cursor =
-                            (v.hex_cursor + bpl * height as usize).min(len.saturating_sub(1))
+                        v.hex_state.scroll_down(height);
                     }
-                    KeyCode::Home => v.hex_cursor = 0,
-                    KeyCode::End => v.hex_cursor = len.saturating_sub(1),
+                    KeyCode::Home => {
+                        v.hex_state.select_address(Some(0));
+                    }
+                    KeyCode::End => {
+                        v.hex_state
+                            .select_address(Some(v.content.len().saturating_sub(1)));
+                    }
                     _ => {}
-                }
-                // Keep scroll so the line containing hex_cursor is visible.
-                let cursor_line = v.hex_cursor / bpl;
-                if cursor_line < v.scroll {
-                    v.scroll = cursor_line;
-                } else if cursor_line >= v.scroll + height as usize {
-                    v.scroll = cursor_line
-                        .saturating_sub(height as usize)
-                        .saturating_add(1);
                 }
                 return Some(AppAction::Continue);
             }
@@ -464,21 +656,12 @@ fn apply_viewer_scroll_wheel(
     delta_display_lines: isize,
 ) {
     let height = visible_lines(v);
-    if v.view_mode == ViewerMode::Hex && !v.content.is_empty() {
-        let content_rect = Rect {
-            x: 0,
-            y: 0,
-            width: v.area.width,
-            height: v.area.height.saturating_sub(2).max(1),
-        };
-        let chunks = Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
-            .split(content_rect);
-        let bpl = hex_bpl_two_columns(chunks[0].width, chunks[1].width).max(1);
-        let len = v.content.len();
-        let total_lines = (len + bpl - 1) / bpl;
-        let max_scroll = total_lines.saturating_sub(height as usize).max(0);
-        let s = v.scroll as isize + delta_display_lines;
-        v.scroll = s.clamp(0, max_scroll as isize) as usize;
+    if v.view_mode == ViewerMode::Hex {
+        if delta_display_lines < 0 {
+            v.hex_state.scroll_up(delta_display_lines.unsigned_abs());
+        } else {
+            v.hex_state.scroll_down(delta_display_lines as usize);
+        }
         return;
     }
     let total_lines = line_count(v);
@@ -505,6 +688,9 @@ pub fn handle_viewer_mouse(
             match mouse_event.kind {
                 MouseEventKind::ScrollUp => apply_viewer_scroll_wheel(v, -n),
                 MouseEventKind::ScrollDown => apply_viewer_scroll_wheel(v, n),
+                MouseEventKind::Down(_) if v.view_mode == ViewerMode::Hex => {
+                    v.hex_state.select_at(mouse_event.column, mouse_event.row);
+                }
                 _ => {}
             }
             true
@@ -518,21 +704,7 @@ fn line_count(v: &mut ViewerScreenState) -> usize {
             ensure_text_cache(v);
             text_line_count_cached(v)
         }
-        ViewerMode::Hex => {
-            if v.area.width == 0 {
-                return hex_line_count(v, 80);
-            }
-            let area = Rect {
-                x: 0,
-                y: 0,
-                width: v.area.width,
-                height: 1,
-            };
-            let chunks =
-                Layout::horizontal([Constraint::Percentage(70), Constraint::Percentage(30)])
-                    .split(area);
-            hex_line_count_two_columns(v, chunks[0].width, chunks[1].width)
-        }
+        ViewerMode::Hex => v.content.len(),
     }
 }
 
@@ -712,174 +884,6 @@ fn text_visible_lines_cached(
     (out, total)
 }
 
-/// Total hex lines (one per row). Single-column: from content_width; two-column: from left/right widths.
-fn hex_line_count(
-    v: &ViewerScreenState,
-    content_width: u16,
-) -> usize {
-    let len = v.content.len();
-    if len == 0 {
-        return 0;
-    }
-    let bpl = hex_bytes_per_line_from_width(content_width);
-    (len + bpl - 1) / bpl
-}
-
-/// Total hex lines when using two-column layout (responsive left/right).
-fn hex_line_count_two_columns(
-    v: &ViewerScreenState,
-    left_width: u16,
-    right_width: u16,
-) -> usize {
-    let len = v.content.len();
-    if len == 0 {
-        return 0;
-    }
-    let bpl = hex_bpl_two_columns(left_width, right_width);
-    (len + bpl - 1) / bpl
-}
-
-/// Bytes per line for two-column layout: left (address+hex) and right (ASCII, no pipes).
-fn hex_bpl_two_columns(
-    left_width: u16,
-    right_width: u16,
-) -> usize {
-    let left_cols = left_width as usize;
-    let right_cols = right_width as usize;
-    if left_cols < 19 || right_cols < 8 {
-        return HEX_BYTES_PER_LINE_DEFAULT;
-    }
-    let bpl_left = (left_cols - 10) / 3;
-    let bpl_right = right_cols;
-    let bpl = bpl_left.min(bpl_right).max(8);
-    let bpl = (bpl / 8).max(1) * 8;
-    bpl.min(HEX_BYTES_PER_LINE_MAX)
-}
-
-/// Byte index i (in line) → start character index of its hex pair in the left line (after "AAAAAAAA: ").
-fn hex_byte_column_in_line(i: usize) -> usize {
-    (i / 8) * (8 * 3 + 2) + (i % 8) * 3
-}
-
-/// Two-column hex with optional cursor highlight: (left_lines, right_lines, total).
-/// Left = address + hex; right = ascii. When cursor_byte is in the visible range, that byte is
-/// highlighted in both columns (inverted style).
-fn hex_visible_lines_two_columns_styled(
-    v: &ViewerScreenState,
-    scroll: usize,
-    height: usize,
-    left_width: u16,
-    right_width: u16,
-    hex_cursor_highlight: Style,
-) -> (Vec<Line<'_>>, Vec<Line<'_>>, usize) {
-    let bytes = &v.content;
-    let cursor_byte = v.hex_cursor;
-    if bytes.is_empty() {
-        return (
-            vec![Line::from("(empty file)")],
-            vec![Line::from("")],
-            0,
-        );
-    }
-    let bpl = hex_bpl_two_columns(left_width, right_width);
-    let total_lines = (bytes.len() + bpl - 1) / bpl;
-    let scroll = scroll.min(total_lines.saturating_sub(1));
-    let start_byte = scroll * bpl;
-    let end_byte = ((scroll + height) * bpl).min(bytes.len());
-    let mut left_lines = Vec::with_capacity(height.min(total_lines.saturating_sub(scroll)));
-    let mut right_lines = Vec::with_capacity(left_lines.capacity());
-    let addr_len = 10usize; // "AAAAAAAA: "
-    let highlight_style = hex_cursor_highlight;
-    let mut offset = start_byte;
-    while offset < end_byte && left_lines.len() < height {
-        let chunk = &bytes[offset..(offset + bpl).min(bytes.len())];
-        let mut hex_str = String::with_capacity(chunk.len() * 3 + chunk.len() / 8 + 8);
-        for (i, b) in chunk.iter().enumerate() {
-            if i > 0 {
-                hex_str.push(' ');
-                if i % 8 == 0 {
-                    hex_str.push(' ');
-                }
-            }
-            let _ = write!(hex_str, "{:02x}", b);
-        }
-        let ascii: String = chunk
-            .iter()
-            .map(|&b| {
-                if b.is_ascii_graphic() || b == b' ' {
-                    b as char
-                } else {
-                    '.'
-                }
-            })
-            .collect();
-        let padding = bpl - chunk.len();
-        let mut left_line_str = String::with_capacity(addr_len + hex_str.len() + padding * 3);
-        let _ = write!(
-            left_line_str,
-            "{:08x}: {}",
-            offset, hex_str
-        );
-        for _ in 0..padding {
-            left_line_str.push_str("   ");
-        }
-        let mut right_line_str = ascii;
-        right_line_str.extend(std::iter::repeat(' ').take(padding));
-        let lw = left_width as usize;
-        let rw = right_width as usize;
-        if left_line_str.len() > lw {
-            left_line_str.truncate(lw);
-        }
-        if right_line_str.len() > rw {
-            right_line_str.truncate(rw);
-        }
-        let cursor_in_this_line = cursor_byte >= offset && cursor_byte < offset + chunk.len();
-        let local_cursor = cursor_byte.saturating_sub(offset);
-        let left_line = if cursor_in_this_line && local_cursor < chunk.len() {
-            let hex_start = addr_len + hex_byte_column_in_line(local_cursor);
-            let hex_end = (hex_start + 2).min(left_line_str.len());
-            let before = left_line_str.get(..hex_start).unwrap_or("").to_string();
-            let sel = left_line_str
-                .get(hex_start..hex_end)
-                .unwrap_or("")
-                .to_string();
-            let after = left_line_str.get(hex_end..).unwrap_or("").to_string();
-            Line::from(vec![
-                Span::raw(before),
-                Span::styled(sel, highlight_style),
-                Span::raw(after),
-            ])
-        } else {
-            Line::from(left_line_str)
-        };
-        let right_line = if cursor_in_this_line && local_cursor < right_line_str.len() {
-            let ch_start = local_cursor;
-            let ch_end = (ch_start + 1).min(right_line_str.len());
-            let before = right_line_str.get(..ch_start).unwrap_or("").to_string();
-            let sel = right_line_str
-                .get(ch_start..ch_end)
-                .unwrap_or("")
-                .to_string();
-            let after = right_line_str.get(ch_end..).unwrap_or("").to_string();
-            Line::from(vec![
-                Span::raw(before),
-                Span::styled(sel, highlight_style),
-                Span::raw(after),
-            ])
-        } else {
-            Line::from(right_line_str)
-        };
-        left_lines.push(left_line);
-        right_lines.push(right_line);
-        offset += bpl;
-    }
-    if left_lines.is_empty() && start_byte < bytes.len() {
-        left_lines.push(Line::from("00000000: (empty)"));
-        right_lines.push(Line::from(""));
-    }
-    (left_lines, right_lines, total_lines)
-}
-
 /// Draw the viewer (text or hex) with scroll and status.
 pub fn draw(
     f: &mut Frame,
@@ -987,35 +991,11 @@ pub fn draw(
                     total
                 }
                 ViewerMode::Hex => {
-                    // Use Min(0) for right column so it takes all remaining space;
-                    // Percentage(70)+Percentage(30) can leave 1–2 columns undrawn when
-                    // width doesn't divide evenly, leaving text-mode leftovers visible.
-                    let chunks =
-                        Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
-                            .split(content_rect);
-                    let (left_lines, right_lines, total) = hex_visible_lines_two_columns_styled(
-                        v,
-                        v.scroll,
-                        content_height_usize,
-                        chunks[0].width,
-                        chunks[1].width,
-                        vp.hex_cursor_highlight_style(),
-                    );
-                    let left_text = Text::from(left_lines);
-                    let right_text = Text::from(right_lines);
-                    f.render_widget(
-                        Paragraph::new(left_text)
-                            .style(content_style)
-                            .wrap(Wrap { trim: false }),
-                        chunks[0],
-                    );
-                    f.render_widget(
-                        Paragraph::new(right_text)
-                            .style(content_style)
-                            .wrap(Wrap { trim: false }),
-                        chunks[1],
-                    );
-                    total
+                    let widget = BinaryDataWidget::new(&v.content)
+                        .style(content_style)
+                        .highlight_style(vp.hex_cursor_highlight_style());
+                    f.render_stateful_widget(widget, content_rect, &mut v.hex_state);
+                    v.content.len()
                 }
             };
 
@@ -1024,7 +1004,10 @@ pub fn draw(
                 ViewerMode::Hex => "HEX",
             };
             let path_span = v.file_path.as_str();
-            let right_info = format!("{} | {} lines", mode_label, total);
+            let right_info = match v.view_mode {
+                ViewerMode::Text => format!("{mode_label} | {total} lines"),
+                ViewerMode::Hex => format!("{mode_label} | {total} bytes"),
+            };
             let pad_len = (header_rect.width as usize)
                 .saturating_sub(path_span.len() + right_info.len())
                 .max(1);

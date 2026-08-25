@@ -45,6 +45,7 @@ ratatui-markdown = { version = "0.3.6", default-features = false, features = [
 ] }
 ratatui029 = { package = "ratatui", version = "0.29", default-features = false }
 pulldown-cmark = "0.13"
+ratatui-binary-data-widget = "0.1.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
