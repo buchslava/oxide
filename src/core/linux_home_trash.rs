@@ -32,9 +32,10 @@ fn file_uri_from_absolute_path(abs: &Path) -> io::Result<String> {
                 out.push_str(&encode_binary(part.as_bytes()).to_string());
             }
             _ => {
-                let s = component.as_os_str().to_str().ok_or_else(|| {
-                    io_other("non-UTF-8 path component in trash URI")
-                })?;
+                let s = component
+                    .as_os_str()
+                    .to_str()
+                    .ok_or_else(|| io_other("non-UTF-8 path component in trash URI"))?;
                 out.push_str(s);
             }
         }

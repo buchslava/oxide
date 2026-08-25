@@ -306,7 +306,10 @@ pub fn draw(
 
     render_scrollbar(f, sb_rect, d, state.scroll, total);
 
-    let hint_y = inner.y + inner.height.saturating_sub(dialog_layout::SCROLL_REFERENCE_MODAL_HINT_H);
+    let hint_y = inner.y
+        + inner
+            .height
+            .saturating_sub(dialog_layout::SCROLL_REFERENCE_MODAL_HINT_H);
     let hint_rect = Rect {
         x: inner.x,
         y: hint_y,

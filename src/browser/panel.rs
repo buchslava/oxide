@@ -3,7 +3,7 @@ use std::fs::metadata;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::core::file_ops::FileInfo;
+use crate::core::file_ops::{FileInfo, SortMode};
 use crate::core::find::PreparedFilePattern;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
@@ -144,8 +144,8 @@ pub struct Panel {
     marked_indices: HashSet<usize>,
     /// When true, show hidden files (names starting with "."). Toggled by Ctrl+H.
     show_hidden: bool,
-    /// Sort mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
-    sort_mode: String,
+    /// Sort mode for the file list.
+    sort_mode: SortMode,
     /// When true (default), directories appear before files; when false, unified sort.
     dirs_first: bool,
 }
@@ -164,7 +164,7 @@ impl Panel {
             navigation_history: Vec::new(),
             marked_indices: HashSet::new(),
             show_hidden: true,
-            sort_mode: "name_asc".to_string(),
+            sort_mode: SortMode::NameAsc,
             dirs_first: true,
         };
         panel.refresh_files()?;
@@ -185,14 +185,14 @@ impl Panel {
         &mut self,
         new_location: PanelLocation,
     ) -> io::Result<()> {
-        let prev_location = self.current_location.clone();
-        let prev_display = self.current_dir_display.clone();
         let prev_index = self.selected_index;
         let prev_scroll = self.scroll_offset;
 
         self.marked_indices.clear();
-        self.navigation_history.push((prev_location.clone(), prev_index));
-        self.current_location = new_location;
+        let prev_location = std::mem::replace(&mut self.current_location, new_location);
+        let prev_display = std::mem::take(&mut self.current_dir_display);
+        self.navigation_history
+            .push((prev_location.clone(), prev_index));
         self.current_dir_display = self.current_location.display_string();
         self.selected_index = 0;
         self.scroll_offset = 0;
@@ -215,14 +215,14 @@ impl Panel {
         let Some(parent) = self.current_location.parent() else {
             return Ok(());
         };
-        let prev_location = self.current_location.clone();
-        let prev_display = self.current_dir_display.clone();
         let prev_index = self.selected_index;
         let prev_scroll = self.scroll_offset;
 
         self.marked_indices.clear();
-        self.navigation_history.push((prev_location.clone(), prev_index));
-        self.current_location = parent.clone();
+        let prev_location = std::mem::replace(&mut self.current_location, parent);
+        let prev_display = std::mem::take(&mut self.current_dir_display);
+        self.navigation_history
+            .push((prev_location.clone(), prev_index));
         self.current_dir_display = self.current_location.display_string();
         self.scroll_offset = 0;
         if let Err(e) = self.refresh_files() {
@@ -304,7 +304,7 @@ impl Panel {
         match panel_backend::list(
             &self.current_location,
             self.show_hidden,
-            &self.sort_mode,
+            self.sort_mode,
             self.dirs_first,
         ) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -312,7 +312,7 @@ impl Panel {
                 panel_backend::list(
                     &self.current_location,
                     self.show_hidden,
-                    &self.sort_mode,
+                    self.sort_mode,
                     self.dirs_first,
                 )
             }
@@ -746,7 +746,7 @@ impl PanelOperations for Panel {
                 .iter()
                 .max()
                 .expect("marked_indices non-empty in get_names_to_copy");
-            let mut items = Vec::new();
+            let mut items = Vec::with_capacity(self.marked_indices.len());
             for &idx in &self.marked_indices {
                 if let Some(f) = files.get(idx) {
                     if !f.is_parent_dir() {
@@ -814,7 +814,7 @@ impl Panel {
         &mut self,
         mode: &str,
     ) {
-        self.sort_mode = mode.to_string();
+        self.sort_mode = SortMode::parse(mode);
     }
 
     /// Set whether directories appear before files (true) or unified sort (false).

@@ -3,8 +3,8 @@ use crate::browser::editor::EditorViewState;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::core::settings::{self, PersistedSettings};
 use crate::core::trash_delete::trash_available;
-use crate::dialogs::error_detail_dialog::ErrorDetailState;
 use crate::dialogs::actions_dialog::ActionsDialogState;
+use crate::dialogs::error_detail_dialog::ErrorDetailState;
 use crate::dialogs::panel_context_menu::PanelContextMenuState;
 use crate::dialogs::pattern_select_dialog::PatternSelectDialogState;
 use crate::ui::color_depth::ColorDepth;
@@ -16,7 +16,7 @@ use std::io;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use crate::core::copy_state::{
     ArchiveProgress, CopyErrorState, CopyInProgress, CopyParams, CopyProgress, Operation,
@@ -309,10 +309,8 @@ impl AppState {
     /// Call after startup and whenever persisted_settings change so UI always matches the source of truth.
     pub fn sync_from_persisted_settings(&mut self) {
         self.theme_id = ThemeId::from_slug(&self.persisted_settings.theme);
-        self.ui_palette = crate::ui::color_depth::adapt_ui_palette(
-            self.theme_id.palette(),
-            self.color_depth,
-        );
+        self.ui_palette =
+            crate::ui::color_depth::adapt_ui_palette(self.theme_id.palette(), self.color_depth);
         let view_left = view_mode_from_settings_flag(&self.persisted_settings.left_view);
         let view_right = view_mode_from_settings_flag(&self.persisted_settings.right_view);
         let left_show = self.persisted_settings.left_show_hidden;
@@ -404,7 +402,72 @@ impl AppState {
     pub fn post_command_countdown_on_main_buffer(&self) -> bool {
         self.post_command_countdown
             .as_ref()
-            .is_some_and(|c| c.overlay_on_main_buffer && std::time::Instant::now() < c.reveal_at)
+            .is_some_and(|c| c.overlay_on_main_buffer && Instant::now() < c.reveal_at)
+    }
+
+    /// True while a background job should keep the event loop waking (progress, loads, find).
+    pub fn wants_animation_poll(&self) -> bool {
+        self.delete_pending_rx.is_some()
+            || self.archive_pending_rx.is_some()
+            || self.size_info_pending_rx.is_some()
+            || self.folder_compare_pending.is_some()
+            || self.find_search_rx.is_some()
+            || matches!(
+                self.viewer_screen,
+                Some(ViewerState::Loading { .. } | ViewerState::ImageLoading(_))
+            )
+            || matches!(
+                self.editor_screen,
+                Some(EditorViewState::Loading { .. } | EditorViewState::BytesLoaded { .. })
+            )
+            || matches!(
+                self.diff_viewer_screen,
+                Some(DiffViewerState::Loading { .. })
+            )
+    }
+
+    /// How long to block for the next input event. `ZERO` during an active copy/move/delete step so
+    /// progress stays fluid; longer when idle so we do not repaint 10 times a second.
+    pub fn event_poll_timeout(
+        &self,
+        command_line_blink: bool,
+        blink_last_toggle: Instant,
+    ) -> Duration {
+        if self.copy_in_progress.is_some()
+            && self.copy_overwrite_dialog.is_none()
+            && self.copy_error_dialog.is_none()
+        {
+            return Duration::ZERO;
+        }
+        if self.wants_animation_poll() {
+            return Duration::from_millis(50);
+        }
+        let mut timeout = Duration::from_secs(60);
+        if command_line_blink {
+            let remain = Duration::from_millis(500).saturating_sub(blink_last_toggle.elapsed());
+            timeout = timeout.min(remain.max(Duration::from_millis(16)));
+        }
+        if let Some(toast) = &self.timed_toast {
+            timeout = timeout.min(
+                toast
+                    .until
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(16)),
+            );
+        }
+        if let Some(cd) = &self.post_command_countdown {
+            let rem = cd.reveal_at.saturating_duration_since(Instant::now());
+            timeout = timeout.min(rem.max(Duration::from_millis(16)));
+            if cd.overlay_on_main_buffer && !rem.is_zero() {
+                let to_next_sec = if rem.subsec_nanos() == 0 {
+                    Duration::from_secs(1).min(rem)
+                } else {
+                    Duration::from_nanos(u64::from(rem.subsec_nanos()))
+                };
+                timeout = timeout.min(to_next_sec.max(Duration::from_millis(16)));
+            }
+        }
+        timeout
     }
 
     /// Set the active panel by index (0 = left, 1 = right).
@@ -459,13 +522,17 @@ impl AppState {
         }
     }
 
-    /// Current panel location (for backend operations and CopyParams).
-    pub fn get_current_location(&self) -> PanelLocation {
+    /// Current panel location (borrowed; clone only when storing into CopyParams).
+    pub fn current_location(&self) -> &PanelLocation {
         match self.active_panel {
-            0 => self.left_panel.current_location().clone(),
-            1 => self.right_panel.current_location().clone(),
-            _ => self.left_panel.current_location().clone(),
+            1 => self.right_panel.current_location(),
+            _ => self.left_panel.current_location(),
         }
+    }
+
+    /// Current panel location (owned). Prefer [`Self::current_location`] when a borrow is enough.
+    pub fn get_current_location(&self) -> PanelLocation {
+        self.current_location().clone()
     }
 
     /// Directory of the panel opposite to the active one (target for F5 Copy).
@@ -477,19 +544,22 @@ impl AppState {
         }
     }
 
-    /// Location of the panel opposite to the active one (target for F5 Copy / F6 Move).
-    pub fn get_opposite_panel_location(&self) -> PanelLocation {
+    /// Location of the panel opposite to the active one (borrowed).
+    pub fn opposite_panel_location(&self) -> &PanelLocation {
         match self.active_panel {
-            0 => self.right_panel.current_location().clone(),
-            1 => self.left_panel.current_location().clone(),
-            _ => self.right_panel.current_location().clone(),
+            1 => self.left_panel.current_location(),
+            _ => self.right_panel.current_location(),
         }
+    }
+
+    /// Location of the panel opposite to the active one (owned). Prefer [`Self::opposite_panel_location`].
+    pub fn get_opposite_panel_location(&self) -> PanelLocation {
+        self.opposite_panel_location().clone()
     }
 
     /// Filesystem path to use as copy/move target when opposite is Fs. When opposite is Zip, use target_location and copy into archive instead.
     pub fn get_opposite_panel_target_fs_path(&self) -> PathBuf {
-        let loc = self.get_opposite_panel_location();
-        match &loc {
+        match self.opposite_panel_location() {
             PanelLocation::Fs(p) => p.clone(),
             PanelLocation::Archive { archive, .. } => archive
                 .parent()
@@ -501,8 +571,7 @@ impl AppState {
     /// Set the process working directory to the **active** panel's filesystem path (`active_panel`:
     /// 0 = left, 1 = right). No-op if that panel is inside a ZIP.
     fn apply_process_cwd_to_active_panel_fs(&self) {
-        let loc = self.get_current_location();
-        if let Some(p) = loc.as_fs_path() {
+        if let Some(p) = self.current_location().as_fs_path() {
             if let Err(e) = std::env::set_current_dir(p) {
                 eprintln!("Failed to change directory: {}", e);
             }

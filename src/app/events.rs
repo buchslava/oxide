@@ -1,11 +1,14 @@
 use crate::app::ctrl_x_chord::{self, SuspendChordResult};
+use crate::app::mouse;
 use crate::app::panel_refresh;
 use crate::app::state::{
     AppState, CopyParams, Focus, Operation, RenameAttrDialogState, RenameAttrField,
     SizeInfoDialogState,
 };
 use crate::browser::clipboard;
-use crate::browser::diff_viewer::{cancel_folder_compare_pending, handle_diff_key, handle_diff_mouse};
+use crate::browser::diff_viewer::{
+    cancel_folder_compare_pending, handle_diff_key, handle_diff_mouse,
+};
 pub use crate::browser::editor::EditorConfirmChoice;
 use crate::browser::editor::{handle_editor_key, handle_editor_mouse, paste_text_as_is};
 use crate::browser::panel::PanelOperations;
@@ -14,18 +17,35 @@ use crate::core::copy_state::same_folder_copy_dest_name;
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend::{supports_edit, supports_mkdir, supports_new_file};
 use crate::dialogs::{
-    actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
-    panel_context_menu, panel_overlay, pattern_select_dialog, rename_attr, settings_dialog,
-    size_info_dialog,
+    actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog,
+    new_file_dialog, panel_context_menu, panel_overlay, pattern_select_dialog, rename_attr,
+    settings_dialog, size_info_dialog,
 };
 use crate::ui::text_input;
 use crate::util::compute_panel_height;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
 
+fn cycle_focus_index(
+    idx: &mut usize,
+    len: usize,
+    forward: bool,
+) {
+    if len == 0 {
+        return;
+    }
+    *idx = if forward {
+        (*idx + 1) % len
+    } else {
+        (*idx + len - 1) % len
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
     Continue,
+    /// Event poll timed out with no input; the main loop should not treat this as a UI change.
+    Idle,
     Quit,
     Suspend,
     RunCommand(String),
@@ -236,7 +256,10 @@ impl EventHandler {
 
     /// During post-command countdown: panels aren't visible yet, so ignore all input **except Esc**
     /// (Esc abandons the countdown and restores panels immediately).
-    fn handle_events_post_command_countdown(app: &mut AppState) -> io::Result<AppAction> {
+    fn handle_events_post_command_countdown(
+        app: &mut AppState,
+        poll_timeout: std::time::Duration,
+    ) -> io::Result<AppAction> {
         while event::poll(std::time::Duration::ZERO)? {
             let ev = event::read()?;
             if matches!(ev, Event::Key(k) if k.code == KeyCode::Esc) {
@@ -245,8 +268,8 @@ impl EventHandler {
                 }
             }
         }
-        if !event::poll(std::time::Duration::from_millis(100))? {
-            return Ok(AppAction::Continue);
+        if !event::poll(poll_timeout)? {
+            return Ok(AppAction::Idle);
         }
         let ev = event::read()?;
         if matches!(ev, Event::Key(k) if k.code == KeyCode::Esc) {
@@ -257,24 +280,27 @@ impl EventHandler {
         Ok(AppAction::Continue)
     }
 
-    pub fn handle_events(app: &mut AppState) -> io::Result<AppAction> {
+    pub fn handle_events(
+        app: &mut AppState,
+        poll_timeout: std::time::Duration,
+    ) -> io::Result<AppAction> {
         if app.post_command_countdown_active() {
-            return Self::handle_events_post_command_countdown(app);
+            return Self::handle_events_post_command_countdown(app, poll_timeout);
         }
         // Process all queued events first (no block). Handle every Key/Mouse; drain non-keys.
         // This ensures rapid keypresses when switching panels (e.g. Tab then Down) are all applied.
         if let Some(action) = Self::drain_events_nonblocking(app)? {
             return Ok(action);
         }
-        // Queue empty: block for one event.
-        if !event::poll(std::time::Duration::from_millis(100))? {
-            return Ok(AppAction::Continue);
+        // Queue empty: block until input or the next animation/progress tick.
+        if !event::poll(poll_timeout)? {
+            return Ok(AppAction::Idle);
         }
         let ev = event::read()?;
         if let Some(action) = Self::dispatch_event(app, ev)? {
             return Ok(action);
         }
-        Ok(AppAction::Continue)
+        Ok(AppAction::Idle)
     }
 
     /// Dispatch one event. Returns Some(action) if we handled a key and should return it, None to continue/drain.
@@ -306,19 +332,19 @@ impl EventHandler {
                         KeyCode::Char('2') => Some(EditorConfirmChoice::Discard),
                         KeyCode::Char('3') | KeyCode::Esc => Some(EditorConfirmChoice::Cancel),
                         KeyCode::Tab | KeyCode::Char('\t') => {
-                            app.editor_confirm_focus = (app.editor_confirm_focus + 1) % 3;
+                            cycle_focus_index(&mut app.editor_confirm_focus, 3, true);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::BackTab => {
-                            app.editor_confirm_focus = (app.editor_confirm_focus + 2) % 3;
+                            cycle_focus_index(&mut app.editor_confirm_focus, 3, false);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Up => {
-                            app.editor_confirm_focus = (app.editor_confirm_focus + 2) % 3;
+                            cycle_focus_index(&mut app.editor_confirm_focus, 3, false);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Down => {
-                            app.editor_confirm_focus = (app.editor_confirm_focus + 1) % 3;
+                            cycle_focus_index(&mut app.editor_confirm_focus, 3, true);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Enter => Some(match app.editor_confirm_focus {
@@ -352,19 +378,19 @@ impl EventHandler {
                         KeyCode::Char('4') => Some(4),
                         KeyCode::Char('5') | KeyCode::Esc => Some(5),
                         KeyCode::Tab | KeyCode::Char('\t') => {
-                            app.copy_overwrite_focus = (app.copy_overwrite_focus + 1) % 5;
+                            cycle_focus_index(&mut app.copy_overwrite_focus, 5, true);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::BackTab => {
-                            app.copy_overwrite_focus = (app.copy_overwrite_focus + 4) % 5;
+                            cycle_focus_index(&mut app.copy_overwrite_focus, 5, false);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Up => {
-                            app.copy_overwrite_focus = (app.copy_overwrite_focus + 4) % 5;
+                            cycle_focus_index(&mut app.copy_overwrite_focus, 5, false);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Down => {
-                            app.copy_overwrite_focus = (app.copy_overwrite_focus + 1) % 5;
+                            cycle_focus_index(&mut app.copy_overwrite_focus, 5, true);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Enter => {
@@ -418,19 +444,19 @@ impl EventHandler {
                         KeyCode::Char('2') | KeyCode::Esc => Some(CopyErrorChoice::Cancel),
                         KeyCode::Char('3') => Some(CopyErrorChoice::IgnoreAll),
                         KeyCode::Tab | KeyCode::Char('\t') => {
-                            app.copy_error_focus = (app.copy_error_focus + 1) % 3;
+                            cycle_focus_index(&mut app.copy_error_focus, 3, true);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::BackTab => {
-                            app.copy_error_focus = (app.copy_error_focus + 2) % 3;
+                            cycle_focus_index(&mut app.copy_error_focus, 3, false);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Up => {
-                            app.copy_error_focus = (app.copy_error_focus + 2) % 3;
+                            cycle_focus_index(&mut app.copy_error_focus, 3, false);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Down => {
-                            app.copy_error_focus = (app.copy_error_focus + 1) % 3;
+                            cycle_focus_index(&mut app.copy_error_focus, 3, true);
                             return Ok(Some(AppAction::Continue));
                         }
                         KeyCode::Enter => {
@@ -591,7 +617,10 @@ impl EventHandler {
                         SuspendChordResult::NotHandled => {}
                     }
                     // Esc closes the dialog only; do not fall through to panel (Esc would move focus to command line).
-                    let esc_close_only = matches!(code_sz, KeyCode::Esc | KeyCode::Char('\x1b'));
+                    let esc_close_only = matches!(
+                        code_sz,
+                        KeyCode::Esc | KeyCode::Char('\x1b')
+                    );
                     size_info_dialog::close(app);
                     if esc_close_only {
                         return Ok(Some(AppAction::Continue));
@@ -644,7 +673,11 @@ impl EventHandler {
                         } else {
                             c.to_ascii_lowercase()
                         };
-                        return Ok(Some(Self::handle_ctrl_key(app, c, panel_height)));
+                        return Ok(Some(Self::handle_ctrl_key(
+                            app,
+                            c,
+                            panel_height,
+                        )));
                     }
                 } else if ctrl_x_chord::is_ctrl_x_prefix(code, key.modifiers) {
                     app.ctrl_x_chord_pending = true;
@@ -675,11 +708,7 @@ impl EventHandler {
                                 return Ok(Some(AppAction::PanelNavigated));
                             }
                             Err(e) => {
-                                error_detail_dialog::open_from_io(
-                                    app,
-                                    "Could not open",
-                                    e,
-                                );
+                                error_detail_dialog::open_from_io(app, "Could not open", e);
                                 return Ok(Some(AppAction::Continue));
                             }
                         }
@@ -798,7 +827,7 @@ impl EventHandler {
                     KeyCode::F(1) => return Ok(Some(AppAction::OpenActionsDialog)),
                     KeyCode::F(9) => return Ok(Some(AppAction::OpenSettingsDialog)),
                     KeyCode::F(7) => {
-                        if supports_mkdir(&app.get_current_location()) {
+                        if supports_mkdir(app.current_location()) {
                             return Ok(Some(AppAction::OpenMkdirDialog));
                         }
                     }
@@ -810,7 +839,7 @@ impl EventHandler {
                         }
                     }
                     KeyCode::F(4) => {
-                        if supports_edit(&app.get_current_location()) {
+                        if supports_edit(app.current_location()) {
                             if let Some(file) = app.active_panel_mut().get_selected_file() {
                                 if !file.is_dir && !file.is_parent_dir() {
                                     return Ok(Some(AppAction::OpenEditor));
@@ -855,7 +884,7 @@ impl EventHandler {
                 if handle_editor_mouse(app, mouse_event) {
                     return Ok(Some(AppAction::Continue));
                 }
-                let action = crate::app::mouse::handle_mouse_event(app, mouse_event)?;
+                let action = mouse::handle_mouse_event(app, mouse_event)?;
                 Ok(Some(
                     action.unwrap_or(AppAction::Continue),
                 ))
@@ -876,7 +905,7 @@ impl EventHandler {
                 }
                 Ok(None)
             }
-            Event::Resize(_, _) => Ok(None),
+            Event::Resize(_, _) => Ok(Some(AppAction::Continue)),
             _ => Ok(None), // FocusGained, etc. - drain
         }
     }
@@ -1119,7 +1148,11 @@ impl EventHandler {
                 } else {
                     c.to_ascii_lowercase()
                 };
-                return Some(Self::handle_ctrl_key(app, c, panel_height));
+                return Some(Self::handle_ctrl_key(
+                    app,
+                    c,
+                    panel_height,
+                ));
             }
             return Some(AppAction::Continue);
         }
@@ -1137,7 +1170,8 @@ impl EventHandler {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Option<AppAction> {
-        if let Some(action) = Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers)
+        if let Some(action) =
+            Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers)
         {
             return Some(action);
         }
@@ -1163,7 +1197,8 @@ impl EventHandler {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Option<AppAction> {
-        if let Some(action) = Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers)
+        if let Some(action) =
+            Self::try_direct_ctrl_o_suspend_or_ctrl_r_refresh(app, code, modifiers)
         {
             return Some(action);
         }
@@ -1220,8 +1255,7 @@ impl EventHandler {
             }
             'h' => AppAction::ToggleShowHidden,
             'a' => {
-                let loc = app.get_current_location();
-                if loc.is_fs() {
+                if app.current_location().is_fs() {
                     let (items, ..) = app
                         .active_panel_ref()
                         .get_names_to_copy_with_restore_neighbors();
@@ -1232,7 +1266,7 @@ impl EventHandler {
                 AppAction::Continue
             }
             'n' => {
-                if supports_new_file(&app.get_current_location()) {
+                if supports_new_file(app.current_location()) {
                     return AppAction::OpenNewFileDialog;
                 }
                 AppAction::Continue

@@ -45,10 +45,13 @@ impl TimedToast {
         Instant::now() >= self.until
     }
 
-    /// Drop the toast from `slot` when past its deadline.
-    pub fn clear_if_expired(slot: &mut Option<Self>) {
+    /// Drop the toast from `slot` when past its deadline. Returns true if a toast was cleared.
+    pub fn clear_if_expired(slot: &mut Option<Self>) -> bool {
         if slot.as_ref().is_some_and(Self::is_expired) {
             *slot = None;
+            true
+        } else {
+            false
         }
     }
 }

@@ -191,12 +191,15 @@ pub fn start_search(app: &mut AppState) {
 }
 
 /// Poll the search channel and append to find_dialog results; switch to Results when Done.
-pub fn poll_search(app: &mut AppState) {
+/// Returns true if any message was applied (the Find dialog should be redrawn).
+pub fn poll_search(app: &mut AppState) -> bool {
     let rx = match app.find_search_rx.as_ref() {
         Some(r) => r,
-        None => return,
+        None => return false,
     };
+    let mut changed = false;
     while let Ok(msg) = rx.try_recv() {
+        changed = true;
         match msg {
             FindMessage::Match(path, line) => {
                 if let Some(ref mut find_dialog) = app.find_dialog {
@@ -245,10 +248,11 @@ pub fn poll_search(app: &mut AppState) {
                 }
                 app.find_search_rx = None;
                 app.find_search_cancel = None;
-                return;
+                return true;
             }
         }
     }
+    changed
 }
 
 /// Handle key when Find dialog is open.

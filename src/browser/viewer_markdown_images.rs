@@ -37,7 +37,10 @@ impl MarkdownImageScrollGate {
     }
 
     /// Whether embedded images should be drawn this frame.
-    pub fn should_draw(&mut self, has_images: bool) -> bool {
+    pub fn should_draw(
+        &mut self,
+        has_images: bool,
+    ) -> bool {
         if !has_images {
             return false;
         }
@@ -58,14 +61,23 @@ impl Default for MarkdownImageScrollGate {
     }
 }
 
-fn height_divisor(font_h: u16, proto: ProtocolType) -> f64 {
+fn height_divisor(
+    font_h: u16,
+    proto: ProtocolType,
+) -> f64 {
     match proto {
         ProtocolType::Halfblocks => font_h as f64 * 2.0,
         _ => font_h as f64,
     }
 }
 
-fn pixel_to_cell(pw: u32, ph: u32, font_w: u16, font_h: u16, proto: ProtocolType) -> (u16, u16) {
+fn pixel_to_cell(
+    pw: u32,
+    ph: u32,
+    font_w: u16,
+    font_h: u16,
+    proto: ProtocolType,
+) -> (u16, u16) {
     if pw == 0 || ph == 0 || font_w == 0 {
         return (0, 0);
     }
@@ -74,7 +86,11 @@ fn pixel_to_cell(pw: u32, ph: u32, font_w: u16, font_h: u16, proto: ProtocolType
     (cw.max(1), ch.max(1))
 }
 
-fn rows_to_pixel_height(rows: u16, font_h: u16, proto: ProtocolType) -> u32 {
+fn rows_to_pixel_height(
+    rows: u16,
+    font_h: u16,
+    proto: ProtocolType,
+) -> u32 {
     (rows as f64 * height_divisor(font_h, proto)).ceil() as u32
 }
 
@@ -87,7 +103,10 @@ pub struct OxideMarkdownImageResolver {
 }
 
 impl OxideMarkdownImageResolver {
-    pub fn new(base_dir: PathBuf, picker: &Picker) -> Self {
+    pub fn new(
+        base_dir: PathBuf,
+        picker: &Picker,
+    ) -> Self {
         let (font_w, font_h) = picker_cell_font_size(picker);
         Self {
             base_dir,
@@ -99,7 +118,10 @@ impl OxideMarkdownImageResolver {
 }
 
 impl ImageResolver for OxideMarkdownImageResolver {
-    fn resolve(&mut self, path: &str) -> Option<DynamicImage> {
+    fn resolve(
+        &mut self,
+        path: &str,
+    ) -> Option<DynamicImage> {
         let full_path = self.base_dir.join(path);
         image::ImageReader::open(&full_path).ok()?.decode().ok()
     }
@@ -128,7 +150,11 @@ impl ImageResolver for OxideMarkdownImageResolver {
         (w.max(1), h.max(1))
     }
 
-    fn fallback(&self, path: &str, alt: &str) -> Span<'static> {
+    fn fallback(
+        &self,
+        path: &str,
+        alt: &str,
+    ) -> Span<'static> {
         let label = if alt.is_empty() { path } else { alt };
         Span::styled(
             format!("[no image: {label}]"),
@@ -166,14 +192,19 @@ pub struct EmbeddedMarkdownImage {
 }
 
 impl EmbeddedMarkdownImage {
-    pub fn from_placement(placement: ImagePlacement, picker: &Picker) -> Self {
+    pub fn from_placement(
+        placement: ImagePlacement,
+        picker: &Picker,
+    ) -> Self {
         let (font_w, font_h) = picker_cell_font_size(picker);
         let proto = picker.protocol_type();
         let target_px_w = (placement.width_cells as u32 * font_w as u32).max(1);
         let target_px_h = rows_to_pixel_height(placement.height_cells, font_h, proto).max(1);
-        let scaled = placement
-            .image
-            .resize_exact(target_px_w, target_px_h, FilterType::Triangle);
+        let scaled = placement.image.resize_exact(
+            target_px_w,
+            target_px_h,
+            FilterType::Triangle,
+        );
         Self {
             doc_row: placement.row,
             col: placement.col,
@@ -257,10 +288,7 @@ pub fn draw_markdown_images(
             vis_h,
         };
 
-        let fully_visible = img_l >= vp_l
-            && img_t >= vp_t
-            && img_r <= vp_r
-            && img_b <= vp_b;
+        let fully_visible = img_l >= vp_l && img_t >= vp_t && img_r <= vp_r && img_b <= vp_b;
 
         let proto_ref = if fully_visible {
             let need_build = img.dirty || img.full_protocol.is_none();
@@ -301,10 +329,8 @@ pub fn draw_markdown_images(
                     .saturating_sub(crop_cells_b * fh)
                     .max(1);
 
-                let need_crop = crop_cells_l > 0
-                    || crop_cells_t > 0
-                    || crop_cells_r > 0
-                    || crop_cells_b > 0;
+                let need_crop =
+                    crop_cells_l > 0 || crop_cells_t > 0 || crop_cells_r > 0 || crop_cells_b > 0;
 
                 let img_for_proto = if need_crop {
                     img.scaled
@@ -314,7 +340,11 @@ pub fn draw_markdown_images(
                 };
 
                 let rect_for_proto = Rect::new(0, 0, vis_w, vis_h);
-                match picker.new_protocol(img_for_proto, rect_for_proto, Resize::Fit(None)) {
+                match picker.new_protocol(
+                    img_for_proto,
+                    rect_for_proto,
+                    Resize::Fit(None),
+                ) {
                     Ok(proto) => {
                         img.protocol = Some(proto);
                         img.cached_crop = Some(crop_sig);
@@ -333,7 +363,12 @@ pub fn draw_markdown_images(
         };
 
         let rect = if fully_visible {
-            Rect::new(img_l as u16, img_t as u16, img.width_cells, img.height_cells)
+            Rect::new(
+                img_l as u16,
+                img_t as u16,
+                img.width_cells,
+                img.height_cells,
+            )
         } else {
             Rect::new(clip_l as u16, clip_t as u16, vis_w, vis_h)
         };

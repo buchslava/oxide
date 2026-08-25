@@ -43,7 +43,7 @@ pub(crate) fn maybe_sync_panel_to_shell_cwd(
         Some(c) => c,
         None => return,
     };
-    if !app.get_current_location().is_fs() {
+    if !app.current_location().is_fs() {
         return;
     }
     let path = std::path::Path::new(&cwd);
@@ -52,7 +52,7 @@ pub(crate) fn maybe_sync_panel_to_shell_cwd(
     }
     let shell_canonical = path.canonicalize().unwrap_or(cwd);
     let panel_canonical = app
-        .get_current_location()
+        .current_location()
         .as_fs_path()
         .and_then(|p| std::fs::canonicalize(p).ok());
     if panel_canonical.as_ref() != Some(&shell_canonical) {

@@ -22,10 +22,7 @@ pub fn get() -> Option<String> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        clipboard
-            .get_text()
-            .ok()
-            .filter(|s: &String| !s.is_empty())
+        clipboard.get_text().ok().filter(|s: &String| !s.is_empty())
     }
 }
 

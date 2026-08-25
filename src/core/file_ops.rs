@@ -5,12 +5,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
+use std::cell::RefCell;
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 #[cfg(unix)]
-fn uid_to_owner(uid: u32) -> String {
+thread_local! {
+    static UID_NAMES: RefCell<HashMap<u32, String>> = RefCell::new(HashMap::new());
+    static GID_NAMES: RefCell<HashMap<u32, String>> = RefCell::new(HashMap::new());
+}
+
+/// NSS lookup; the pointer is valid only until the next `getpwuid` on this thread.
+#[cfg(unix)]
+fn uid_to_owner_uncached(uid: u32) -> String {
     unsafe {
         let pw = libc::getpwuid(uid);
         if pw.is_null() {
@@ -27,7 +38,21 @@ fn uid_to_owner(uid: u32) -> String {
 }
 
 #[cfg(unix)]
-fn gid_to_group(gid: u32) -> String {
+fn uid_to_owner(uid: u32) -> String {
+    UID_NAMES.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(name) = map.get(&uid) {
+            return name.clone();
+        }
+        let name = uid_to_owner_uncached(uid);
+        map.insert(uid, name.clone());
+        name
+    })
+}
+
+/// NSS lookup; the pointer is valid only until the next `getgrgid` on this thread.
+#[cfg(unix)]
+fn gid_to_group_uncached(gid: u32) -> String {
     unsafe {
         let gr = libc::getgrgid(gid);
         if gr.is_null() {
@@ -41,6 +66,19 @@ fn gid_to_group(gid: u32) -> String {
             .to_string_lossy()
             .into_owned()
     }
+}
+
+#[cfg(unix)]
+fn gid_to_group(gid: u32) -> String {
+    GID_NAMES.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(name) = map.get(&gid) {
+            return name.clone();
+        }
+        let name = gid_to_group_uncached(gid);
+        map.insert(gid, name.clone());
+        name
+    })
 }
 
 fn is_executable(metadata: &fs::Metadata) -> bool {
@@ -57,26 +95,20 @@ fn is_executable(metadata: &fs::Metadata) -> bool {
 
 #[cfg(unix)]
 fn format_permissions(mode: u32) -> String {
-    let kind = if (mode & 0o170000) == 0o040000 {
+    let mut s = String::with_capacity(10);
+    s.push(if (mode & 0o170000) == 0o040000 {
         'd'
     } else if (mode & 0o170000) == 0o120000 {
         'l'
     } else {
         '-'
-    };
-    let r = if mode & 0o400 != 0 { 'r' } else { '-' };
-    let w = if mode & 0o200 != 0 { 'w' } else { '-' };
-    let x = if mode & 0o100 != 0 { 'x' } else { '-' };
-    let r2 = if mode & 0o40 != 0 { 'r' } else { '-' };
-    let w2 = if mode & 0o20 != 0 { 'w' } else { '-' };
-    let x2 = if mode & 0o10 != 0 { 'x' } else { '-' };
-    let r3 = if mode & 0o4 != 0 { 'r' } else { '-' };
-    let w3 = if mode & 0o2 != 0 { 'w' } else { '-' };
-    let x3 = if mode & 0o1 != 0 { 'x' } else { '-' };
-    format!(
-        "{}{}{}{}{}{}{}{}{}{}",
-        kind, r, w, x, r2, w2, x2, r3, w3, x3
-    )
+    });
+    const BITS: [u32; 9] = [0o400, 0o200, 0o100, 0o40, 0o20, 0o10, 0o4, 0o2, 0o1];
+    const CHARS: [char; 9] = ['r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x'];
+    for i in 0..9 {
+        s.push(if mode & BITS[i] != 0 { CHARS[i] } else { '-' });
+    }
+    s
 }
 
 #[cfg(not(unix))]
@@ -86,7 +118,11 @@ fn format_permissions(_mode: u32) -> String {
 
 /// Combine permission bits with a file kind when archives store only `0o777` (common in tar).
 #[cfg(unix)]
-fn mode_bits_for_permission_string(raw: u32, is_dir: bool, is_symlink: bool) -> u32 {
+fn mode_bits_for_permission_string(
+    raw: u32,
+    is_dir: bool,
+    is_symlink: bool,
+) -> u32 {
     if (raw & 0o170000) != 0 {
         raw
     } else {
@@ -114,8 +150,7 @@ pub fn archive_entry_listing_fields(
             Some(raw) => {
                 let mode = mode_bits_for_permission_string(raw, is_dir, is_symlink);
                 let permissions = format_permissions(mode);
-                let is_executable =
-                    !is_dir && !is_symlink && (mode & 0o111) != 0;
+                let is_executable = !is_dir && !is_symlink && (mode & 0o111) != 0;
                 (permissions, is_executable)
             }
             None => ("----------".to_string(), false),
@@ -129,7 +164,10 @@ pub fn archive_entry_listing_fields(
 }
 
 /// Apply permission bits from an archive entry to a newly created path (`chmod`, Unix only).
-pub fn apply_archive_unix_mode(path: &Path, unix_mode: Option<u32>) -> io::Result<()> {
+pub fn apply_archive_unix_mode(
+    path: &Path,
+    unix_mode: Option<u32>,
+) -> io::Result<()> {
     #[cfg(unix)]
     {
         let Some(raw) = unix_mode else {
@@ -148,6 +186,66 @@ pub fn apply_archive_unix_mode(path: &Path, unix_mode: Option<u32>) -> io::Resul
     }
 }
 
+/// How panel listings are ordered. Settings persist the snake_case form via [`SortMode::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortMode {
+    #[default]
+    NameAsc,
+    NameDesc,
+    SizeAsc,
+    SizeDesc,
+    MtimeAsc,
+    MtimeDesc,
+}
+
+impl SortMode {
+    pub const ALL: [SortMode; 6] = [
+        Self::NameAsc,
+        Self::NameDesc,
+        Self::SizeAsc,
+        Self::SizeDesc,
+        Self::MtimeAsc,
+        Self::MtimeDesc,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NameAsc => "name_asc",
+            Self::NameDesc => "name_desc",
+            Self::SizeAsc => "size_asc",
+            Self::SizeDesc => "size_desc",
+            Self::MtimeAsc => "mtime_asc",
+            Self::MtimeDesc => "mtime_desc",
+        }
+    }
+
+    /// Unknown values fall back to [`SortMode::NameAsc`].
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "name_desc" => Self::NameDesc,
+            "size_asc" => Self::SizeAsc,
+            "size_desc" => Self::SizeDesc,
+            "mtime_asc" => Self::MtimeAsc,
+            "mtime_desc" => Self::MtimeDesc,
+            _ => Self::NameAsc,
+        }
+    }
+
+    pub fn cycle(
+        self,
+        forward: bool,
+    ) -> Self {
+        let idx = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        let len = Self::ALL.len();
+        let next = if forward {
+            (idx + 1) % len
+        } else {
+            (idx + len - 1) % len
+        };
+        Self::ALL[next]
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub name: String,
@@ -158,6 +256,8 @@ pub struct FileInfo {
     pub size: u64,
     /// Modification time (None for ".." or on error).
     pub mtime: Option<std::time::SystemTime>,
+    /// Panel column text `"Feb 13 2024 20:05"` (empty when `mtime` is None). Filled at listing time.
+    pub mtime_display: String,
     /// Unix-style permissions string, e.g. "-rwxr-xr-x".
     pub permissions: String,
     /// Owner name (Unix) or empty.
@@ -179,6 +279,7 @@ impl FileInfo {
             is_symlink: false,
             size: 0,
             mtime: None,
+            mtime_display: String::new(),
             permissions: String::new(),
             owner: String::new(),
             group: String::new(),
@@ -203,6 +304,7 @@ impl FileInfo {
             is_symlink,
             size,
             mtime,
+            mtime_display: format_mtime_display(mtime.as_ref()),
             permissions,
             owner,
             group,
@@ -235,54 +337,58 @@ pub fn cycle_sort_mode(
     current: &str,
     forward: bool,
 ) -> String {
-    let idx = SORT_MODES.iter().position(|s| *s == current).unwrap_or(0);
-    let len = SORT_MODES.len();
-    let next = if forward {
-        (idx + 1) % len
-    } else {
-        (idx + len - 1) % len
+    SortMode::parse(current).cycle(forward).as_str().to_string()
+}
+
+/// Format mtime as "Feb 13 2024 20:05" (month, day, year, time with zero-padded minutes).
+fn format_mtime_display(t: Option<&std::time::SystemTime>) -> String {
+    let Some(t) = t else {
+        return String::new();
     };
-    SORT_MODES[next].to_string()
+    use chrono::{DateTime, Timelike, Utc};
+    let datetime: DateTime<Utc> = (*t).into();
+    format!(
+        "{} {:02}:{:02}",
+        datetime.format("%b %e %Y"),
+        datetime.hour(),
+        datetime.minute()
+    )
 }
 
 /// Compare two entries by sort_mode (no special ".." handling). Used for ordering within dirs or files.
 fn cmp_by_sort_mode(
     a: &FileInfo,
     b: &FileInfo,
-    sort_mode: &str,
+    sort_mode: SortMode,
 ) -> std::cmp::Ordering {
     match sort_mode {
-        "name_asc" => a
+        SortMode::NameAsc => a
             .name
             .trim_end_matches('/')
             .cmp(b.name.trim_end_matches('/')),
-        "name_desc" => b
+        SortMode::NameDesc => b
             .name
             .trim_end_matches('/')
             .cmp(a.name.trim_end_matches('/')),
-        "size_asc" => a.size.cmp(&b.size).then_with(|| a.name.cmp(&b.name)),
-        "size_desc" => b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)),
-        "mtime_asc" => {
+        SortMode::SizeAsc => a.size.cmp(&b.size).then_with(|| a.name.cmp(&b.name)),
+        SortMode::SizeDesc => b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)),
+        SortMode::MtimeAsc => {
             let ta = a.mtime.unwrap_or(std::time::UNIX_EPOCH);
             let tb = b.mtime.unwrap_or(std::time::UNIX_EPOCH);
             ta.cmp(&tb).then_with(|| a.name.cmp(&b.name))
         }
-        "mtime_desc" => {
+        SortMode::MtimeDesc => {
             let ta = a.mtime.unwrap_or(std::time::UNIX_EPOCH);
             let tb = b.mtime.unwrap_or(std::time::UNIX_EPOCH);
             tb.cmp(&ta).then_with(|| a.name.cmp(&b.name))
         }
-        _ => a
-            .name
-            .trim_end_matches('/')
-            .cmp(b.name.trim_end_matches('/')),
     }
 }
 
 /// Sort file list: ".." always first. If dirs_first then directories next (sorted by sort_mode), then files (sorted by sort_mode); else unified by sort_mode.
 pub fn apply_sort_mode(
     files: &mut [FileInfo],
-    sort_mode: &str,
+    sort_mode: SortMode,
     dirs_first: bool,
 ) {
     files.sort_by(|a, b| {
@@ -307,16 +413,16 @@ pub struct FileOperations;
 
 impl FileOperations {
     /// Read directory contents. When show_hidden is false, entries starting with "." are excluded.
-    /// sort_mode: name_asc, name_desc, size_asc, size_desc, mtime_asc, mtime_desc.
     /// dirs_first: when true, directories appear before files; when false, unified sort.
     pub fn read_directory<P: AsRef<Path>>(
         path: P,
         show_hidden: bool,
-        sort_mode: &str,
+        sort_mode: SortMode,
         dirs_first: bool,
     ) -> io::Result<Vec<FileInfo>> {
-        let mut files = Vec::new();
         let path_ref = path.as_ref();
+        let raw_entries: Vec<_> = fs::read_dir(path_ref)?.collect::<io::Result<Vec<_>>>()?;
+        let mut files = Vec::with_capacity(raw_entries.len() + 1);
 
         // Add parent directory entry if not at root
         if path_ref.parent().is_some() {
@@ -325,10 +431,7 @@ impl FileOperations {
             files.push(parent);
         }
 
-        // Read current directory
-        let entries = fs::read_dir(path_ref)?;
-        for entry in entries {
-            let entry = entry?;
+        for entry in raw_entries {
             let file_name = entry.file_name().to_string_lossy().to_string();
             if !show_hidden && file_name.starts_with('.') {
                 continue;
@@ -613,7 +716,15 @@ impl FileOperations {
                 return true;
             };
             for entry in entries.flatten() {
-                if !walk(&entry.path(), cancel, bytes, files, dirs, gate, on_tick) {
+                if !walk(
+                    &entry.path(),
+                    cancel,
+                    bytes,
+                    files,
+                    dirs,
+                    gate,
+                    on_tick,
+                ) {
                     return false;
                 }
             }
@@ -625,17 +736,44 @@ impl FileOperations {
         let mut dirs = 0usize;
         let mut gate = TickGate::new();
         if !walk(
-            path,
-            cancel,
-            &mut bytes,
-            &mut files,
-            &mut dirs,
-            &mut gate,
-            on_tick,
+            path, cancel, &mut bytes, &mut files, &mut dirs, &mut gate, on_tick,
         ) {
             return None;
         }
         on_tick(path, bytes, files, dirs);
         Some((bytes, files, dirs))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cycle_sort_mode, SortMode, SORT_MODES};
+
+    #[test]
+    fn sort_mode_round_trip_matches_settings_strings() {
+        for (i, &s) in SORT_MODES.iter().enumerate() {
+            assert_eq!(SortMode::ALL[i].as_str(), s);
+            assert_eq!(SortMode::parse(s), SortMode::ALL[i]);
+        }
+        assert_eq!(
+            SortMode::parse("unknown"),
+            SortMode::NameAsc
+        );
+    }
+
+    #[test]
+    fn cycle_sort_mode_wraps() {
+        assert_eq!(
+            cycle_sort_mode("name_asc", true),
+            "name_desc"
+        );
+        assert_eq!(
+            cycle_sort_mode("mtime_desc", true),
+            "name_asc"
+        );
+        assert_eq!(
+            cycle_sort_mode("name_asc", false),
+            "mtime_desc"
+        );
     }
 }

@@ -13,8 +13,7 @@ pub fn is_direct_ctrl_o_suspend(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> bool {
-    modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(code, KeyCode::Char('\x0f' | 'o' | 'O'))
+    modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('\x0f' | 'o' | 'O'))
 }
 
 #[inline]

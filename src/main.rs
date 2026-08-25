@@ -46,7 +46,9 @@ use browser::editor::{
     poll_editor_loading, save, EditorViewState,
 };
 use browser::panel::{PanelOperations, ViewMode};
-use browser::viewer::{close_viewer, open_viewer, open_viewer_path, poll_viewer_loading};
+use browser::viewer::{
+    close_viewer, open_viewer, open_viewer_path, poll_viewer_loading, ViewerState,
+};
 use core::location::PanelLocation;
 use core::settings::{ensure_config_dir, load, save as save_settings};
 use dialogs::error_detail_dialog;
@@ -59,6 +61,7 @@ use dialogs::{
 };
 use shell::subshell::{RelayExit, Subshell};
 use ui::post_command_overlay;
+use ui::toast::TimedToast;
 use ui::Renderer;
 use util::{log_if_err, reset_terminal_character_set_and_modes};
 
@@ -113,6 +116,30 @@ fn redraw_ui(
 ) -> io::Result<()> {
     terminal.draw(|f| Renderer::draw_ui(f, app))?;
     Ok(())
+}
+
+/// Advance copy/move/delete for up to one frame so progress can paint without a 10Hz cap.
+fn run_copy_work_for_frame(app: &mut AppState) -> bool {
+    if app.copy_in_progress.is_none()
+        || app.copy_overwrite_dialog.is_some()
+        || app.copy_error_dialog.is_some()
+    {
+        return false;
+    }
+    let start = std::time::Instant::now();
+    let budget = Duration::from_millis(16);
+    loop {
+        run_copy_step(app);
+        if app.copy_overwrite_dialog.is_some()
+            || app.copy_error_dialog.is_some()
+            || app.copy_in_progress.is_none()
+        {
+            return true;
+        }
+        if start.elapsed() >= budget {
+            return true;
+        }
+    }
 }
 
 fn main() -> Result<(), io::Error> {
@@ -194,10 +221,11 @@ fn main() -> Result<(), io::Error> {
     // Software blinking for command-line cursor (terminal-native blink is not reliable everywhere).
     let mut cmd_cursor_blink_visible = true;
     let mut cmd_cursor_blink_last_toggle = std::time::Instant::now();
+    // Startup already painted once; skip idle full-frame rebuilds until input or a job changes state.
+    let mut need_redraw = false;
 
     loop {
         // Auto-reopen countdown finished: leave main buffer (shell output) and restore panel TUI.
-        let mut drew_this_frame = false;
         if let Some(cd) = app.post_command_countdown.as_ref() {
             if cd.overlay_on_main_buffer && std::time::Instant::now() >= cd.reveal_at {
                 app.post_command_countdown = None;
@@ -215,19 +243,130 @@ fn main() -> Result<(), io::Error> {
                 }
                 refresh_both_panels_restore_selection(&mut app, None, None);
                 redraw_ui(&mut terminal, &mut app)?;
-                drew_this_frame = true;
+                need_redraw = false;
             }
         }
 
-        if !drew_this_frame {
-            if app.post_command_countdown_on_main_buffer() {
-                post_command_overlay::paint_main_buffer_countdown(&app)?;
-            } else {
-                // Apply async viewer/editor updates before paint so loading progress and images stay in sync.
-                let _ = poll_viewer_loading(&mut app);
-                let _ = poll_editor_loading(&mut app);
-                redraw_ui(&mut terminal, &mut app)?;
+        if poll_viewer_loading(&mut app) {
+            need_redraw = true;
+        }
+        if matches!(
+            app.viewer_screen,
+            Some(ViewerState::ImageLoading(_))
+        ) {
+            need_redraw = true;
+        }
+        if poll_editor_loading(&mut app) {
+            need_redraw = true;
+        }
+        if find_dialog::poll_search(&mut app) {
+            need_redraw = true;
+        }
+        if poll_folder_compare_pending(&mut app) {
+            need_redraw = true;
+        }
+        if run_copy_work_for_frame(&mut app) {
+            need_redraw = true;
+        }
+
+        // Poll size info calculation progress (background thread).
+        if let Some(rx) = app.size_info_pending_rx.take() {
+            match rx.try_recv() {
+                Ok(SizeInfoProgress::Progress {
+                    current_path,
+                    total_bytes,
+                    directories_scanned,
+                    files_counted,
+                }) => {
+                    app.size_info_dialog = Some(SizeInfoDialogState::Calculating {
+                        current_path,
+                        total_bytes,
+                        directories_scanned,
+                        files_counted,
+                    });
+                    app.size_info_pending_rx = Some(rx);
+                    need_redraw = true;
+                }
+                Ok(SizeInfoProgress::Done {
+                    total_bytes,
+                    file_count,
+                    dir_count,
+                }) => {
+                    app.size_info_cancel = None;
+                    app.size_info_dialog = Some(SizeInfoDialogState::Done {
+                        total_bytes,
+                        file_count,
+                        dir_count,
+                    });
+                    need_redraw = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    app.size_info_pending_rx = Some(rx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.size_info_cancel = None;
+                    app.size_info_dialog = None;
+                    need_redraw = true;
+                }
             }
+        }
+
+        // Poll archive progress (background thread).
+        if let Some(rx) = app.archive_pending_rx.take() {
+            match rx.try_recv() {
+                Ok(ArchiveMessage::Progress(p)) => {
+                    app.archive_progress = Some(p);
+                    app.archive_pending_rx = Some(rx);
+                    need_redraw = true;
+                }
+                Ok(ArchiveMessage::Done(res, name_for_selection)) => {
+                    app.archive_progress = None;
+                    app.archive_cancel = None;
+                    if let Err(e) = res {
+                        if e.kind() != std::io::ErrorKind::Interrupted {
+                            eprintln!("Archive error: {}", e);
+                        }
+                    } else {
+                        let panel_height = util::compute_panel_height();
+                        let _ = app.active_panel_mut().refresh_files_restore_selection(
+                            name_for_selection.as_deref(),
+                            None,
+                            Some(panel_height),
+                        );
+                    }
+                    need_redraw = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    app.archive_pending_rx = Some(rx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.archive_progress = None;
+                    app.archive_cancel = None;
+                    need_redraw = true;
+                }
+            }
+        }
+
+        // After copy/move/delete completes: restore source panel selection (file after, else file before) and scroll.
+        if let Some((source_dir, restore_after, restore_before)) = app.source_panel_restore.take() {
+            restore_source_panel_and_refresh(
+                &mut app,
+                &source_dir,
+                restore_after.as_deref(),
+                restore_before.as_deref(),
+            );
+            need_redraw = true;
+        }
+
+        if TimedToast::clear_if_expired(&mut app.timed_toast) {
+            need_redraw = true;
+        }
+
+        if app.post_command_countdown_on_main_buffer() {
+            post_command_overlay::paint_main_buffer_countdown(&app)?;
+        } else if need_redraw {
+            redraw_ui(&mut terminal, &mut app)?;
+            need_redraw = false;
         }
 
         let find_input_focused = app.find_dialog.as_ref().map_or(false, |d| {
@@ -305,110 +444,15 @@ fn main() -> Result<(), io::Error> {
             let _ = execute!(terminal.backend_mut(), Hide);
         }
 
-        if app.copy_in_progress.is_some()
-            && app.copy_overwrite_dialog.is_none()
-            && app.copy_error_dialog.is_none()
-        {
-            run_copy_step(&mut app);
-            if app.copy_overwrite_dialog.is_some()
-                || app.copy_error_dialog.is_some()
-                || app.copy_in_progress.is_none()
-            {
-                redraw_ui(&mut terminal, &mut app)?;
-            }
+        let poll_timeout = app.event_poll_timeout(
+            command_line_cursor_active,
+            cmd_cursor_blink_last_toggle,
+        );
+        let action = EventHandler::handle_events(&mut app, poll_timeout)?;
+        if !matches!(action, AppAction::Idle) {
+            need_redraw = true;
         }
-
-        if poll_folder_compare_pending(&mut app) {
-            redraw_ui(&mut terminal, &mut app)?;
-        }
-
-        // Poll size info calculation progress (background thread).
-        if let Some(rx) = app.size_info_pending_rx.take() {
-            match rx.try_recv() {
-                Ok(SizeInfoProgress::Progress {
-                    current_path,
-                    total_bytes,
-                    directories_scanned,
-                    files_counted,
-                }) => {
-                    app.size_info_dialog = Some(SizeInfoDialogState::Calculating {
-                        current_path,
-                        total_bytes,
-                        directories_scanned,
-                        files_counted,
-                    });
-                    app.size_info_pending_rx = Some(rx);
-                    redraw_ui(&mut terminal, &mut app)?;
-                }
-                Ok(SizeInfoProgress::Done {
-                    total_bytes,
-                    file_count,
-                    dir_count,
-                }) => {
-                    app.size_info_cancel = None;
-                    app.size_info_dialog = Some(SizeInfoDialogState::Done {
-                        total_bytes,
-                        file_count,
-                        dir_count,
-                    });
-                    redraw_ui(&mut terminal, &mut app)?;
-                }
-                Err(mpsc::TryRecvError::Empty) => {
-                    app.size_info_pending_rx = Some(rx);
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    app.size_info_cancel = None;
-                    app.size_info_dialog = None;
-                }
-            }
-        }
-
-        // Poll archive progress (background thread).
-        if let Some(rx) = app.archive_pending_rx.take() {
-            match rx.try_recv() {
-                Ok(ArchiveMessage::Progress(p)) => {
-                    app.archive_progress = Some(p);
-                    app.archive_pending_rx = Some(rx);
-                    redraw_ui(&mut terminal, &mut app)?;
-                }
-                Ok(ArchiveMessage::Done(res, name_for_selection)) => {
-                    app.archive_progress = None;
-                    app.archive_cancel = None;
-                    if let Err(e) = res {
-                        if e.kind() != std::io::ErrorKind::Interrupted {
-                            eprintln!("Archive error: {}", e);
-                        }
-                    } else {
-                        let panel_height = util::compute_panel_height();
-                        let _ = app.active_panel_mut().refresh_files_restore_selection(
-                            name_for_selection.as_deref(),
-                            None,
-                            Some(panel_height),
-                        );
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => {
-                    app.archive_pending_rx = Some(rx);
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    app.archive_progress = None;
-                    app.archive_cancel = None;
-                }
-            }
-        }
-
-        // After copy/move/delete completes: restore source panel selection (file after, else file before) and scroll.
-        if let Some((source_dir, restore_after, restore_before)) = app.source_panel_restore.take() {
-            restore_source_panel_and_refresh(
-                &mut app,
-                &source_dir,
-                restore_after.as_deref(),
-                restore_before.as_deref(),
-            );
-            redraw_ui(&mut terminal, &mut app)?;
-        }
-
-        match EventHandler::handle_events(&mut app)? {
+        match action {
             AppAction::Quit => {
                 app.maybe_persist_panel_dirs();
                 break;
@@ -894,16 +938,16 @@ fn main() -> Result<(), io::Error> {
                     break;
                 }
             }
-            AppAction::Continue => {}
+            AppAction::Continue | AppAction::Idle => {}
         }
 
         // After input: apply diff worker result so Esc can close loading before we recv and block on work.
         if poll_diff_loading(&mut app) {
-            redraw_ui(&mut terminal, &mut app)?;
+            need_redraw = true;
         }
 
         if finish_editor_pending_decode(&mut app) {
-            redraw_ui(&mut terminal, &mut app)?;
+            need_redraw = true;
         }
     }
 

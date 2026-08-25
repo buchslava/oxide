@@ -6,12 +6,12 @@
 //! On **Apple iTerm2**, capability queries can pick Kitty or Sixel even though OSC 1337 inline images
 //! are the reliable path; we normalize to `Iterm2` unless `OXIDE_IMAGE_PROTOCOL` overrides.
 
-use std::io::{self, Cursor};
 use std::env;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::io::{self, Cursor};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
@@ -39,13 +39,8 @@ use crate::browser::panel::{Panel, PanelOperations};
 /// How to read bytes for one image tab.
 #[derive(Clone)]
 pub enum ImageReadSource {
-    Fs {
-        path: PathBuf,
-    },
-    Panel {
-        loc: PanelLocation,
-        name: String,
-    },
+    Fs { path: PathBuf },
+    Panel { loc: PanelLocation, name: String },
 }
 
 /// One tab / one image source.
@@ -59,10 +54,7 @@ pub struct ImageViewEntry {
 
 #[derive(Debug)]
 pub enum ImageLoadMsg {
-    Part {
-        index: usize,
-        bytes: Vec<u8>,
-    },
+    Part { index: usize, bytes: Vec<u8> },
     Failed(io::Error),
 }
 
@@ -133,7 +125,10 @@ pub fn collect_raster_view_entries(
     panel: &Panel,
     loc: &PanelLocation,
 ) -> Option<(Vec<ImageViewEntry>, usize)> {
-    fn panel_raster_entry(loc: &PanelLocation, name: &str) -> ImageViewEntry {
+    fn panel_raster_entry(
+        loc: &PanelLocation,
+        name: &str,
+    ) -> ImageViewEntry {
         ImageViewEntry {
             tab_label: name.to_string(),
             path_banner: panel_backend::join_path_display(loc, name),
@@ -153,7 +148,10 @@ pub fn collect_raster_view_entries(
 
     let has_marks = panel.iter_marked_indices().next().is_some();
     if !has_marks {
-        return Some((vec![panel_raster_entry(loc, &current.name)], 0));
+        return Some((
+            vec![panel_raster_entry(loc, &current.name)],
+            0,
+        ));
     }
 
     let mut indices: Vec<usize> = panel
@@ -167,7 +165,10 @@ pub fn collect_raster_view_entries(
     indices.sort_unstable();
 
     if indices.is_empty() {
-        return Some((vec![panel_raster_entry(loc, &current.name)], 0));
+        return Some((
+            vec![panel_raster_entry(loc, &current.name)],
+            0,
+        ));
     }
 
     let entries: Vec<ImageViewEntry> = indices
@@ -183,10 +184,7 @@ pub fn collect_raster_view_entries(
 
 /// Single filesystem path (e.g. Find dialog).
 pub fn single_fs_raster_entry(path: PathBuf) -> Option<(Vec<ImageViewEntry>, usize)> {
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("image");
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("image");
     if !is_raster_image_filename(name) {
         return None;
     }
@@ -304,15 +302,15 @@ fn picker_without_stdio_query(iterm_like: bool) -> Picker {
 }
 
 fn image_protocol_from_env() -> Option<ProtocolType> {
-    env::var("OXIDE_IMAGE_PROTOCOL").ok().and_then(|s| {
-        match s.to_ascii_lowercase().as_str() {
+    env::var("OXIDE_IMAGE_PROTOCOL").ok().and_then(
+        |s| match s.to_ascii_lowercase().as_str() {
             "halfblocks" | "blocks" => Some(ProtocolType::Halfblocks),
             "iterm2" | "iterm" => Some(ProtocolType::Iterm2),
             "sixel" => Some(ProtocolType::Sixel),
             "kitty" => Some(ProtocolType::Kitty),
             _ => None,
-        }
-    })
+        },
+    )
 }
 
 fn build_image_picker() -> Picker {
@@ -329,9 +327,19 @@ fn build_image_picker() -> Picker {
     };
 
     // Prefer OSC 1337 on Apple iTerm2: cap query often selects Kitty/Sixel, which do not draw there.
-    if env_is_apple_iterm_host() && !matches!(picker.protocol_type(), ProtocolType::Iterm2) {
+    if env_is_apple_iterm_host()
+        && !matches!(
+            picker.protocol_type(),
+            ProtocolType::Iterm2
+        )
+    {
         picker.set_protocol_type(ProtocolType::Iterm2);
-    } else if iterm_like && matches!(picker.protocol_type(), ProtocolType::Halfblocks) {
+    } else if iterm_like
+        && matches!(
+            picker.protocol_type(),
+            ProtocolType::Halfblocks
+        )
+    {
         // WezTerm, VS Code, tmux+outer-terminal hints, etc.: only bump pure fallback halfblocks.
         picker.set_protocol_type(ProtocolType::Iterm2);
     }
@@ -386,10 +394,7 @@ pub fn finish_image_loading(
                 sources.push(img);
             }
             Err(e) => {
-                let name = entries
-                    .get(i)
-                    .map(|e| e.tab_label.as_str())
-                    .unwrap_or("?");
+                let name = entries.get(i).map(|e| e.tab_label.as_str()).unwrap_or("?");
                 app.set_timed_toast_alert(
                     std::time::Duration::from_secs(5),
                     format!("Could not decode image {name}: {e}"),
@@ -440,7 +445,10 @@ fn render_spinner_frame() -> &'static str {
 ///
 /// Ratatui only paints cells covered by the `Paragraph`; shorter strings leave the rest of the
 /// row unchanged, so colors from the file list (or other UI) can “bleed” as stray glyphs.
-fn row_cells_fixed(s: &str, cols: usize) -> String {
+fn row_cells_fixed(
+    s: &str,
+    cols: usize,
+) -> String {
     if cols == 0 {
         return String::new();
     }
@@ -455,21 +463,21 @@ fn row_cells_fixed(s: &str, cols: usize) -> String {
 
 /// Strip attributes that can survive across ratatui cells from the previous UI (e.g. panel list).
 #[inline]
-fn status_line_plain_style(bg: ratatui::style::Color, fg: ratatui::style::Color) -> Style {
-    Style::default()
-        .bg(bg)
-        .fg(fg)
-        .remove_modifier(
-            Modifier::BOLD
-                | Modifier::DIM
-                | Modifier::ITALIC
-                | Modifier::UNDERLINED
-                | Modifier::SLOW_BLINK
-                | Modifier::RAPID_BLINK
-                | Modifier::REVERSED
-                | Modifier::HIDDEN
-                | Modifier::CROSSED_OUT,
-        )
+fn status_line_plain_style(
+    bg: ratatui::style::Color,
+    fg: ratatui::style::Color,
+) -> Style {
+    Style::default().bg(bg).fg(fg).remove_modifier(
+        Modifier::BOLD
+            | Modifier::DIM
+            | Modifier::ITALIC
+            | Modifier::UNDERLINED
+            | Modifier::SLOW_BLINK
+            | Modifier::RAPID_BLINK
+            | Modifier::REVERSED
+            | Modifier::HIDDEN
+            | Modifier::CROSSED_OUT,
+    )
 }
 
 /// Full-width status row: erase every cell (spaces, fg = bg), then draw padded `text` with `fg` on `bg`.
@@ -529,7 +537,10 @@ pub fn tab_index_at_column(
 /// Image area is primary: the tab column is capped at **one fifth** of the terminal width (and
 /// never below [`MIN_IMG`] for the image). Within that cap, width grows only as much as labels
 /// need (middle-truncated). Width does **not** depend on which tab is selected.
-fn vertical_tab_column_width(tab_labels: &[String], area_width: u16) -> u16 {
+fn vertical_tab_column_width(
+    tab_labels: &[String],
+    area_width: u16,
+) -> u16 {
     const MIN_IMG: u16 = 20;
     const MIN_TAB_W: u16 = 14;
     let max_tab_w = (area_width / 5)
@@ -538,7 +549,13 @@ fn vertical_tab_column_width(tab_labels: &[String], area_width: u16) -> u16 {
     let mut need = MIN_TAB_W;
     let max_cols = max_tab_w as usize;
     for label in tab_labels.iter() {
-        let w = truncate_str(label, max_cols, TruncateMode::MiddleEllipsis).chars().count() as u16;
+        let w = truncate_str(
+            label,
+            max_cols,
+            TruncateMode::MiddleEllipsis,
+        )
+        .chars()
+        .count() as u16;
         // Reserve bracket columns so any row can become active without changing strip width.
         let row = w.saturating_add(2);
         need = need.max(row.saturating_add(1));
@@ -569,7 +586,10 @@ fn vertical_tab_lines(
                 Span::styled("]", active),
             ])
         } else {
-            Line::from(Span::styled(row_cells_fixed(label.as_str(), cw), normal))
+            Line::from(Span::styled(
+                row_cells_fixed(label.as_str(), cw),
+                normal,
+            ))
         };
         out.push(line);
     }
@@ -637,9 +657,16 @@ pub fn draw_image_ready(
             width: area.width,
             height: area.height.saturating_sub(footer_h + chrome_h),
         };
-        f.render_widget(Block::default().style(content_style), img_rect);
+        f.render_widget(
+            Block::default().style(content_style),
+            img_rect,
+        );
         let image_widget = StatefulImage::default().resize(image_resize_fit());
-        f.render_stateful_widget(image_widget, img_rect, &mut img.image_protocol);
+        f.render_stateful_widget(
+            image_widget,
+            img_rect,
+            &mut img.image_protocol,
+        );
     } else {
         let content_h = area.height.saturating_sub(footer_h + chrome_h);
         let tabs_w = vertical_tab_column_width(&img.tab_labels, area.width);
@@ -657,19 +684,35 @@ pub fn draw_image_ready(
         };
         img.tabs_area = tabs_rect;
 
-        f.render_widget(Block::default().style(content_style), tabs_rect);
+        f.render_widget(
+            Block::default().style(content_style),
+            tabs_rect,
+        );
         let tab_text = vertical_tab_lines(&img.tab_labels, img.current, vp, tabs_w);
         f.render_widget(
             Paragraph::new(Text::from(tab_text)).style(content_style),
             tabs_rect,
         );
 
-        f.render_widget(Block::default().style(content_style), img_rect);
+        f.render_widget(
+            Block::default().style(content_style),
+            img_rect,
+        );
         let image_widget = StatefulImage::default().resize(image_resize_fit());
-        f.render_stateful_widget(image_widget, img_rect, &mut img.image_protocol);
+        f.render_stateful_widget(
+            image_widget,
+            img_rect,
+            &mut img.image_protocol,
+        );
     }
 
-    paint_full_width_status_line(f, title_rect, title_text, vp.background, vp.header_path);
+    paint_full_width_status_line(
+        f,
+        title_rect,
+        title_text,
+        vp.background,
+        vp.header_path,
+    );
 
     if let Some(res) = img.image_protocol.last_encoding_result() {
         if let Err(e) = res {
@@ -687,7 +730,13 @@ pub fn draw_image_ready(
     } else {
         "Esc: close"
     };
-    paint_full_width_status_line(f, footer_rect, hint, vp.background, vp.muted);
+    paint_full_width_status_line(
+        f,
+        footer_rect,
+        hint,
+        vp.background,
+        vp.muted,
+    );
 }
 
 pub fn draw_image_loading(
@@ -701,8 +750,14 @@ pub fn draw_image_loading(
 
     // First frame after opening from panels: ratatui can merge with old cells; wipe then paint.
     f.render_widget(Clear, area);
-    f.render_widget(Block::default().style(content_style), area);
-    f.render_widget(Block::default().style(dialog.dim_layer_style()), area);
+    f.render_widget(
+        Block::default().style(content_style),
+        area,
+    );
+    f.render_widget(
+        Block::default().style(dialog.dim_layer_style()),
+        area,
+    );
 
     let dlg_h = 5u16.min(area.height.saturating_sub(4).max(3));
     let dlg_w = 36u16.min(area.width.saturating_sub(8)).max(28);
@@ -732,7 +787,13 @@ pub fn draw_image_loading(
         width: area.width,
         height: 1,
     };
-    paint_full_width_status_line(f, footer_rect, " Esc: cancel ", vp.background, vp.muted);
+    paint_full_width_status_line(
+        f,
+        footer_rect,
+        " Esc: cancel ",
+        vp.background,
+        vp.muted,
+    );
 }
 
 pub fn handle_image_loading_key(key: KeyCode) -> Option<AppAction> {
@@ -773,7 +834,10 @@ pub fn handle_image_loading_mouse(mouse_event: &MouseEvent) -> bool {
     matches!(
         mouse_event.kind,
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Moved
-    ) || matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left))
+    ) || matches!(
+        mouse_event.kind,
+        MouseEventKind::Down(MouseButton::Left)
+    )
 }
 
 pub fn handle_image_ready_mouse(
@@ -784,9 +848,13 @@ pub fn handle_image_ready_mouse(
         MouseEventKind::Down(MouseButton::Left) => {
             let col = mouse_event.column;
             let row = mouse_event.row;
-            if let Some(idx) =
-                tab_index_at_column(&img.tab_labels, img.tabs_area, col, row, img.current)
-            {
+            if let Some(idx) = tab_index_at_column(
+                &img.tab_labels,
+                img.tabs_area,
+                col,
+                row,
+                img.current,
+            ) {
                 if idx < img.entries.len() && idx != img.current {
                     img.current = idx;
                     img.protocol_stale = true;

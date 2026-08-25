@@ -52,7 +52,10 @@ fn editor_gutter_width(
 ///
 /// Must work for [`Color::Indexed`] / named colors too: [`UiPalette`] is adapted for
 /// [`ColorDepth`](crate::ui::color_depth::ColorDepth) (common on Linux without truecolor).
-fn editor_gutter_background(main_bg: Color, depth: ColorDepth) -> Color {
+fn editor_gutter_background(
+    main_bg: Color,
+    depth: ColorDepth,
+) -> Color {
     let (r, g, b) = theme_color_approx_rgb(main_bg);
     depth.adapt_color(Color::Rgb(
         r.saturating_add(10),
@@ -163,7 +166,10 @@ fn editor_too_large_toast(app: &mut AppState) {
     );
 }
 
-fn editor_build_failed_toast(app: &mut AppState, err: impl std::fmt::Display) {
+fn editor_build_failed_toast(
+    app: &mut AppState,
+    err: impl std::fmt::Display,
+) {
     app.set_timed_toast_alert(
         Duration::from_secs(10),
         format!("Embedded editor failed to start: {err}"),
@@ -636,9 +642,7 @@ pub fn handle_editor_key(
 
     if app.ctrl_x_chord_pending {
         app.ctrl_x_chord_pending = false;
-        if key.code == KeyCode::Esc
-            || ctrl_x_chord::is_ctrl_x_prefix(key.code, key.modifiers)
-        {
+        if key.code == KeyCode::Esc || ctrl_x_chord::is_ctrl_x_prefix(key.code, key.modifiers) {
             return Some(AppAction::Continue);
         }
         if matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'f')) {

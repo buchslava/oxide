@@ -32,14 +32,22 @@ pub fn archive_format_for_path(path: &Path) -> Option<ArchiveFormat> {
 
 /// Whether `name` refers to an archive file we can open as a panel (e.g. `.zip`, `.tar.gz`).
 pub fn archive_format_for_filename(name: &str) -> Option<ArchiveFormat> {
-    let lower = name.to_lowercase();
-    if lower.ends_with(".zip") {
+    if ascii_suffix_eq(name, ".zip") {
         Some(ArchiveFormat::Zip)
-    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+    } else if ascii_suffix_eq(name, ".tar.gz") || ascii_suffix_eq(name, ".tgz") {
         Some(ArchiveFormat::TarGz)
     } else {
         None
     }
+}
+
+fn ascii_suffix_eq(
+    name: &str,
+    suffix: &str,
+) -> bool {
+    let n = name.len();
+    let s = suffix.len();
+    n >= s && name.is_char_boundary(n - s) && name[n - s..].eq_ignore_ascii_case(suffix)
 }
 
 impl PanelLocation {
@@ -156,5 +164,30 @@ impl PanelLocation {
             PanelLocation::Fs(p) => Some(p.as_path()),
             PanelLocation::Archive { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{archive_format_for_filename, ArchiveFormat};
+
+    #[test]
+    fn archive_format_suffix_is_case_insensitive_without_alloc() {
+        assert_eq!(
+            archive_format_for_filename("a.ZIP"),
+            Some(ArchiveFormat::Zip)
+        );
+        assert_eq!(
+            archive_format_for_filename("b.Tar.Gz"),
+            Some(ArchiveFormat::TarGz)
+        );
+        assert_eq!(
+            archive_format_for_filename("c.TGZ"),
+            Some(ArchiveFormat::TarGz)
+        );
+        assert_eq!(
+            archive_format_for_filename("readme.md"),
+            None
+        );
     }
 }

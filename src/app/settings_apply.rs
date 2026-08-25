@@ -106,7 +106,8 @@ pub(crate) fn apply_persisted_setting_change(
             if let Some(&t) = crate::ui::theme::ThemeId::ALL.get(idx) {
                 app.persisted_settings.theme = t.slug().to_string();
                 app.theme_id = t;
-                app.ui_palette = crate::ui::color_depth::adapt_ui_palette(t.palette(), app.color_depth);
+                app.ui_palette =
+                    crate::ui::color_depth::adapt_ui_palette(t.palette(), app.color_depth);
             }
         }
     }

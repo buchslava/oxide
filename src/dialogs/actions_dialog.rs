@@ -382,7 +382,10 @@ fn action_line(
             Style::default().bg(ACTION_ROW_BG),
         ),
         Span::raw("  "),
-        Span::styled(description, Style::default().fg(d.help_body)),
+        Span::styled(
+            description,
+            Style::default().fg(d.help_body),
+        ),
     ])
 }
 
@@ -470,18 +473,14 @@ pub fn handle_key(
             apply_action_selection(state, prev, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
-        KeyCode::Up | KeyCode::Char('k')
-            if !modifiers.contains(KeyModifiers::CONTROL) =>
-        {
+        KeyCode::Up | KeyCode::Char('k') if !modifiers.contains(KeyModifiers::CONTROL) => {
             let state = app.actions_dialog.as_mut()?;
             state.selected_action = state.selected_action.min(n_actions - 1);
             let prev = state.selected_action.saturating_sub(1);
             apply_action_selection(state, prev, hits, area, total, n_actions);
             Some(AppAction::Continue)
         }
-        KeyCode::Down | KeyCode::Char('j')
-            if !modifiers.contains(KeyModifiers::CONTROL) =>
-        {
+        KeyCode::Down | KeyCode::Char('j') if !modifiers.contains(KeyModifiers::CONTROL) => {
             let state = app.actions_dialog.as_mut()?;
             state.selected_action = state.selected_action.min(n_actions - 1);
             let next = (state.selected_action + 1).min(n_actions - 1);
@@ -513,7 +512,14 @@ pub fn handle_key(
         KeyCode::End => {
             let state = app.actions_dialog.as_mut()?;
             state.selected_action = state.selected_action.min(n_actions - 1);
-            apply_action_selection(state, n_actions - 1, hits, area, total, n_actions);
+            apply_action_selection(
+                state,
+                n_actions - 1,
+                hits,
+                area,
+                total,
+                n_actions,
+            );
             Some(AppAction::Continue)
         }
         _ => None,
@@ -677,7 +683,10 @@ pub fn draw(
 
     render_scrollbar(f, sb_rect, d, state.scroll, total);
 
-    let hint_y = inner.y + inner.height.saturating_sub(dialog_layout::SCROLL_REFERENCE_MODAL_HINT_H);
+    let hint_y = inner.y
+        + inner
+            .height
+            .saturating_sub(dialog_layout::SCROLL_REFERENCE_MODAL_HINT_H);
     let hint_rect = Rect {
         x: inner.x,
         y: hint_y,

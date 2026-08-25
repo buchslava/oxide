@@ -42,11 +42,16 @@ pub fn scroll_reference_modal_layout(area: Rect) -> (Rect, Rect, Rect) {
     let text = Rect {
         x: inner.x,
         y: inner.y,
-        width: inner.width.saturating_sub(SCROLL_REFERENCE_MODAL_SCROLLBAR_W),
+        width: inner
+            .width
+            .saturating_sub(SCROLL_REFERENCE_MODAL_SCROLLBAR_W),
         height: body_h,
     };
     let scrollbar = Rect {
-        x: inner.x + inner.width.saturating_sub(SCROLL_REFERENCE_MODAL_SCROLLBAR_W),
+        x: inner.x
+            + inner
+                .width
+                .saturating_sub(SCROLL_REFERENCE_MODAL_SCROLLBAR_W),
         y: inner.y,
         width: SCROLL_REFERENCE_MODAL_SCROLLBAR_W,
         height: body_h,

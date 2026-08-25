@@ -141,7 +141,11 @@ pub fn handle_key(
             Some(AppAction::Continue)
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            let focus = app.panel_context_menu.as_ref().map(|s| s.focus).unwrap_or(0);
+            let focus = app
+                .panel_context_menu
+                .as_ref()
+                .map(|s| s.focus)
+                .unwrap_or(0);
             let new_focus = move_focus(app, focus, -1);
             if let Some(state) = app.panel_context_menu.as_mut() {
                 state.focus = new_focus;
@@ -149,7 +153,11 @@ pub fn handle_key(
             Some(AppAction::Continue)
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            let focus = app.panel_context_menu.as_ref().map(|s| s.focus).unwrap_or(0);
+            let focus = app
+                .panel_context_menu
+                .as_ref()
+                .map(|s| s.focus)
+                .unwrap_or(0);
             let new_focus = move_focus(app, focus, 1);
             if let Some(state) = app.panel_context_menu.as_mut() {
                 state.focus = new_focus;
@@ -167,14 +175,23 @@ pub fn handle_key(
             let new_focus = ENTRIES
                 .iter()
                 .rposition(|e| Renderer::is_menu_action_available(app, e.key))
-                .unwrap_or_else(|| app.panel_context_menu.as_ref().map(|s| s.focus).unwrap_or(0));
+                .unwrap_or_else(|| {
+                    app.panel_context_menu
+                        .as_ref()
+                        .map(|s| s.focus)
+                        .unwrap_or(0)
+                });
             if let Some(state) = app.panel_context_menu.as_mut() {
                 state.focus = new_focus;
             }
             Some(AppAction::Continue)
         }
         KeyCode::Enter => {
-            let focus = app.panel_context_menu.as_ref().map(|s| s.focus).unwrap_or(0);
+            let focus = app
+                .panel_context_menu
+                .as_ref()
+                .map(|s| s.focus)
+                .unwrap_or(0);
             activate(app, focus).or(Some(AppAction::Continue))
         }
         KeyCode::Char(c) if c.is_ascii_digit() => {

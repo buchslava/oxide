@@ -56,7 +56,10 @@ impl ColorDepth {
     }
 
     /// Remap a single color for this depth (pass-through for non-RGB where possible).
-    pub fn adapt_color(self, c: Color) -> Color {
+    pub fn adapt_color(
+        self,
+        c: Color,
+    ) -> Color {
         match self {
             Self::TrueColor => c,
             Self::Extended256 => match c {

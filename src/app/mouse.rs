@@ -355,11 +355,7 @@ pub(crate) fn handle_mouse_event(
                                         return Ok(Some(AppAction::PanelNavigated));
                                     }
                                     Err(e) => {
-                                        error_detail_dialog::open_from_io(
-                                            app,
-                                            "Could not open",
-                                            e,
-                                        );
+                                        error_detail_dialog::open_from_io(app, "Could not open", e);
                                         return Ok(Some(AppAction::Continue));
                                     }
                                 }
@@ -826,7 +822,10 @@ fn menu_bar_delete_confirm(app: &mut AppState) -> Option<AppAction> {
 }
 
 /// Map menu bar key to action (bottom bar click or right-click popup menu).
-pub(crate) fn menu_bar_action(app: &mut AppState, key: u16) -> Option<AppAction> {
+pub(crate) fn menu_bar_action(
+    app: &mut AppState,
+    key: u16,
+) -> Option<AppAction> {
     if app.focus == Focus::CommandLine && key != menu_bar_key::QUIT {
         return None;
     }
@@ -838,7 +837,7 @@ pub(crate) fn menu_bar_action(app: &mut AppState, key: u16) -> Option<AppAction>
             menu_bar_selection_is_plain_file(app).then_some(AppAction::OpenViewer)
         }
         menu_bar_key::EDIT => {
-            if supports_edit(&app.get_current_location()) && menu_bar_selection_is_plain_file(app) {
+            if supports_edit(app.current_location()) && menu_bar_selection_is_plain_file(app) {
                 Some(AppAction::OpenEditor)
             } else {
                 None
@@ -847,7 +846,7 @@ pub(crate) fn menu_bar_action(app: &mut AppState, key: u16) -> Option<AppAction>
         menu_bar_key::COPY => menu_bar_copy_or_move_confirm(app, Operation::Copy),
         menu_bar_key::MOVE => menu_bar_copy_or_move_confirm(app, Operation::Move),
         menu_bar_key::FOLDER => {
-            if supports_mkdir(&app.get_current_location()) {
+            if supports_mkdir(app.current_location()) {
                 Some(AppAction::OpenMkdirDialog)
             } else {
                 None

@@ -1,5 +1,6 @@
 //! File viewer (F3): view file as text, hex dump, or rendered markdown. ESC to close.
 
+use std::fmt::Write;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -15,6 +16,7 @@ use ratatui::{
 
 use crate::util;
 
+use crate::app::state::AppState;
 use crate::browser::viewer_image::{
     collect_raster_view_entries, draw_image_loading, draw_image_ready, finish_image_loading,
     handle_image_loading_key, handle_image_loading_mouse, handle_image_ready_key,
@@ -26,10 +28,7 @@ use crate::browser::viewer_markdown::{
     is_markdown_path, on_markdown_ready, text_viewer_to_markdown, try_open_markdown_from_bytes,
     MarkdownViewerState,
 };
-use crate::app::state::AppState;
-use crate::core::file_ops::FileOperations;
-use crate::core::location::PanelLocation;
-use crate::ui::theme::ViewerPalette;
+use crate::core::text_format::wrap_line;
 
 /// Building the text line index scans the whole file; keep text mode off above this size (hex stays responsive).
 pub const MAX_TEXT_VIEW_BYTES: usize = 64 * 1024 * 1024;
@@ -82,7 +81,10 @@ pub enum ViewerMode {
 }
 use crate::app::events::AppAction;
 use crate::browser::panel::PanelOperations;
+use crate::core::file_ops::FileOperations;
+use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
+use crate::ui::theme::ViewerPalette;
 
 /// Default bytes per line when width unknown; also minimum.
 const HEX_BYTES_PER_LINE_DEFAULT: usize = 16;
@@ -131,14 +133,16 @@ pub fn open_viewer(app: &mut AppState) -> bool {
             let cancel_thread = Arc::clone(&cancel);
             let (tx, rx) = mpsc::channel();
             spawn_image_load_thread(entries.clone(), cancel_thread, tx);
-            app.viewer_screen = Some(ViewerState::ImageLoading(ImageLoadingState {
-                entries,
-                current: start,
-                buffers: vec![None; n],
-                loaded: 0,
-                rx,
-                cancel,
-            }));
+            app.viewer_screen = Some(ViewerState::ImageLoading(
+                ImageLoadingState {
+                    entries,
+                    current: start,
+                    buffers: vec![None; n],
+                    loaded: 0,
+                    rx,
+                    cancel,
+                },
+            ));
             return true;
         }
     }
@@ -198,14 +202,16 @@ pub fn open_viewer_path(
             let cancel_thread = Arc::clone(&cancel);
             let (tx, rx) = mpsc::channel();
             spawn_image_load_thread(entries.clone(), cancel_thread, tx);
-            app.viewer_screen = Some(ViewerState::ImageLoading(ImageLoadingState {
-                entries,
-                current: start,
-                buffers: vec![None; n],
-                loaded: 0,
-                rx,
-                cancel,
-            }));
+            app.viewer_screen = Some(ViewerState::ImageLoading(
+                ImageLoadingState {
+                    entries,
+                    current: start,
+                    buffers: vec![None; n],
+                    loaded: 0,
+                    rx,
+                    cancel,
+                },
+            ));
             return true;
         }
     }
@@ -287,7 +293,7 @@ pub fn poll_viewer_loading(app: &mut AppState) -> bool {
             let scroll = initial_line
                 .map(|l| (l as usize).saturating_sub(1))
                 .unwrap_or(0);
-            if let Some(mut md) = try_open_markdown_from_bytes(file_path.clone(), content.clone()) {
+            if let Some(mut md) = try_open_markdown_from_bytes(&file_path, &content) {
                 on_markdown_ready(&mut md, app);
                 app.viewer_screen = Some(ViewerState::MarkdownReady(md));
                 return true;
@@ -336,37 +342,6 @@ fn content_width(v: &ViewerScreenState) -> usize {
 /// Visible lines in viewer (area minus header and bottom bar).
 fn visible_lines(v: &ViewerScreenState) -> usize {
     v.area.height.saturating_sub(2).max(1) as usize
-}
-
-/// Split a single line into display lines of at most `width` chars (wrap long lines).
-fn wrap_line(
-    line: &str,
-    width: usize,
-) -> Vec<String> {
-    if width == 0 {
-        return vec![line.to_string()];
-    }
-    let mut out = Vec::new();
-    let mut s = line;
-    while !s.is_empty() {
-        let chunk_char_count = s.chars().take(width).count();
-        let (chunk, rest) = if chunk_char_count < s.chars().count() {
-            let idx = s
-                .char_indices()
-                .nth(chunk_char_count)
-                .map(|(i, _)| i)
-                .unwrap_or(s.len());
-            s.split_at(idx)
-        } else {
-            (s, "")
-        };
-        out.push(chunk.to_string());
-        s = rest;
-    }
-    if out.is_empty() {
-        out.push(String::new());
-    }
-    out
 }
 
 /// Handle key when viewer is open. Returns Some(action) when handled, None if not in viewer.
@@ -818,13 +793,16 @@ fn hex_visible_lines_two_columns_styled(
     let mut offset = start_byte;
     while offset < end_byte && left_lines.len() < height {
         let chunk = &bytes[offset..(offset + bpl).min(bytes.len())];
-        let addr = format!("{:08x}: ", offset);
-        let hex_part: Vec<String> = chunk.iter().map(|b| format!("{:02x}", b)).collect();
-        let hex_str = hex_part
-            .chunks(8)
-            .map(|c| c.join(" "))
-            .collect::<Vec<_>>()
-            .join("  ");
+        let mut hex_str = String::with_capacity(chunk.len() * 3 + chunk.len() / 8 + 8);
+        for (i, b) in chunk.iter().enumerate() {
+            if i > 0 {
+                hex_str.push(' ');
+                if i % 8 == 0 {
+                    hex_str.push(' ');
+                }
+            }
+            let _ = write!(hex_str, "{:02x}", b);
+        }
         let ascii: String = chunk
             .iter()
             .map(|&b| {
@@ -836,10 +814,17 @@ fn hex_visible_lines_two_columns_styled(
             })
             .collect();
         let padding = bpl - chunk.len();
-        let pad_hex = "   ".repeat(padding);
-        let pad_ascii = " ".repeat(padding);
-        let mut left_line_str = format!("{}{}{}", addr, hex_str, pad_hex);
-        let mut right_line_str = format!("{}{}", ascii, pad_ascii);
+        let mut left_line_str = String::with_capacity(addr_len + hex_str.len() + padding * 3);
+        let _ = write!(
+            left_line_str,
+            "{:08x}: {}",
+            offset, hex_str
+        );
+        for _ in 0..padding {
+            left_line_str.push_str("   ");
+        }
+        let mut right_line_str = ascii;
+        right_line_str.extend(std::iter::repeat(' ').take(padding));
         let lw = left_width as usize;
         let rw = right_width as usize;
         if left_line_str.len() > lw {
@@ -865,7 +850,7 @@ fn hex_visible_lines_two_columns_styled(
                 Span::raw(after),
             ])
         } else {
-            Line::from(left_line_str.clone())
+            Line::from(left_line_str)
         };
         let right_line = if cursor_in_this_line && local_cursor < right_line_str.len() {
             let ch_start = local_cursor;
@@ -882,7 +867,7 @@ fn hex_visible_lines_two_columns_styled(
                 Span::raw(after),
             ])
         } else {
-            Line::from(right_line_str.clone())
+            Line::from(right_line_str)
         };
         left_lines.push(left_line);
         right_lines.push(right_line);
@@ -909,180 +894,180 @@ pub fn draw(
     let content_style = Style::default().bg(vp.background).fg(vp.text);
 
     match &mut state {
-            ViewerState::ImageLoading(ld) => {
-                draw_image_loading(f, ld, vp, app.ui_palette.dialog);
-            }
-            ViewerState::ImageReady(img) => {
-                draw_image_ready(f, img, app, vp);
-            }
-            ViewerState::MarkdownReady(md) => {
-                draw_markdown(f, md, app, vp);
-            }
-            ViewerState::Loading { file_path, .. } => {
-                let header_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: 1,
-                };
-                let content_rect = Rect {
-                    x: area.x,
-                    y: area.y + 1,
-                    width: area.width,
-                    height: area.height.saturating_sub(2),
-                };
-                let bottom_rect = Rect {
-                    x: area.x,
-                    y: area.y + area.height.saturating_sub(1),
-                    width: area.width,
-                    height: 1,
-                };
-                let header = Line::from(vec![
-                    Span::styled(
-                        file_path.as_str(),
-                        Style::default().fg(vp.header_path),
-                    ),
-                    Span::raw("  "),
-                    Span::styled("Loading…", Style::default().fg(vp.muted)),
-                ]);
-                f.render_widget(
-                    Paragraph::new(header).style(content_style),
-                    header_rect,
-                );
-                let msg = "Reading file in background — Esc to close";
-                f.render_widget(
-                    Paragraph::new(msg).style(content_style),
-                    content_rect,
-                );
-                f.render_widget(
-                    Paragraph::new(" Esc: close ").style(content_style.fg(vp.muted)),
-                    bottom_rect,
-                );
-            }
-            ViewerState::Ready(v) => {
-                v.area = area;
-                let header_height = 1u16;
-                let bottom_height = 1u16;
-                let content_height = area.height.saturating_sub(header_height + bottom_height);
-                let content_height_usize = content_height as usize;
-
-                let header_rect = Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width,
-                    height: header_height,
-                };
-                let content_rect = Rect {
-                    x: area.x,
-                    y: area.y + header_height,
-                    width: area.width,
-                    height: content_height,
-                };
-                let bottom_rect = Rect {
-                    x: area.x,
-                    y: area.y + area.height.saturating_sub(bottom_height),
-                    width: area.width,
-                    height: bottom_height,
-                };
-
-                // Clear the whole content area each frame to prevent stale glyphs when
-                // new page has fewer/shorter lines than the previous one.
-                f.render_widget(
-                    Block::default().style(content_style),
-                    content_rect,
-                );
-
-                let total = match v.view_mode {
-                    ViewerMode::Text => {
-                        let (lines, total) =
-                            text_visible_lines_cached(v, v.scroll, content_height_usize);
-                        let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
-                        let para = Paragraph::new(Text::from(text_lines)).style(content_style);
-                        f.render_widget(para, content_rect);
-                        total
-                    }
-                    ViewerMode::Hex => {
-                        // Use Min(0) for right column so it takes all remaining space;
-                        // Percentage(70)+Percentage(30) can leave 1–2 columns undrawn when
-                        // width doesn't divide evenly, leaving text-mode leftovers visible.
-                        let chunks =
-                            Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
-                                .split(content_rect);
-                        let (left_lines, right_lines, total) = hex_visible_lines_two_columns_styled(
-                            v,
-                            v.scroll,
-                            content_height_usize,
-                            chunks[0].width,
-                            chunks[1].width,
-                            vp.hex_cursor_highlight_style(),
-                        );
-                        let left_text = Text::from(left_lines);
-                        let right_text = Text::from(right_lines);
-                        f.render_widget(
-                            Paragraph::new(left_text)
-                                .style(content_style)
-                                .wrap(Wrap { trim: false }),
-                            chunks[0],
-                        );
-                        f.render_widget(
-                            Paragraph::new(right_text)
-                                .style(content_style)
-                                .wrap(Wrap { trim: false }),
-                            chunks[1],
-                        );
-                        total
-                    }
-                };
-
-                let mode_label = match v.view_mode {
-                    ViewerMode::Text => "TEXT",
-                    ViewerMode::Hex => "HEX",
-                };
-                let path_span = v.file_path.as_str();
-                let right_info = format!("{} | {} lines", mode_label, total);
-                let pad_len = (header_rect.width as usize)
-                    .saturating_sub(path_span.len() + right_info.len())
-                    .max(1);
-                let header_line = Line::from(vec![
-                    Span::styled(
-                        path_span,
-                        Style::default().fg(vp.header_path),
-                    ),
-                    Span::raw(" ".repeat(pad_len)),
-                    Span::styled(right_info, Style::default().fg(vp.muted)),
-                ]);
-                f.render_widget(
-                    Paragraph::new(header_line).style(content_style),
-                    header_rect,
-                );
-
-                let bar = if is_markdown_path(&v.file_path) && v.view_mode == ViewerMode::Text {
-                    Line::from(vec![
-                        Span::styled(" Esc ", content_style.fg(vp.muted)),
-                        Span::raw("close  "),
-                        Span::styled(" T ", content_style.fg(vp.muted)),
-                        Span::raw("markdown  "),
-                        Span::styled(" H ", content_style.fg(vp.muted)),
-                        Span::raw("hex/text  "),
-                        Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
-                        Span::raw("PgUp/PgDn scroll"),
-                    ])
-                } else {
-                    Line::from(vec![
-                        Span::styled(" Esc ", content_style.fg(vp.muted)),
-                        Span::raw("close  "),
-                        Span::styled(" H ", content_style.fg(vp.muted)),
-                        Span::raw("hex/text  "),
-                        Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
-                        Span::raw("PgUp/PgDn scroll"),
-                    ])
-                };
-                f.render_widget(
-                    Paragraph::new(bar).style(content_style.fg(vp.muted)),
-                    bottom_rect,
-                );
-            }
+        ViewerState::ImageLoading(ld) => {
+            draw_image_loading(f, ld, vp, app.ui_palette.dialog);
         }
+        ViewerState::ImageReady(img) => {
+            draw_image_ready(f, img, app, vp);
+        }
+        ViewerState::MarkdownReady(md) => {
+            draw_markdown(f, md, app, vp);
+        }
+        ViewerState::Loading { file_path, .. } => {
+            let header_rect = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: 1,
+            };
+            let content_rect = Rect {
+                x: area.x,
+                y: area.y + 1,
+                width: area.width,
+                height: area.height.saturating_sub(2),
+            };
+            let bottom_rect = Rect {
+                x: area.x,
+                y: area.y + area.height.saturating_sub(1),
+                width: area.width,
+                height: 1,
+            };
+            let header = Line::from(vec![
+                Span::styled(
+                    file_path.as_str(),
+                    Style::default().fg(vp.header_path),
+                ),
+                Span::raw("  "),
+                Span::styled("Loading…", Style::default().fg(vp.muted)),
+            ]);
+            f.render_widget(
+                Paragraph::new(header).style(content_style),
+                header_rect,
+            );
+            let msg = "Reading file in background — Esc to close";
+            f.render_widget(
+                Paragraph::new(msg).style(content_style),
+                content_rect,
+            );
+            f.render_widget(
+                Paragraph::new(" Esc: close ").style(content_style.fg(vp.muted)),
+                bottom_rect,
+            );
+        }
+        ViewerState::Ready(v) => {
+            v.area = area;
+            let header_height = 1u16;
+            let bottom_height = 1u16;
+            let content_height = area.height.saturating_sub(header_height + bottom_height);
+            let content_height_usize = content_height as usize;
+
+            let header_rect = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: header_height,
+            };
+            let content_rect = Rect {
+                x: area.x,
+                y: area.y + header_height,
+                width: area.width,
+                height: content_height,
+            };
+            let bottom_rect = Rect {
+                x: area.x,
+                y: area.y + area.height.saturating_sub(bottom_height),
+                width: area.width,
+                height: bottom_height,
+            };
+
+            // Clear the whole content area each frame to prevent stale glyphs when
+            // new page has fewer/shorter lines than the previous one.
+            f.render_widget(
+                Block::default().style(content_style),
+                content_rect,
+            );
+
+            let total = match v.view_mode {
+                ViewerMode::Text => {
+                    let (lines, total) =
+                        text_visible_lines_cached(v, v.scroll, content_height_usize);
+                    let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
+                    let para = Paragraph::new(Text::from(text_lines)).style(content_style);
+                    f.render_widget(para, content_rect);
+                    total
+                }
+                ViewerMode::Hex => {
+                    // Use Min(0) for right column so it takes all remaining space;
+                    // Percentage(70)+Percentage(30) can leave 1–2 columns undrawn when
+                    // width doesn't divide evenly, leaving text-mode leftovers visible.
+                    let chunks =
+                        Layout::horizontal([Constraint::Percentage(70), Constraint::Min(0)])
+                            .split(content_rect);
+                    let (left_lines, right_lines, total) = hex_visible_lines_two_columns_styled(
+                        v,
+                        v.scroll,
+                        content_height_usize,
+                        chunks[0].width,
+                        chunks[1].width,
+                        vp.hex_cursor_highlight_style(),
+                    );
+                    let left_text = Text::from(left_lines);
+                    let right_text = Text::from(right_lines);
+                    f.render_widget(
+                        Paragraph::new(left_text)
+                            .style(content_style)
+                            .wrap(Wrap { trim: false }),
+                        chunks[0],
+                    );
+                    f.render_widget(
+                        Paragraph::new(right_text)
+                            .style(content_style)
+                            .wrap(Wrap { trim: false }),
+                        chunks[1],
+                    );
+                    total
+                }
+            };
+
+            let mode_label = match v.view_mode {
+                ViewerMode::Text => "TEXT",
+                ViewerMode::Hex => "HEX",
+            };
+            let path_span = v.file_path.as_str();
+            let right_info = format!("{} | {} lines", mode_label, total);
+            let pad_len = (header_rect.width as usize)
+                .saturating_sub(path_span.len() + right_info.len())
+                .max(1);
+            let header_line = Line::from(vec![
+                Span::styled(
+                    path_span,
+                    Style::default().fg(vp.header_path),
+                ),
+                Span::raw(" ".repeat(pad_len)),
+                Span::styled(right_info, Style::default().fg(vp.muted)),
+            ]);
+            f.render_widget(
+                Paragraph::new(header_line).style(content_style),
+                header_rect,
+            );
+
+            let bar = if is_markdown_path(&v.file_path) && v.view_mode == ViewerMode::Text {
+                Line::from(vec![
+                    Span::styled(" Esc ", content_style.fg(vp.muted)),
+                    Span::raw("close  "),
+                    Span::styled(" T ", content_style.fg(vp.muted)),
+                    Span::raw("markdown  "),
+                    Span::styled(" H ", content_style.fg(vp.muted)),
+                    Span::raw("hex/text  "),
+                    Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
+                    Span::raw("PgUp/PgDn scroll"),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(" Esc ", content_style.fg(vp.muted)),
+                    Span::raw("close  "),
+                    Span::styled(" H ", content_style.fg(vp.muted)),
+                    Span::raw("hex/text  "),
+                    Span::styled(" ↑↓ ", content_style.fg(vp.muted)),
+                    Span::raw("PgUp/PgDn scroll"),
+                ])
+            };
+            f.render_widget(
+                Paragraph::new(bar).style(content_style.fg(vp.muted)),
+                bottom_rect,
+            );
+        }
+    }
 
     app.viewer_screen = Some(state);
 }

@@ -1,9 +1,7 @@
 use crate::app::state::{
     AppState, ArchiveProgress, CopyErrorState, CopyProgress, Focus, Operation, SizeInfoDialogState,
 };
-use crate::browser::diff_viewer::{
-    self, clear_folder_compare_if_stale, FolderCompareState, FolderDiffTag,
-};
+use crate::browser::diff_viewer::{self, clear_folder_compare_if_stale, FolderCompareState};
 use crate::browser::editor;
 use crate::browser::panel::{Panel, PanelOperations, ViewMode};
 use crate::browser::viewer;
@@ -11,11 +9,13 @@ use crate::core::disk_space::disk_space_summary;
 use crate::core::file_ops::FileInfo;
 use crate::core::location::archive_format_for_filename;
 use crate::core::panel_backend;
-use crate::core::text_format::{format_byte_size, format_u64_with_commas, truncate_str, TruncateMode};
+use crate::core::text_format::{
+    format_byte_size, format_u64_with_commas, truncate_str, TruncateMode,
+};
 use crate::dialogs::{
-    actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog, new_file_dialog,
-    panel_context_menu, panel_overlay, pattern_select_dialog, rename_attr, settings_dialog,
-    size_info_dialog,
+    actions_dialog, archive_dialog, error_detail_dialog, find_dialog, mkdir_dialog,
+    new_file_dialog, panel_context_menu, panel_overlay, pattern_select_dialog, rename_attr,
+    settings_dialog, size_info_dialog,
 };
 use crate::ui::dialog_layout::{self, paint_modal_dim_layer, DEFAULT_PAD_H};
 use crate::ui::menu_bar_key;
@@ -30,6 +30,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Gauge, Paragraph},
     Frame,
 };
+use std::borrow::Cow;
+use std::sync::OnceLock;
 
 pub struct Renderer;
 
@@ -75,15 +77,18 @@ fn shell_prompt_sigil(app: &AppState) -> &'static str {
             return "#";
         }
     }
-    let shell = std::env::var("SHELL").unwrap_or_default();
-    let s = shell.to_ascii_lowercase();
-    if s.contains("fish") {
-        ">"
-    } else if s.contains("zsh") {
-        "%"
-    } else {
-        "$"
-    }
+    static SIGIL: OnceLock<&'static str> = OnceLock::new();
+    *SIGIL.get_or_init(|| {
+        let shell = std::env::var("SHELL").unwrap_or_default();
+        let s = shell.to_ascii_lowercase();
+        if s.contains("fish") {
+            ">"
+        } else if s.contains("zsh") {
+            "%"
+        } else {
+            "$"
+        }
+    })
 }
 
 /// Panel command-line prefix: current (active panel) path + shell-style prompt character.
@@ -115,17 +120,45 @@ fn utf8_prefix_display_cols(
         .unwrap_or(0) as u16
 }
 
-/// Format mtime as "Feb 13 2024 20:05" (month, day, year, time with zero-padded minutes).
-fn format_mtime(t: &std::time::SystemTime) -> String {
-    use chrono::{DateTime, Timelike, Utc};
-    let datetime: DateTime<Utc> = (*t).into();
-    let date = datetime.format("%b %e %Y").to_string();
-    let time = format!(
-        "{:02}:{:02}",
-        datetime.hour(),
-        datetime.minute()
+/// ASCII spaces for panel padding without allocating on typical terminal widths.
+fn pad_spaces(n: usize) -> Cow<'static, str> {
+    const PAD: &str =
+        "                                                                                                    ";
+    if n <= PAD.len() {
+        Cow::Borrowed(&PAD[..n])
+    } else {
+        Cow::Owned(" ".repeat(n))
+    }
+}
+
+/// One tall `│` widget instead of one `Paragraph` per row.
+fn draw_vertical_rule(
+    f: &mut Frame,
+    x: u16,
+    y: u16,
+    height: u16,
+    style: Style,
+) {
+    if height == 0 {
+        return;
+    }
+    let h = height as usize;
+    let mut text = String::with_capacity(h.saturating_mul(4));
+    for i in 0..h {
+        if i > 0 {
+            text.push('\n');
+        }
+        text.push('│');
+    }
+    f.render_widget(
+        Paragraph::new(text).style(style),
+        Rect {
+            x,
+            y,
+            width: 1,
+            height,
+        },
     );
-    format!("{} {}", date, time)
 }
 
 /// Permissions + size (or either alone) for the bottom bar right side.
@@ -193,7 +226,7 @@ fn bottom_bar_file_line_padded(
             let pad = max_width.saturating_sub(used);
             let mut v = vec![Span::styled(display, name_style)];
             if pad > 0 {
-                v.push(Span::styled(" ".repeat(pad), name_style));
+                v.push(Span::styled(pad_spaces(pad), name_style));
             }
             v
         }
@@ -206,7 +239,11 @@ fn bottom_bar_file_line_padded(
             let right_display = if right.chars().count() <= max_right {
                 right
             } else {
-                truncate_str(&right, max_right.max(1), TruncateMode::SuffixEllipsis)
+                truncate_str(
+                    &right,
+                    max_right.max(1),
+                    TruncateMode::SuffixEllipsis,
+                )
             };
             let right_len = right_display.chars().count();
             let name_budget = max_width.saturating_sub(right_len + GAP_MIN);
@@ -219,7 +256,7 @@ fn bottom_bar_file_line_padded(
             let pad_len = max_width.saturating_sub(name_len + right_len);
             vec![
                 Span::styled(name_display, name_style),
-                Span::styled(" ".repeat(pad_len), name_style),
+                Span::styled(pad_spaces(pad_len), name_style),
                 Span::styled(right_display, size_style),
             ]
         }
@@ -245,6 +282,18 @@ fn is_archive_file(file: &FileInfo) -> bool {
 
 /// Truncate file display to fit column width (chars). Prevents wrapping/uglification in double-column view.
 /// Prefix: "/" for folders, "@" for symlinks, "*" for executables, " " for regular files (as in screenshot).
+fn name_display_prefix(file: &FileInfo) -> char {
+    if file.is_dir {
+        '/'
+    } else if file.is_symlink {
+        '@'
+    } else if file.is_executable {
+        '*'
+    } else {
+        ' '
+    }
+}
+
 fn truncate_for_width(
     file: &FileInfo,
     max_width: usize,
@@ -252,24 +301,22 @@ fn truncate_for_width(
     if file.is_parent_dir() {
         return "..".to_string();
     }
-    let full = if file.is_dir {
-        format!("/{}", file.name)
-    } else if file.is_symlink {
-        format!("@{}", file.name)
-    } else if file.is_executable {
-        format!("*{}", file.name)
-    } else {
-        format!(" {}", file.name)
-    };
-    let w = max_width.saturating_sub(1); // leave room for "…"
-    if full.chars().count() <= max_width {
-        full
-    } else {
-        format!(
-            "{}…",
-            full.chars().take(w).collect::<String>()
-        )
+    let prefix = name_display_prefix(file);
+    let name_chars = file.name.chars().count();
+    let full_len = 1 + name_chars;
+    if full_len <= max_width {
+        let mut s = String::with_capacity(file.name.len() + 1);
+        s.push(prefix);
+        s.push_str(&file.name);
+        return s;
     }
+    let keep = max_width.saturating_sub(1);
+    let take_name = keep.saturating_sub(1);
+    let mut s = String::with_capacity(file.name.len() + 2);
+    s.push(prefix);
+    s.extend(file.name.chars().take(take_name));
+    s.push('…');
+    s
 }
 
 impl Renderer {
@@ -1230,7 +1277,11 @@ impl Renderer {
                 let summary = if count_parts.is_empty() {
                     format!("Total: {}", size_str)
                 } else {
-                    format!("Total: {} ({})", size_str, count_parts.join(", "))
+                    format!(
+                        "Total: {} ({})",
+                        size_str,
+                        count_parts.join(", ")
+                    )
                 };
                 f.render_widget(
                     Paragraph::new(summary)
@@ -1332,8 +1383,8 @@ impl Renderer {
     }
 
     /// Menu bar items (label, F-key number). Used for drawing and hit test. Bottom row.
-    pub fn menu_bar_items() -> Vec<(&'static str, u16)> {
-        vec![
+    pub fn menu_bar_items() -> &'static [(&'static str, u16)] {
+        &[
             ("1 Actions", menu_bar_key::ACTIONS),
             ("2 File", menu_bar_key::FILE),
             ("3 View", menu_bar_key::VIEW),
@@ -1369,7 +1420,7 @@ impl Renderer {
                 .get_selected_file()
                 .map_or(false, |f| !f.is_dir && !f.is_parent_dir()),
             menu_bar_key::EDIT => {
-                panel_backend::supports_edit(&app.get_current_location())
+                panel_backend::supports_edit(app.current_location())
                     && app
                         .active_panel_ref()
                         .get_selected_file()
@@ -1389,7 +1440,7 @@ impl Renderer {
                     .get_names_to_copy_with_restore_neighbors();
                 source != target && !items.is_empty()
             }
-            menu_bar_key::FOLDER => panel_backend::supports_mkdir(&app.get_current_location()),
+            menu_bar_key::FOLDER => panel_backend::supports_mkdir(app.current_location()),
             menu_bar_key::DELETE => {
                 let (items, ..) = app
                     .active_panel_ref()
@@ -1425,7 +1476,7 @@ impl Renderer {
                 )
             };
         f.render_widget(
-            Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(menu_bg)),
+            Paragraph::new(pad_spaces(area.width as usize)).style(Style::default().bg(menu_bg)),
             area,
         );
         let items = Self::menu_bar_items();
@@ -1575,8 +1626,8 @@ impl Renderer {
 
         let active_panel = app.active_panel();
         let palette = app.ui_palette;
-        // Clone avoids overlapping `&mut AppState` (panels) with `folder_compare` borrows; size is O(entries).
-        let folder_compare = app.folder_compare.clone();
+        // Move (don't clone) folder-compare maps for this frame so panels can be mutably borrowed.
+        let folder_compare = app.folder_compare.take();
         Self::draw_single_panel(
             f,
             app.left_panel_mut(),
@@ -1597,19 +1648,16 @@ impl Renderer {
             false,
             folder_compare.as_ref(),
         );
+        app.folder_compare = folder_compare;
         // Vertical separator │ from path row through bottom bar
         let sep_style = Style::default().bg(main_bg).fg(c.column_separator);
-        for row in inner.y..(inner.y + panel_content_height + 2) {
-            f.render_widget(
-                Paragraph::new("│").style(sep_style),
-                Rect {
-                    x: sep_x,
-                    y: row,
-                    width: 1,
-                    height: 1,
-                },
-            );
-        }
+        draw_vertical_rule(
+            f,
+            sep_x,
+            inner.y,
+            panel_content_height + 2,
+            sep_style,
+        );
         Self::draw_bottom_file_bar(f, app, bottom_file_rect, sep_x);
         Self::draw_command_line(f, app, command_rect);
         Self::draw_menu_bar(f, menu_rect, app);
@@ -1643,7 +1691,7 @@ impl Renderer {
                 Paragraph::new(format!(
                     "{}{}",
                     left_trunc,
-                    " ".repeat(left_pad)
+                    pad_spaces(left_pad)
                 ))
                 .style(bar_style.fg(c.bottom_bar_success)),
                 Rect {
@@ -1684,7 +1732,7 @@ impl Renderer {
             let right_text = size_info_line.as_ref().unwrap().clone();
             let right_trunc: String = right_text.chars().take(right_content_w).collect();
             let right_pad = right_content_w.saturating_sub(right_trunc.chars().count());
-            let right_display = format!("{}{}", right_trunc, " ".repeat(right_pad));
+            let right_display = format!("{}{}", right_trunc, pad_spaces(right_pad));
             f.render_widget(
                 Paragraph::new(right_display).style(bar_style.fg(c.bottom_bar_success)),
                 Rect {
@@ -1764,7 +1812,7 @@ impl Renderer {
         }
         let pad = w.saturating_sub(end - start);
         if pad > 0 {
-            spans.push(Span::styled(" ".repeat(pad), cmd_style));
+            spans.push(Span::styled(pad_spaces(pad), cmd_style));
         }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
         if is_focused {
@@ -1842,54 +1890,35 @@ impl Renderer {
             let is_selected = is_active_panel && actual_index == panel.get_selected_index();
             let is_marked = panel.is_marked(actual_index);
             let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
+            let attrs = styles::PanelRowAttrs::from_file(
+                file,
+                is_archive_file(file),
+                is_selected,
+                is_marked,
+                folder_tag,
+            );
 
-            let mark_cell = if is_marked {
-                "> "
-            } else {
-                match folder_tag {
-                    Some(FolderDiffTag::ContentDiff) => "C ",
-                    Some(FolderDiffTag::SizeDiff) => "S ",
-                    Some(FolderDiffTag::AbsentOnOther) => "X ",
-                    None => "",
-                }
-            };
+            let mark_cell = styles::mark_prefix(&attrs);
             let name_display = truncate_for_width(file, name_w);
-            let mtime_str = file
-                .mtime
-                .as_ref()
-                .map(format_mtime)
-                .unwrap_or_else(String::new);
-            let mtime_pad = format!("{:>17}", mtime_str); // "Feb 13 2024 20:05" = 17 chars
-
-            let (name_style, mark_style) = if is_selected {
-                let sel = list.selected_row_style();
-                (sel, sel)
-            } else if file.is_hidden_dotfile() {
-                if file.is_dir {
-                    (
-                        base.fg(list.hidden_fg).add_modifier(Modifier::BOLD),
-                        base,
-                    )
-                } else {
-                    (base.fg(list.hidden_fg), base)
-                }
-            } else if file.is_dir {
-                let dir = base.fg(list.directory_fg).add_modifier(Modifier::BOLD);
-                (dir, base)
-            } else if is_archive_file(file) {
-                (base.fg(list.zip_fg), base)
-            } else if file.is_executable {
-                (base.fg(list.executable_fg), base)
-            } else if file.is_symlink {
-                (base.fg(list.symlink_fg), base)
+            let mtime_pad: Cow<str> = if file.mtime_display.is_empty() {
+                pad_spaces(MTIME_W as usize)
+            } else if file.mtime_display.len() >= MTIME_W as usize {
+                Cow::Borrowed(file.mtime_display.as_str())
             } else {
-                (base.fg(list.file_fg), base)
+                Cow::Owned(format!("{:>17}", file.mtime_display))
+            };
+
+            let name_style = styles::panel_file_name_style(list, &attrs);
+            let mark_style = if is_selected {
+                list.selected_row_style()
+            } else {
+                base
             };
 
             let pad_len = (name_w + GAP as usize)
                 .saturating_sub(name_display.chars().count())
                 .saturating_sub(mark_cell.len());
-            let pad_after_name = " ".repeat(pad_len);
+            let pad_after_name = pad_spaces(pad_len);
 
             let mark_cell_style = if mark_cell.is_empty() {
                 if is_selected {
@@ -1914,7 +1943,7 @@ impl Renderer {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    mtime_pad.as_str(),
+                    mtime_pad.as_ref(),
                     if is_selected {
                         mark_style
                     } else if file.is_hidden_dotfile() {
@@ -1969,82 +1998,91 @@ impl Renderer {
         let files = panel.get_files();
         let max_scroll = files.len().saturating_sub(files_per_page).max(0);
         let scroll = panel.get_scroll_offset().min(max_scroll);
-        let visible_files: Vec<_> = files.iter().skip(scroll).take(files_per_page).collect();
-        let (left_files, right_files) =
-            visible_files.split_at(visible_files.len().min(files_per_column));
+        let visible_end = (scroll + files_per_page).min(files.len());
+        let visible = &files[scroll..visible_end];
+        let split_at = visible.len().min(files_per_column);
+        let left_files = &visible[..split_at];
+        let right_files = &visible[split_at..];
 
         let max_left_w = (left_col.width as usize).max(1);
         let max_right_w = (right_col.width as usize).max(1);
 
-        for (i, file) in left_files.iter().enumerate() {
-            if i >= panel_height {
-                break;
-            }
-            let actual_index = i + scroll;
-            let is_selected = is_active_panel && actual_index == panel.get_selected_index();
-            let is_marked = panel.is_marked(actual_index);
-            let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
-            let display = truncate_for_width(file, max_left_w);
-            let line = styles::create_file_line_from_display(
-                &display,
-                &palette.panel_list,
-                file.is_dir,
-                file.is_symlink,
-                file.is_executable,
-                is_archive_file(file),
-                is_selected,
-                is_marked,
-                folder_tag,
-                file.is_hidden_dotfile(),
-            );
-            let line_area = Rect {
-                x: left_col.x,
-                y: left_col.y + i as u16,
-                width: left_col.width,
-                height: 1,
-            };
-            f.render_widget(Paragraph::new(line), line_area);
-        }
-        for (i, file) in right_files.iter().enumerate() {
-            if i >= panel_height {
-                break;
-            }
-            let actual_index = i + left_files.len() + scroll;
-            let is_selected = is_active_panel && actual_index == panel.get_selected_index();
-            let is_marked = panel.is_marked(actual_index);
-            let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
-            let display = truncate_for_width(file, max_right_w);
-            let line = styles::create_file_line_from_display(
-                &display,
-                &palette.panel_list,
-                file.is_dir,
-                file.is_symlink,
-                file.is_executable,
-                is_archive_file(file),
-                is_selected,
-                is_marked,
-                folder_tag,
-                file.is_hidden_dotfile(),
-            );
-            let line_area = Rect {
-                x: right_col.x,
-                y: right_col.y + i as u16,
-                width: right_col.width,
-                height: 1,
-            };
-            f.render_widget(Paragraph::new(line), line_area);
-        }
+        Self::draw_double_column_rows(
+            f,
+            panel,
+            left_files,
+            scroll,
+            0,
+            left_col,
+            max_left_w,
+            panel_height,
+            is_active_panel,
+            palette,
+            is_left_panel,
+            folder_compare,
+        );
+        Self::draw_double_column_rows(
+            f,
+            panel,
+            right_files,
+            scroll,
+            left_files.len(),
+            right_col,
+            max_right_w,
+            panel_height,
+            is_active_panel,
+            palette,
+            is_left_panel,
+            folder_compare,
+        );
 
-        for y in left_col.y..left_col.y + left_col.height {
-            f.render_widget(
-                Paragraph::new("│").style(Style::default().fg(palette.chrome.column_separator)),
-                Rect {
-                    x: vertical_line_x,
-                    y,
-                    width: 1,
-                    height: 1,
-                },
+        draw_vertical_rule(
+            f,
+            vertical_line_x,
+            left_col.y,
+            left_col.height,
+            Style::default().fg(palette.chrome.column_separator),
+        );
+    }
+
+    fn draw_double_column_rows(
+        f: &mut Frame,
+        panel: &Panel,
+        files: &[FileInfo],
+        scroll: usize,
+        index_base: usize,
+        col: Rect,
+        max_w: usize,
+        panel_height: usize,
+        is_active_panel: bool,
+        palette: &UiPalette,
+        is_left_panel: bool,
+        folder_compare: Option<&FolderCompareState>,
+    ) {
+        for (i, file) in files.iter().enumerate() {
+            if i >= panel_height {
+                break;
+            }
+            let actual_index = i + index_base + scroll;
+            let is_selected = is_active_panel && actual_index == panel.get_selected_index();
+            let is_marked = panel.is_marked(actual_index);
+            let folder_tag = folder_compare.and_then(|fc| fc.tag_for_entry(is_left_panel, file));
+            let attrs = styles::PanelRowAttrs::from_file(
+                file,
+                is_archive_file(file),
+                is_selected,
+                is_marked,
+                folder_tag,
             );
+            let display = truncate_for_width(file, max_w);
+            let line = styles::create_file_line_from_display(display, &palette.panel_list, &attrs);
+            let line_area = Rect {
+                x: col.x,
+                y: col.y + i as u16,
+                width: col.width,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(line), line_area);
         }
     }
 }

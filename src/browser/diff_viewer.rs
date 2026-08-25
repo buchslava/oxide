@@ -26,7 +26,7 @@ use crate::browser::panel::PanelOperations;
 use crate::core::file_ops::{FileInfo, FileOperations};
 use crate::core::location::PanelLocation;
 use crate::core::panel_backend;
-use crate::core::text_format::{truncate_str, TruncateMode};
+use crate::core::text_format::{truncate_str, wrap_line, TruncateMode};
 use crate::ui::theme::DiffViewerPalette;
 use crate::util;
 
@@ -594,36 +594,6 @@ fn logical_lines_from_bytes_cancellable(
         lines.push(String::new());
     }
     Ok(lines)
-}
-
-fn wrap_line(
-    line: &str,
-    width: usize,
-) -> Vec<String> {
-    if width == 0 {
-        return vec![line.to_string()];
-    }
-    let mut out = Vec::new();
-    let mut s = line;
-    while !s.is_empty() {
-        let chunk_char_count = s.chars().take(width).count();
-        let (chunk, rest) = if chunk_char_count < s.chars().count() {
-            let idx = s
-                .char_indices()
-                .nth(chunk_char_count)
-                .map(|(i, _)| i)
-                .unwrap_or(s.len());
-            s.split_at(idx)
-        } else {
-            (s, "")
-        };
-        out.push(chunk.to_string());
-        s = rest;
-    }
-    if out.is_empty() {
-        out.push(String::new());
-    }
-    out
 }
 
 /// If `ops[delete_idx]` is followed by an `Insert`, returns that insert’s `(new_index, new_len)`.

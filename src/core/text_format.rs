@@ -19,11 +19,11 @@ pub fn truncate_str(
     max_width: usize,
     mode: TruncateMode,
 ) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let char_count = chars.len();
+    let char_count = s.chars().count();
     if char_count <= max_width {
         return s.to_string();
     }
+    let chars: Vec<char> = s.chars().collect();
     match mode {
         TruncateMode::PrefixEllipsis => {
             if max_width < 2 {
@@ -87,12 +87,16 @@ pub fn truncate_str(
 
 #[cfg(test)]
 mod tests {
-    use super::{truncate_str, TruncateMode};
+    use super::{truncate_str, wrap_line, TruncateMode};
 
     #[test]
     fn middle_ellipsis_fits_unchanged() {
         assert_eq!(
-            truncate_str("short.png", 20, TruncateMode::MiddleEllipsis),
+            truncate_str(
+                "short.png",
+                20,
+                TruncateMode::MiddleEllipsis
+            ),
             "short.png"
         );
     }
@@ -109,7 +113,17 @@ mod tests {
 
     #[test]
     fn middle_ellipsis_tiny_width() {
-        assert_eq!(truncate_str("abcdef", 3, TruncateMode::MiddleEllipsis), "…");
+        assert_eq!(
+            truncate_str("abcdef", 3, TruncateMode::MiddleEllipsis),
+            "…"
+        );
+    }
+
+    #[test]
+    fn wrap_line_splits_on_char_width() {
+        assert_eq!(wrap_line("abcd", 2), vec!["ab", "cd"]);
+        assert_eq!(wrap_line("ab", 10), vec!["ab"]);
+        assert_eq!(wrap_line("", 4), vec![""]);
     }
 }
 
@@ -204,4 +218,42 @@ pub fn format_disk_bytes(bytes: u64) -> String {
     } else {
         scaled(bytes, PB, "PB")
     }
+}
+
+/// Split `line` into chunks of at most `width` Unicode scalar values.
+pub fn wrap_line(
+    line: &str,
+    width: usize,
+) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_string()];
+    }
+    let char_count = line.chars().count();
+    if char_count <= width {
+        return vec![line.to_string()];
+    }
+    let mut out = Vec::with_capacity(char_count.div_ceil(width));
+    let mut rest = line;
+    while !rest.is_empty() {
+        let mut chars = 0;
+        let mut split_at = rest.len();
+        for (i, _) in rest.char_indices() {
+            if chars == width {
+                split_at = i;
+                break;
+            }
+            chars += 1;
+        }
+        if split_at == rest.len() {
+            out.push(rest.to_string());
+            break;
+        }
+        let (chunk, next) = rest.split_at(split_at);
+        out.push(chunk.to_string());
+        rest = next;
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }

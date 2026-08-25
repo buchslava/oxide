@@ -71,14 +71,20 @@ fn push_unique_link(
     if link.url.is_empty() {
         return;
     }
-    if out.iter().any(|e| e.url == link.url && e.label == link.label) {
+    if out
+        .iter()
+        .any(|e| e.url == link.url && e.label == link.label)
+    {
         return;
     }
     out.push(link);
 }
 
 /// Scan for bare `http(s)://…` tokens not already captured by pulldown.
-fn extract_bare_urls(markdown: &str, existing: &[ExtractedLink]) -> Vec<ExtractedLink> {
+fn extract_bare_urls(
+    markdown: &str,
+    existing: &[ExtractedLink],
+) -> Vec<ExtractedLink> {
     let mut out = Vec::new();
     let mut i = 0usize;
     let chars: Vec<char> = markdown.chars().collect();
@@ -230,7 +236,10 @@ mod tests {
 
     #[test]
     fn slugify_heading_github_style() {
-        assert_eq!(slugify_heading("Hello, World!"), "hello-world");
+        assert_eq!(
+            slugify_heading("Hello, World!"),
+            "hello-world"
+        );
         assert_eq!(slugify_heading("  Foo Bar  "), "foo-bar");
     }
 
@@ -244,7 +253,10 @@ mod tests {
             split_url_fragment("#only"),
             (String::new(), Some("only".into()))
         );
-        assert_eq!(split_url_fragment("plain.md"), ("plain.md".into(), None));
+        assert_eq!(
+            split_url_fragment("plain.md"),
+            ("plain.md".into(), None)
+        );
     }
 
     #[test]
@@ -269,7 +281,10 @@ mod tests {
 
     #[test]
     fn local_markdown_exists_checks_extension() {
-        let dir = std::env::temp_dir().join(format!("oxide_md_test_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "oxide_md_test_{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let md = dir.join("note.md");

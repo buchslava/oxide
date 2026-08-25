@@ -21,24 +21,22 @@ use crate::ui::theme::ViewerPalette;
 
 use super::viewer_image::ensure_image_picker;
 use super::viewer_markdown_images::{
-    base_dir_for_markdown, draw_markdown_images, EmbeddedMarkdownImage,
-    MarkdownImageScrollGate, OxideMarkdownImageResolver,
+    base_dir_for_markdown, draw_markdown_images, EmbeddedMarkdownImage, MarkdownImageScrollGate,
+    OxideMarkdownImageResolver,
 };
 
-use super::viewer_markdown_links::{
-    extract_links, local_markdown_exists, resolve_markdown_link,
-    slugify_heading, ExtractedLink, ResolvedLink,
-};
 use super::viewer::{ViewerMode, ViewerScreenState, ViewerState};
+use super::viewer_markdown_links::{
+    extract_links, local_markdown_exists, resolve_markdown_link, slugify_heading, ExtractedLink,
+    ResolvedLink,
+};
 
 const VIEWER_MOUSE_SCROLL_LINES: u16 = 3;
 
 /// True when the basename looks like a markdown document.
 pub fn is_markdown_filename(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".md")
-        || lower.ends_with(".markdown")
-        || lower.ends_with(".mdx")
+    lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".mdx")
 }
 
 pub fn is_markdown_path(path: &str) -> bool {
@@ -77,7 +75,10 @@ pub struct MarkdownViewerState {
     image_scroll_gate: MarkdownImageScrollGate,
 }
 
-pub fn build_markdown_viewer_state(file_path: String, content: String) -> MarkdownViewerState {
+pub fn build_markdown_viewer_state(
+    file_path: String,
+    content: String,
+) -> MarkdownViewerState {
     MarkdownViewerState {
         file_path,
         content,
@@ -158,22 +159,32 @@ fn from_md_style(s: ratatui029::style::Style) -> Style {
     if s.add_modifier.contains(ratatui029::style::Modifier::ITALIC) {
         out = out.italic();
     }
-    if s.add_modifier.contains(ratatui029::style::Modifier::UNDERLINED) {
+    if s.add_modifier
+        .contains(ratatui029::style::Modifier::UNDERLINED)
+    {
         out = out.underlined();
     }
-    if s.add_modifier.contains(ratatui029::style::Modifier::SLOW_BLINK) {
+    if s.add_modifier
+        .contains(ratatui029::style::Modifier::SLOW_BLINK)
+    {
         out = out.slow_blink();
     }
-    if s.add_modifier.contains(ratatui029::style::Modifier::RAPID_BLINK) {
+    if s.add_modifier
+        .contains(ratatui029::style::Modifier::RAPID_BLINK)
+    {
         out = out.rapid_blink();
     }
-    if s.add_modifier.contains(ratatui029::style::Modifier::REVERSED) {
+    if s.add_modifier
+        .contains(ratatui029::style::Modifier::REVERSED)
+    {
         out = out.reversed();
     }
     if s.add_modifier.contains(ratatui029::style::Modifier::HIDDEN) {
         out = out.hidden();
     }
-    if s.add_modifier.contains(ratatui029::style::Modifier::CROSSED_OUT) {
+    if s.add_modifier
+        .contains(ratatui029::style::Modifier::CROSSED_OUT)
+    {
         out = out.crossed_out();
     }
     if let Some(fg) = s.fg {
@@ -289,7 +300,11 @@ fn is_label_word_char(c: char) -> bool {
 }
 
 /// Like [`str::find`], but skips matches where `needle` is only a prefix/suffix of a longer token.
-fn find_whole_needle(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+fn find_whole_needle(
+    haystack: &str,
+    needle: &str,
+    from: usize,
+) -> Option<usize> {
     if needle.is_empty() {
         return None;
     }
@@ -323,13 +338,29 @@ struct UsedHitRange {
     byte_end: usize,
 }
 
-fn ranges_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
+fn ranges_overlap(
+    a_start: usize,
+    a_end: usize,
+    b_start: usize,
+    b_end: usize,
+) -> bool {
     a_start < b_end && b_start < a_end
 }
 
-fn hit_range_used(used: &[UsedHitRange], doc_line: usize, byte_start: usize, byte_end: usize) -> bool {
+fn hit_range_used(
+    used: &[UsedHitRange],
+    doc_line: usize,
+    byte_start: usize,
+    byte_end: usize,
+) -> bool {
     used.iter().any(|u| {
-        u.doc_line == doc_line && ranges_overlap(u.byte_start, u.byte_end, byte_start, byte_end)
+        u.doc_line == doc_line
+            && ranges_overlap(
+                u.byte_start,
+                u.byte_end,
+                byte_start,
+                byte_end,
+            )
     })
 }
 
@@ -401,9 +432,7 @@ fn build_link_hitboxes(
             ex.label.as_str()
         };
 
-        if let Some((doc_line, byte_start, byte_end)) =
-            find_label_hitbox(lines, &used, needle)
-        {
+        if let Some((doc_line, byte_start, byte_end)) = find_label_hitbox(lines, &used, needle) {
             assign_hitbox(
                 &mut links,
                 &mut used,
@@ -419,8 +448,7 @@ fn build_link_hitboxes(
 
         // Fallback: match URL text when label differs from rendered output.
         if ex.url != needle {
-            if let Some((doc_line, byte_start, byte_end)) =
-                find_label_hitbox(lines, &used, &ex.url)
+            if let Some((doc_line, byte_start, byte_end)) = find_label_hitbox(lines, &used, &ex.url)
             {
                 assign_hitbox(
                     &mut links,
@@ -444,11 +472,15 @@ fn find_link_at(
     doc_line: usize,
     col: usize,
 ) -> Option<usize> {
-    links.iter().enumerate().find(|(_, link)| {
-        link.hitboxes.iter().any(|h| {
-            h.doc_line == doc_line && col >= h.col_start && col < h.col_end
+    links
+        .iter()
+        .enumerate()
+        .find(|(_, link)| {
+            link.hitboxes
+                .iter()
+                .any(|h| h.doc_line == doc_line && col >= h.col_start && col < h.col_end)
         })
-    }).map(|(i, _)| i)
+        .map(|(i, _)| i)
 }
 
 fn heading_block_text(block: &MarkdownBlock) -> Option<&str> {
@@ -494,14 +526,20 @@ fn visible_lines(area: Rect) -> u16 {
 }
 
 /// Markdown renderer with tree-sitter code-block highlighting (shared layout for scroll anchors).
-fn markdown_renderer(width: usize, vp: ViewerPalette) -> MarkdownRenderer {
+fn markdown_renderer(
+    width: usize,
+    vp: ViewerPalette,
+) -> MarkdownRenderer {
     let highlighter = Arc::new(TreeSitterHighlighter::new());
-    let hooks = HighlightHooks::new(highlighter, width)
-        .with_border_color(to_md_color(vp.muted));
+    let hooks = HighlightHooks::new(highlighter, width).with_border_color(to_md_color(vp.muted));
     MarkdownRenderer::new(width).with_render_hooks(Box::new(hooks))
 }
 
-fn ensure_rendered(md: &mut MarkdownViewerState, vp: ViewerPalette, picker: &Picker) {
+fn ensure_rendered(
+    md: &mut MarkdownViewerState,
+    vp: ViewerPalette,
+    picker: &Picker,
+) {
     let width = md.area.width;
     if width == 0 {
         return;
@@ -522,11 +560,7 @@ fn ensure_rendered(md: &mut MarkdownViewerState, vp: ViewerPalette, picker: &Pic
             width,
             max_h,
         );
-        md.lines = output
-            .lines
-            .into_iter()
-            .map(from_md_line)
-            .collect();
+        md.lines = output.lines.into_iter().map(from_md_line).collect();
         md.images = output
             .images
             .into_iter()
@@ -563,18 +597,27 @@ impl MarkdownViewerState {
         }
     }
 
-    fn apply_scroll(&mut self, new_scroll: u16) {
+    fn apply_scroll(
+        &mut self,
+        new_scroll: u16,
+    ) {
         if self.scroll != new_scroll {
             self.scroll = new_scroll;
             self.image_scroll_gate.note_scroll();
         }
     }
 
-    fn scroll_up(&mut self, n: u16) {
+    fn scroll_up(
+        &mut self,
+        n: u16,
+    ) {
         self.apply_scroll(self.scroll.saturating_sub(n));
     }
 
-    fn scroll_down(&mut self, n: u16) {
+    fn scroll_down(
+        &mut self,
+        n: u16,
+    ) {
         let next = self.scroll.saturating_add(n);
         self.apply_scroll(next);
         self.clamp_scroll();
@@ -593,7 +636,10 @@ impl MarkdownViewerState {
     }
 
     /// True when `doc_line` is within the current viewport.
-    fn is_line_visible(&self, doc_line: usize) -> bool {
+    fn is_line_visible(
+        &self,
+        doc_line: usize,
+    ) -> bool {
         let top = self.scroll as usize;
         let vh = self.content_h() as usize;
         if vh == 0 {
@@ -603,7 +649,10 @@ impl MarkdownViewerState {
     }
 
     /// Minimal scroll so `doc_line` is visible; no-op when already on screen.
-    fn scroll_to_show_line(&mut self, doc_line: usize) {
+    fn scroll_to_show_line(
+        &mut self,
+        doc_line: usize,
+    ) {
         if self.is_line_visible(doc_line) {
             return;
         }
@@ -697,7 +746,13 @@ fn padded_visible_lines(
 
     for (vis_idx, line) in lines.iter().skip(scroll).take(visible).enumerate() {
         let doc_line = scroll + vis_idx;
-        let line = apply_link_highlight(line, doc_line, active_link, links, highlight);
+        let line = apply_link_highlight(
+            line,
+            doc_line,
+            active_link,
+            links,
+            highlight,
+        );
         let spans = line.spans.clone();
         let used: usize = spans.iter().map(|s| s.width()).sum();
         if used < inner_w {
@@ -779,7 +834,10 @@ pub fn draw_markdown(
         height: bottom_height,
     };
 
-    f.render_widget(Block::default().style(content_style), content_rect);
+    f.render_widget(
+        Block::default().style(content_style),
+        content_rect,
+    );
 
     let inner_w = content_rect.width as usize;
     let scroll = md.scroll as usize;
@@ -797,11 +855,14 @@ pub fn draw_markdown(
         content_rect,
     );
 
-    if md
-        .image_scroll_gate
-        .should_draw(!md.images.is_empty())
-    {
-        draw_markdown_images(f, &mut md.images, picker, content_rect, md.scroll);
+    if md.image_scroll_gate.should_draw(!md.images.is_empty()) {
+        draw_markdown_images(
+            f,
+            &mut md.images,
+            picker,
+            content_rect,
+            md.scroll,
+        );
     }
 
     let total = md.doc_h() as usize;
@@ -813,7 +874,10 @@ pub fn draw_markdown(
         .saturating_sub(path_span.len() + right_info.len())
         .max(1);
     let header_line = Line::from(vec![
-        Span::styled(path_span, Style::default().fg(vp.header_path)),
+        Span::styled(
+            path_span,
+            Style::default().fg(vp.header_path),
+        ),
         Span::raw(" ".repeat(pad_len)),
         Span::styled(right_info, Style::default().fg(vp.muted)),
     ]);
@@ -902,7 +966,10 @@ fn follow_markdown_link(
             if !local_markdown_exists(&path) {
                 app.set_timed_toast_alert(
                     std::time::Duration::from_secs(4),
-                    format!("Markdown file not found: {}", path.display()),
+                    format!(
+                        "Markdown file not found: {}",
+                        path.display()
+                    ),
                 );
                 return false;
             }
@@ -935,7 +1002,9 @@ pub fn handle_markdown_key(
     if key.code == KeyCode::Char('t') || key.code == KeyCode::Char('T') {
         let taken = app.viewer_screen.take();
         if let Some(ViewerState::MarkdownReady(md)) = taken {
-            app.viewer_screen = Some(ViewerState::Ready(markdown_to_text_viewer(md)));
+            app.viewer_screen = Some(ViewerState::Ready(
+                markdown_to_text_viewer(md),
+            ));
         }
         return Some(AppAction::Continue);
     }
@@ -1065,18 +1134,24 @@ pub fn text_viewer_to_markdown(v: ViewerScreenState) -> Option<MarkdownViewerSta
         return None;
     }
     let content = String::from_utf8(v.content).ok()?;
-    Some(build_markdown_viewer_state(v.file_path, content))
+    Some(build_markdown_viewer_state(
+        v.file_path,
+        content,
+    ))
 }
 
 pub fn try_open_markdown_from_bytes(
-    file_path: String,
-    content: Vec<u8>,
+    file_path: &str,
+    content: &[u8],
 ) -> Option<MarkdownViewerState> {
-    if !is_markdown_path(&file_path) {
+    if !is_markdown_path(file_path) {
         return None;
     }
-    let text = String::from_utf8(content).ok()?;
-    Some(build_markdown_viewer_state(file_path, text))
+    let text = std::str::from_utf8(content).ok()?.to_owned();
+    Some(build_markdown_viewer_state(
+        file_path.to_string(),
+        text,
+    ))
 }
 
 #[cfg(test)]
@@ -1140,8 +1215,14 @@ mod tests {
     #[test]
     fn find_whole_needle_rejects_prefix() {
         let hay = "Chapter 11";
-        assert_eq!(find_whole_needle(hay, "Chapter 1", 0), None);
-        assert_eq!(find_whole_needle(hay, "Chapter 11", 0), Some(0));
+        assert_eq!(
+            find_whole_needle(hay, "Chapter 1", 0),
+            None
+        );
+        assert_eq!(
+            find_whole_needle(hay, "Chapter 11", 0),
+            Some(0)
+        );
     }
 
     #[test]
@@ -1171,7 +1252,10 @@ mod tests {
         md.lines = (0..50).map(|i| Line::from(format!("line {i}"))).collect();
         md.scroll = 30;
         md.scroll_to_show_line(45);
-        assert_eq!(md.scroll, 30, "visible link must not move scroll");
+        assert_eq!(
+            md.scroll, 30,
+            "visible link must not move scroll"
+        );
     }
 
     #[test]
@@ -1191,6 +1275,9 @@ mod tests {
             md.is_line_visible(40),
             "line 40 should be visible after scroll"
         );
-        assert_eq!(md.scroll as usize, 40usize.saturating_sub(vh - 1));
+        assert_eq!(
+            md.scroll as usize,
+            40usize.saturating_sub(vh - 1)
+        );
     }
 }
